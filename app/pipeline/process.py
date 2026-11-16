@@ -28,6 +28,15 @@ def set_status(video_id: int, status: str, **fields) -> Video:
         return v
 
 
+def stop_if_skipped(video_id: int) -> None:
+    """Arrête le traitement si la vidéo a été ignorée entre-temps."""
+    from .sources import Cancelled
+    with db.session() as s:
+        v = s.get(Video, video_id)
+        if v is None or v.status == "skipped":
+            raise Cancelled()
+
+
 def video_dir(video_id: int) -> Path:
     return get_settings().videos_dir / str(video_id)
 
@@ -57,6 +66,7 @@ def process(video_id: int) -> int:
         media.extract_audio(src, wav)
     segments = transcribe.transcribe(wav, work / "transcript.json")
 
+    stop_if_skipped(video_id)
     set_status(video_id, "analyzing")
     loud = media.loudness_per_second(wav)
     n = clip_count(dur)
@@ -82,6 +92,7 @@ def process(video_id: int) -> int:
     moments = sorted(moments, key=lambda m: -m.score)[:n]
     moments = [m for m in moments if m.score >= s.min_score]
 
+    stop_if_skipped(video_id)
     set_status(video_id, "rendering")
     created = 0
     for m in sorted(moments, key=lambda m: m.start):
@@ -109,6 +120,7 @@ def process(video_id: int) -> int:
                     created += 1
                     if s.auto_publish:
                         queue_posts(ss, clip)
+    stop_if_skipped(video_id)
     set_status(video_id, "done", error="")
     cleanup(video_id)
     return created

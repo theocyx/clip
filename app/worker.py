@@ -85,6 +85,12 @@ def record_loop():
 
 # ---------- Traitement ----------
 
+def is_skipped(video_id: int) -> bool:
+    with db.session() as s:
+        v = s.get(Video, video_id)
+        return v is None or v.status == "skipped"
+
+
 def next_video() -> Video | None:
     with db.session() as s:
         return s.exec(
@@ -103,12 +109,19 @@ def process_loop():
         try:
             if v.status == "new":
                 process.set_status(v.id, "downloading")
-                path = sources.download(v.url, process.video_dir(v.id))
+                path = sources.download(v.url, process.video_dir(v.id), lambda: is_skipped(v.id))
+                if is_skipped(v.id):
+                    raise sources.Cancelled()
                 process.set_status(v.id, "downloaded", path=str(path))
             log.info("Traitement de « %s »", v.title)
             n = process.process(v.id)
             log.info("« %s » : %d clip(s) créé(s)", v.title, n)
+        except sources.Cancelled:
+            log.info("« %s » ignorée : traitement arrêté", v.title)
+            process.delete_video_files(v.id)
         except Exception as e:
+            if is_skipped(v.id):
+                continue
             log.exception("Traitement de la vidéo %d échoué", v.id)
             process.set_status(v.id, "failed", error=str(e)[:1000])
 
