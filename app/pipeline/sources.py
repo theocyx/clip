@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -123,10 +124,27 @@ def find_output(out_dir: Path) -> Path | None:
     return max(files, key=lambda p: p.stat().st_size) if files else None
 
 
-def download(url: str, out_dir: Path) -> Path:
+class Cancelled(Exception):
+    """Téléchargement arrêté parce que la vidéo a été ignorée."""
+
+
+def download(url: str, out_dir: Path, should_stop=None) -> Path:
+    """Télécharge une vidéo. `should_stop()` est vérifié toutes les 2 s pour pouvoir l'annuler."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(download_cmd(url, out_dir, False), capture_output=True, text=True)
+    log_file = out_dir / "download.log"
+    with open(log_file, "w") as err:
+        proc = subprocess.Popen(download_cmd(url, out_dir, False), stdout=subprocess.DEVNULL, stderr=err)
+        while proc.poll() is None:
+            if should_stop and should_stop():
+                proc.terminate()
+                try:
+                    proc.wait(10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                raise Cancelled()
+            time.sleep(2)
     path = find_output(out_dir)
     if proc.returncode != 0 or not path:
-        raise RuntimeError(f"Téléchargement échoué : {proc.stderr[-500:]}")
+        tail = log_file.read_text(errors="replace")[-500:] if log_file.exists() else ""
+        raise RuntimeError(f"Téléchargement échoué : {tail}")
     return path

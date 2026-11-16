@@ -29,3 +29,37 @@ def test_publication_order_and_limits(monkeypatch):
     monkeypatch.setattr(worker.get_settings(), "min_minutes_between_posts", 90)
     with db.session() as s:
         assert not worker.can_post(s, "tiktok")
+
+
+def test_ignored_video_stops_download(monkeypatch, tmp_path):
+    import sys
+    from app.pipeline import process, sources
+
+    with db.session() as s:
+        v = Video(key="w:cancel", url="u", title="longue", status="new")
+        s.add(v)
+        s.commit()
+        vid = v.id
+
+    # faux yt-dlp qui ne finit jamais
+    monkeypatch.setattr(sources, "download_cmd", lambda url, out, live: [sys.executable, "-c", "import time; time.sleep(60)"])
+    monkeypatch.setattr(sources.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def stop():
+        calls["n"] += 1
+        return calls["n"] > 2
+
+    import pytest
+    with pytest.raises(sources.Cancelled):
+        sources.download("u", tmp_path, stop)
+
+    # le traitement s'arrête aussi si la vidéo est ignorée entre deux étapes
+    with db.session() as s:
+        v = s.get(Video, vid)
+        v.status = "skipped"
+        s.add(v)
+        s.commit()
+    with pytest.raises(sources.Cancelled):
+        process.stop_if_skipped(vid)
+    assert worker.is_skipped(vid)
