@@ -1,0 +1,22 @@
+{% extends "base.html" %}{% block content %}
+<div class="card">
+  <h3>YouTube Shorts</h3>
+  {% if accounts.youtube.connected %}
+    <p class="ok">Connecté : {{ accounts.youtube.account }}</p>
+    <form method="post" action="/accounts/youtube/disconnect"><button class="sec">Déconnecter</button></form>
+  {% elif accounts.youtube.configured %}
+    <a class="btn" href="/auth/youtube">Connecter ma chaîne YouTube</a>
+  {% else %}<p class="mut">Renseigne YOUTUBE_CLIENT_ID et YOUTUBE_CLIENT_SECRET dans .env (voir README).</p>{% endif %}
+  <p class="mut">URI de redirection à déclarer dans Google Cloud : <code>{{ yt_redirect }}</code></p>
+</div>
+<div class="card">
+  <h3>TikTok</h3>
+  {% if accounts.tiktok.connected %}
+    <p class="ok">Connecté : {{ accounts.tiktok.account }}</p>
+    <form method="post" action="/accounts/tiktok/disconnect"><button class="sec">Déconnecter</button></form>
+  {% elif accounts.tiktok.configured %}
+    <a class="btn" href="/auth/tiktok">Connecter mon compte TikTok</a>
+  {% else %}<p class="mut">Renseigne TIKTOK_CLIENT_KEY et TIKTOK_CLIENT_SECRET dans .env (voir README).</p>{% endif %}
+  <p class="mut">URI de redirection à déclarer sur developers.tiktok.com : <code>{{ tt_redirect }}</code></p>
+</div>
+{% endblock %}

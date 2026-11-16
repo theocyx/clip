@@ -1,0 +1,20 @@
+{% extends "base.html" %}{% block content %}
+<div class="stats">
+  <div class="card stat"><span class="mut">Sources</span><b>{{ n_sources }}</b></div>
+  <div class="card stat"><span class="mut">En cours</span><b>{{ (counts.get('recording',0) + counts.get('downloading',0) + counts.get('transcribing',0) + counts.get('analyzing',0) + counts.get('rendering',0)) }}</b></div>
+  <div class="card stat"><span class="mut">Vidéos traitées</span><b>{{ counts.get('done',0) }}</b></div>
+  <div class="card stat"><span class="mut">Clips publiés</span><b>{{ posts.get('published',0) }}</b></div>
+  <div class="card stat"><span class="mut">En attente de publication</span><b>{{ posts.get('pending',0) }}</b></div>
+</div>
+<div class="card">
+  <h3>Comptes</h3>
+  {% for name, a in accounts.items() %}
+  <div>{{ 'YouTube' if name=='youtube' else 'TikTok' }} :
+    {% if a.connected %}<span class="ok">connecté</span> {{ a.account }}{% elif a.configured %}<a href="/accounts">à connecter</a>{% else %}<span class="mut">clés API absentes du .env</span>{% endif %}</div>
+  {% endfor %}
+</div>
+<div class="card">
+  <h3>Dernières vidéos</h3>
+  {% include "_videos_table.html" %}
+</div>
+{% endblock %}

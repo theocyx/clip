@@ -1,0 +1,15 @@
+<table>
+<tr><th>Vidéo</th><th>Statut</th><th>Durée</th><th></th></tr>
+{% for v in videos %}
+<tr>
+  <td><a href="{{ v.url }}" target="_blank" rel="noopener">{{ v.title or v.url }}</a>{% if v.is_live %} <span class="badge">live</span>{% endif %}
+    {% if v.error %}<div class="err">{{ v.error[:300] }}</div>{% endif %}</td>
+  <td><span class="badge">{{ {'new':'en attente','recording':'enregistrement','downloading':'téléchargement','downloaded':'téléchargée','transcribing':'transcription','analyzing':'analyse','rendering':'montage','done':'terminée','failed':'échec','skipped':'ignorée'}.get(v.status, v.status) }}</span></td>
+  <td>{% if v.duration %}{{ (v.duration // 60)|int }} min{% endif %}</td>
+  <td>
+    {% if v.status in ('failed','skipped','done') %}<form class="inline" method="post" action="/videos/{{ v.id }}/retry"><button class="sec">{{ 'Traiter' if v.status=='skipped' else 'Relancer' }}</button></form>{% endif %}
+    {% if v.status != 'skipped' %}<form class="inline" method="post" action="/videos/{{ v.id }}/delete"><button class="sec">Ignorer</button></form>{% endif %}
+  </td>
+</tr>
+{% else %}<tr><td colspan="4" class="mut">Aucune vidéo.</td></tr>{% endfor %}
+</table>
