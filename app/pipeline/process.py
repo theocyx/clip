@@ -85,7 +85,7 @@ def process(video_id: int) -> int:
         rated = llm.rate(text, video.title, which) if use_llm else None
         if rated:
             m.score = 0.4 * heur + 0.6 * rated[0] / 10
-            m.title = rated[1]
+            m.title, m.hook = rated[1], rated[2]
         else:
             m.score = heur
         m.title = m.title or fallback_title(text) or video.title
@@ -102,7 +102,8 @@ def process(video_id: int) -> int:
             label = f"Partie {i}/{len(parts)}" if len(parts) > 1 else ""
             out = s.clips_dir / str(video_id) / f"{group}_p{i}.mp4"
             try:
-                ass = subtitles.build_ass(segments, a, b, s.font_name, label)
+                hook = (m.hook or m.title) if s.hook_title else ""
+                ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook, s.hook_seconds)
                 render.render(src, a, b, ass, out)
             except Exception as e:
                 log.exception("Rendu échoué")

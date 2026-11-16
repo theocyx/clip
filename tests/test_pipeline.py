@@ -70,3 +70,14 @@ def test_tiktok_chunks():
     assert size == 10 * MB and n == 15
     last = 150 * MB - (n - 1) * size
     assert 5 * MB <= last <= 128 * MB
+
+
+def test_hook_title_at_top():
+    from app.pipeline import llm
+    segs = [{"start": 10, "end": 12, "text": "salut", "words": [{"start": 10, "end": 12, "word": "salut"}]}]
+    ass = subtitles.build_ass(segs, 10, 30, "Montserrat", "Partie 1/2", "Il a vraiment fait ça en plein live devant tout le monde", 4)
+    hook_line = [l for l in ass.splitlines() if ",Hook," in l][0]
+    assert hook_line.startswith("Dialogue: 2,0:00:00.00,0:00:04.00,Hook")
+    assert hook_line.endswith("…") and r"IL A VRAIMENT FAIT\NÇA" in hook_line
+    assert "60,60,440,1" in ass  # « Partie » descend sous l'accroche
+    assert llm.parse('{"score": 8, "title": "Titre", "hook": "Il a osé !"}') == (8.0, "Titre", "Il a osé !")

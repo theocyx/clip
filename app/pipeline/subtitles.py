@@ -13,13 +13,15 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Sub,{font},86,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,7,3,2,60,60,480,1
-Style: Part,{font},64,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,8,60,60,180,1
+Style: Part,{font},64,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,8,60,60,{part_v},1
+Style: Hook,{font},78,&H00FFFFFF,&H00FFFFFF,&H00000000,&HB4000000,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,170,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 HIGHLIGHT = r"{\c&H00E5FF&}"  # jaune
 RESET = r"{\c&HFFFFFF&}"
+NL = r"\N"  # retour à la ligne ASS
 
 
 def ts(t: float) -> str:
@@ -64,9 +66,31 @@ def group_words(words: list[dict], max_words: int = 3, max_chars: int = 18, max_
     return groups
 
 
-def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: str = "") -> str:
-    lines = [HEADER.format(w=W, h=H, font=font)]
+def hook_lines(text: str, per_line: int = 18, max_lines: int = 2) -> list[str]:
+    """Accroche courte découpée en lignes (le rendu ASS ne coupe pas tout seul)."""
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        if cur and len(cur) + 1 + len(w) > per_line:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}".strip()
+    if cur:
+        lines.append(cur)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        lines[-1] = lines[-1].rstrip(",;:-") + "…"
+    return lines
+
+
+def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: str = "",
+              hook: str = "", hook_seconds: float = 0) -> str:
     dur = b - a
+    hl = hook_lines(hook) if hook else []
+    lines = [HEADER.format(w=W, h=H, font=font, part_v=170 + 115 * len(hl) + 40 if hl else 180)]
+    if hl:
+        end = min(hook_seconds, dur) if hook_seconds > 0 else dur
+        lines.append(f"Dialogue: 2,{ts(0)},{ts(end)},Hook,,0,0,0,,{NL.join(_escape(x) for x in hl)}")
     if part_label:
         lines.append(f"Dialogue: 1,{ts(0)},{ts(dur)},Part,,0,0,0,,{_escape(part_label)}")
     groups = group_words(words_in(segments, a, b))
