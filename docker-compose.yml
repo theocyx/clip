@@ -1,0 +1,30 @@
+services:
+  web:
+    build: .
+    env_file: .env
+    volumes: ["./data:/data"]
+    ports: ["${WEB_BIND:-127.0.0.1}:8000:8000"]
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["python", "-m", "app.worker"]
+    env_file: .env
+    volumes: ["./data:/data"]
+    restart: unless-stopped
+    # Encodage vidéo par le GPU intégré (ex. Radeon Vega du Ryzen 4700U) : décommente et mets VIDEO_CODEC=h264_vaapi dans .env
+    # devices: ["/dev/dri:/dev/dri"]
+
+  ollama:
+    image: ollama/ollama:0.5.4
+    volumes: ["./data/ollama:/root/.ollama"]
+    restart: unless-stopped
+
+  # HTTPS automatique (obligatoire pour TikTok) : docker compose --profile https up -d
+  caddy:
+    image: caddy:2.9
+    profiles: ["https"]
+    command: caddy reverse-proxy --from ${DOMAIN:-localhost} --to web:8000
+    ports: ["80:80", "443:443"]
+    volumes: ["./data/caddy:/data"]
+    restart: unless-stopped

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clip</title>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--fg:#e8e8ea;--mut:#9aa0aa;--acc:#ffd23f;--ok:#3ecf8e;--err:#ff5c5c;--bd:#2a2f3a}
+*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+nav{display:flex;gap:18px;padding:14px 20px;border-bottom:1px solid var(--bd);flex-wrap:wrap}
+nav a{color:var(--fg);text-decoration:none;font-weight:600}nav a.logo{color:var(--acc)}
+main{max-width:1100px;margin:0 auto;padding:20px 16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:16px}
+table{width:100%;border-collapse:collapse}td,th{padding:8px;border-bottom:1px solid var(--bd);text-align:left;vertical-align:top}
+th{color:var(--mut);font-weight:500}
+input[type=text],input[type=url]{background:#0b0d11;border:1px solid var(--bd);color:var(--fg);padding:8px 10px;border-radius:6px;min-width:260px}
+button,.btn{background:var(--acc);color:#111;border:0;padding:7px 12px;border-radius:6px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
+button.sec{background:#2a2f3a;color:var(--fg)}button.danger{background:var(--err);color:#fff}
+form.inline{display:inline}.mut{color:var(--mut)}.ok{color:var(--ok)}.err{color:var(--err)}
+.badge{display:inline-block;padding:1px 8px;border-radius:99px;background:#2a2f3a;font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
+video{width:100%;aspect-ratio:9/16;background:#000;border-radius:8px}
+.stats{display:flex;gap:16px;flex-wrap:wrap}.stat{flex:1;min-width:140px}.stat b{font-size:28px;display:block}
+</style>
+</head>
+<body>
+<nav><a class="logo" href="/">✂ Clip</a><a href="/sources">Sources</a><a href="/videos">Vidéos</a><a href="/clips">Clips</a><a href="/accounts">Comptes</a></nav>
+<main>{% block content %}{% endblock %}</main>
+</body>
+</html>
