@@ -70,6 +70,7 @@ Pour 1 h de vidéo : transcription ≈ 15-25 min (`WHISPER_MODEL=small`), IA ≈
 | `AUTO_PUBLISH` | publier sans validation | true |
 | `MIN_MINUTES_BETWEEN_POSTS` / `MAX_POSTS_PER_DAY` | rythme de publication | 90 / 6 |
 | `HASHTAGS` | hashtags ajoutés | `#shorts #clip #fr` |
+| `HOOK_TITLE` / `HOOK_SECONDS` | accroche en haut de la vidéo / durée (0 = tout le clip) | true / 0 |
 | `KEEP_SOURCE_VIDEOS` | garder les vidéos complètes | false |
 
 ## Droits

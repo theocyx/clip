@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     vaapi_device: str = ""  # ex. /dev/dri/renderD128 pour h264_vaapi
     crf: int = 21
     font_name: str = "Montserrat"
+    hook_title: bool = True  # accroche courte en haut de la vidéo
+    hook_seconds: float = 0  # durée d'affichage de l'accroche (0 = tout le clip)
     keep_source_videos: bool = False
 
     # Publication

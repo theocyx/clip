@@ -21,6 +21,7 @@ class Moment:
     end: float
     score: float
     title: str = ""
+    hook: str = ""
     parts: list[tuple[float, float]] = field(default_factory=list)
 
     @property

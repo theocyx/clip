@@ -20,7 +20,7 @@ Voici la transcription d'un extrait de la vidéo « {video_title} » :
 \"\"\"{text}\"\"\"
 
 Évalue son potentiel viral (drôle, surprenant, émouvant, instructif, autonome et compréhensible sans contexte).
-Réponds UNIQUEMENT en JSON : {{"score": <entier 1-10>, "title": "<titre accrocheur en français, 70 caractères max, sans hashtag>"}}"""
+Réponds UNIQUEMENT en JSON : {{"score": <entier 1-10>, "title": "<titre accrocheur en français, 70 caractères max, sans hashtag>", "hook": "<accroche très courte affichée en haut de la vidéo, 3 à 6 mots, qui donne envie de rester, sans hashtag ni emoji>"}}"""
 
 
 def _ollama_ok() -> bool:
@@ -48,12 +48,14 @@ def available() -> bool:
     return provider() != "none"
 
 
-def parse(content: str) -> tuple[float, str] | None:
+def parse(content: str) -> tuple[float, str, str] | None:
+    """(score, titre, accroche)."""
     m = re.search(r"\{.*\}", content or "", re.S)
     if not m:
         return None
     data = json.loads(m.group(0))
-    return float(data.get("score", 0)), str(data.get("title", "")).strip().strip('"')[:90]
+    clean = lambda k, n: str(data.get(k, "")).strip().strip('"')[:n]  # noqa: E731
+    return float(data.get("score", 0)), clean("title", 90), clean("hook", 50)
 
 
 def _ask_ollama(prompt: str) -> str:
@@ -68,7 +70,7 @@ def _ask_ollama(prompt: str) -> str:
     return r.json()["response"]
 
 
-def rate(text: str, video_title: str, which: str | None = None) -> tuple[float, str] | None:
+def rate(text: str, video_title: str, which: str | None = None) -> tuple[float, str, str] | None:
     which = which or provider()
     prompt = PROMPT.format(video_title=video_title, text=text[:4000])
     try:
