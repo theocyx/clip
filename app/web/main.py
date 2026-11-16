@@ -1,11 +1,12 @@
 """Interface web d'administration."""
 from __future__ import annotations
 
+import re
 import secrets
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from sqlmodel import col, func, select
@@ -16,12 +17,19 @@ from ..models import Clip, Post, Source, Video
 from ..pipeline import process, sources
 from ..publish import creds, tiktok, youtube
 
-security = HTTPBasic()
+security = HTTPBasic(auto_error=False)
+
+# Pages accessibles sans mot de passe (exigées par TikTok / Google).
+PUBLIC_PATHS = {"/conditions", "/confidentialite"}
+VERIFY_FILE = re.compile(r"^/[A-Za-z0-9_-]{1,100}\.txt$")
 
 
-def auth(c: HTTPBasicCredentials = Depends(security)):
+def auth(request: Request, c: HTTPBasicCredentials | None = Depends(security)):
+    path = request.url.path
+    if path in PUBLIC_PATHS or VERIFY_FILE.match(path):
+        return
     s = get_settings()
-    ok = secrets.compare_digest(c.username.encode(), s.admin_user.encode()) and secrets.compare_digest(
+    ok = c is not None and secrets.compare_digest(c.username.encode(), s.admin_user.encode()) and secrets.compare_digest(
         c.password.encode(), s.admin_password.encode())
     if not ok:
         raise HTTPException(401, "Identifiants invalides", headers={"WWW-Authenticate": "Basic"})
@@ -266,3 +274,47 @@ def auth_tiktok_cb(code: str, state: str):
 def disconnect(platform: str):
     creds.delete(platform)
     return back("/accounts")
+
+
+# ---------- Pages publiques ----------
+
+_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>
+<style>body{{font-family:system-ui,sans-serif;max-width:680px;margin:40px auto;padding:0 16px;line-height:1.6}}</style>
+</head><body><h1>{title}</h1>{body}</body></html>"""
+
+_TERMS = """<p>Clip est un outil personnel qui crée des extraits courts à partir de vidéos et les publie
+sur les comptes YouTube et TikTok de son propriétaire, avec son autorisation.</p>
+<p>Seul le propriétaire du serveur utilise ce service. Il est responsable des contenus publiés
+et du respect des droits des créateurs d'origine, qui sont crédités dans chaque publication.</p>
+<p>Le service est fourni tel quel, sans garantie. L'accès peut être retiré à tout moment
+depuis les paramètres de YouTube ou de TikTok.</p>"""
+
+_PRIVACY = """<p>Clip fonctionne sur un serveur privé. Les seules données traitées sont :</p>
+<ul><li>les jetons de connexion YouTube et TikTok du propriétaire, stockés uniquement sur ce serveur ;</li>
+<li>les informations de base du compte (nom, identifiant) renvoyées par YouTube et TikTok ;</li>
+<li>les vidéos et clips créés.</li></ul>
+<p>Aucune donnée n'est vendue, partagée ou envoyée à un tiers, en dehors des vidéos publiées
+volontairement sur YouTube et TikTok. Pour supprimer les données, déconnecte les comptes
+dans Clip ou retire l'accès depuis les paramètres de YouTube ou de TikTok.</p>"""
+
+
+@app.get("/conditions", response_class=HTMLResponse)
+def page_terms():
+    return _PAGE.format(title="Conditions d'utilisation", body=_TERMS)
+
+
+@app.get("/confidentialite", response_class=HTMLResponse)
+def page_privacy():
+    return _PAGE.format(title="Politique de confidentialité", body=_PRIVACY)
+
+
+@app.get("/{name}.txt", response_class=PlainTextResponse)
+def verify_file(name: str):
+    """Fichiers de vérification de domaine (ex. TikTok), à déposer dans data/verify/."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", name):
+        raise HTTPException(404)
+    f = get_settings().data_dir / "verify" / f"{name}.txt"
+    if not f.is_file():
+        raise HTTPException(404)
+    return f.read_text()
