@@ -64,7 +64,7 @@ def process(video_id: int) -> int:
     wav = work / "audio.wav"
     if not wav.exists():
         media.extract_audio(src, wav)
-    segments = transcribe.transcribe(wav, work / "transcript.json")
+    segments = transcribe.transcribe(wav, work / "transcript.json", dur)
 
     stop_if_skipped(video_id)
     set_status(video_id, "analyzing")
