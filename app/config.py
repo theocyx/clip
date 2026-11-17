@@ -64,6 +64,15 @@ class Settings(BaseSettings):
     tiktok_client_secret: str = ""
     tiktok_mode: str = "direct"  # direct (publication) ou draft (brouillon dans l'appli TikTok)
     tiktok_privacy: str = "SELF_ONLY"  # SELF_ONLY tant que l'app n'est pas auditée, puis PUBLIC_TO_EVERYONE
+    tiktok_stats: bool = False  # demande aussi le scope video.list (à activer dans l'app TikTok) pour lire les vues
+
+    # Apprentissage : relevé des stats des clips publiés et ajustement automatique du montage
+    learning: bool = True
+    stats_interval_hours: float = 6
+    stats_days: int = 30  # suivi des publications pendant N jours
+    learn_min_clips: int = 10  # nombre de clips mesurés avant de modifier quoi que ce soit
+    learn_age_hours: float = 72  # âge auquel on compare les clips entre eux
+    explore: float = 0.15  # variation aléatoire de la durée visée (±15 %) pour continuer à tester
 
     @property
     def db_path(self) -> Path:

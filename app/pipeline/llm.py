@@ -70,12 +70,42 @@ def _ask_ollama(prompt: str) -> str:
     return r.json()["response"]
 
 
-def rate(text: str, video_title: str, which: str | None = None) -> tuple[float, str, str] | None:
+def rate(text: str, video_title: str, which: str | None = None, guidance: str = "") -> tuple[float, str, str] | None:
+    """guidance : leçons tirées des clips déjà publiés (voir app/learning.py), ajoutées au prompt."""
     which = which or provider()
     prompt = PROMPT.format(video_title=video_title, text=text[:4000])
+    if guidance:
+        prompt = guidance.strip() + "\n\n" + prompt
     try:
         if which == "ollama":
             return parse(_ask_ollama(prompt))
     except Exception as e:
         log.warning("Notation IA échouée (%s) : %s", which, e)
     return None
+
+
+ANALYZE = """Tu es un expert des clips TikTok / YouTube Shorts francophones.
+Voici les clips de notre chaîne qui ont LE MIEUX marché (titre, accroche, début de la transcription) :
+{top}
+
+Et ceux qui ont LE MOINS marché :
+{flop}
+
+Compare-les. Qu'est-ce qui fait la différence (type de moment, humour, tension, accroche, titre, longueur) ?
+Réponds UNIQUEMENT en JSON : {{"rules": ["<règle courte et concrète>", "..."]}} avec 3 à 5 règles en français."""
+
+
+def analyze(top: list[dict], flop: list[dict]) -> list[str]:
+    """Demande à l'IA locale ce qui distingue les clips qui marchent. Liste vide si indisponible."""
+    if provider() != "ollama":
+        return []
+    fmt = lambda items: "\n".join(  # noqa: E731
+        f"- « {c.get('title', '')} » / accroche « {c.get('hook', '')} » : {c.get('text', '')[:300]}" for c in items)
+    try:
+        content = _ask_ollama(ANALYZE.format(top=fmt(top), flop=fmt(flop)))
+        m = re.search(r"\{.*\}", content or "", re.S)
+        rules = json.loads(m.group(0)).get("rules", []) if m else []
+        return [str(r).strip()[:200] for r in rules if str(r).strip()][:5]
+    except Exception as e:
+        log.warning("Analyse IA des performances échouée : %s", e)
+        return []

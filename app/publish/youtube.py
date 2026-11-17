@@ -1,6 +1,10 @@
 """Envoi sur YouTube (Shorts) via l'API YouTube Data v3."""
 from __future__ import annotations
 
+import logging
+import os
+from datetime import date
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -10,7 +14,11 @@ from googleapiclient.http import MediaFileUpload
 from ..config import get_settings
 from . import creds
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly",
+          "https://www.googleapis.com/auth/yt-analytics.readonly"]  # rétention (statistiques détaillées)
+ANALYTICS_SCOPE = SCOPES[2]
+# Google peut accorder moins de droits que demandés (cases décochées) : ne pas faire échouer la connexion.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 
@@ -50,7 +58,8 @@ def finish_auth(code: str, state: str, code_verifier: str | None = None) -> None
         name = items[0]["snippet"]["title"] if items else ""
     except Exception:
         pass
-    creds.save("youtube", {"token": c.token, "refresh_token": c.refresh_token}, account=name)
+    scopes = list(getattr(c, "granted_scopes", None) or c.scopes or SCOPES)
+    creds.save("youtube", {"token": c.token, "refresh_token": c.refresh_token, "scopes": scopes}, account=name)
 
 
 def _credentials() -> Credentials:
@@ -58,12 +67,47 @@ def _credentials() -> Credentials:
     data = creds.load("youtube")
     if not data:
         raise RuntimeError("Compte YouTube non connecté")
+    # scopes réellement accordés (absent pour une connexion faite avant l'ajout des statistiques)
     c = Credentials(data.get("token"), refresh_token=data.get("refresh_token"), token_uri=TOKEN_URI,
-                    client_id=s.youtube_client_id, client_secret=s.youtube_client_secret, scopes=SCOPES)
+                    client_id=s.youtube_client_id, client_secret=s.youtube_client_secret, scopes=data.get("scopes"))
     if not c.valid:
         c.refresh(Request())
-        creds.save("youtube", {"token": c.token, "refresh_token": c.refresh_token})
+        creds.save("youtube", {**data, "token": c.token, "refresh_token": c.refresh_token})
     return c
+
+
+def has_analytics() -> bool:
+    return ANALYTICS_SCOPE in ((creds.load("youtube") or {}).get("scopes") or [])
+
+
+def stats(video_ids: list[str]) -> dict[str, dict]:
+    """Vues, likes, commentaires (+ rétention si l'accès « statistiques » a été accordé)."""
+    if not video_ids:
+        return {}
+    c = _credentials()
+    yt = build("youtube", "v3", credentials=c, cache_discovery=False)
+    out: dict[str, dict] = {}
+    for i in range(0, len(video_ids), 50):
+        batch = video_ids[i:i + 50]
+        for item in yt.videos().list(part="statistics", id=",".join(batch)).execute().get("items", []):
+            st = item.get("statistics", {})
+            out[item["id"]] = {"views": int(st.get("viewCount", 0)), "likes": int(st.get("likeCount", 0)),
+                               "comments": int(st.get("commentCount", 0))}
+    if has_analytics():
+        try:
+            ya = build("youtubeAnalytics", "v2", credentials=c, cache_discovery=False)
+            for i in range(0, len(video_ids), 200):
+                batch = video_ids[i:i + 200]
+                resp = ya.reports().query(
+                    ids="channel==MINE", startDate="2020-01-01", endDate=date.today().isoformat(),
+                    metrics="averageViewDuration,averageViewPercentage,shares", dimensions="video",
+                    filters="video==" + ",".join(batch)).execute()
+                for vid, avd, avp, shares in resp.get("rows", []):
+                    if vid in out:
+                        out[vid].update(avg_view_s=float(avd), avg_view_pct=float(avp), shares=int(shares))
+        except Exception as e:  # API Analytics pas activée dans la console Google, etc.
+            logging.getLogger(__name__).warning("Statistiques YouTube Analytics indisponibles : %s", e)
+    return out
 
 
 def upload(path: str, title: str, description: str, tags: list[str]) -> str:

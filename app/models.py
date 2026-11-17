@@ -79,3 +79,33 @@ class Credential(SQLModel, table=True):
     data: str  # JSON
     account: str = ""
     updated_at: datetime = Field(default_factory=now)
+
+
+class ClipInfo(SQLModel, table=True):
+    """Caractéristiques d'un clip au moment de sa création (servent à apprendre ce qui marche)."""
+
+    clip_id: int = Field(foreign_key="clip.id", primary_key=True)
+    data: str = "{}"  # JSON : durée, sonie, parole, excitation, notes IA, accroche…
+
+
+class PostStat(SQLModel, table=True):
+    """Relevé des statistiques d'une publication (un relevé toutes les quelques heures)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    post_id: int = Field(foreign_key="post.id", index=True)
+    fetched_at: datetime = Field(default_factory=now, index=True)
+    views: int = 0
+    likes: int = 0
+    comments: int = 0
+    shares: int = 0
+    avg_view_pct: Optional[float] = None  # rétention moyenne (% du clip regardé), YouTube seulement
+    avg_view_s: Optional[float] = None
+
+
+class Tuning(SQLModel, table=True):
+    """Réglages appris à partir des performances (une ligne par analyse, la dernière s'applique)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=now)
+    samples: int = 0
+    data: str = "{}"  # JSON

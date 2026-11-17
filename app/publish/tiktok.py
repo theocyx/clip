@@ -24,8 +24,12 @@ def configured() -> bool:
     return bool(s.tiktok_client_key and s.tiktok_client_secret)
 
 
+def scopes() -> str:
+    return SCOPES + (",video.list" if get_settings().tiktok_stats else "")
+
+
 def auth_url(state: str) -> str:
-    q = {"client_key": get_settings().tiktok_client_key, "scope": SCOPES, "response_type": "code",
+    q = {"client_key": get_settings().tiktok_client_key, "scope": scopes(), "response_type": "code",
          "redirect_uri": redirect_uri(), "state": state}
     return "https://www.tiktok.com/v2/auth/authorize/?" + urllib.parse.urlencode(q)
 
@@ -122,3 +126,21 @@ def upload(path: str, title: str) -> str:
             if status == "FAILED":
                 raise RuntimeError(f"TikTok : échec ({st.get('fail_reason')})")
     return publish_id
+
+
+def stats(video_ids: list[str]) -> dict[str, dict]:
+    """Vues, likes, commentaires, partages (scope video.list). Seuls les vrais identifiants de vidéo comptent."""
+    ids = [v for v in video_ids if v.isdigit()]
+    if not ids or not get_settings().tiktok_stats:
+        return {}
+    headers = {"Authorization": f"Bearer {_access_token()}", "Content-Type": "application/json; charset=UTF-8"}
+    out: dict[str, dict] = {}
+    with httpx.Client(timeout=60) as http:
+        for i in range(0, len(ids), 20):
+            data = _check(http.post(f"{API}/video/query/", headers=headers,
+                                    params={"fields": "id,view_count,like_count,comment_count,share_count"},
+                                    json={"filters": {"video_ids": ids[i:i + 20]}}))
+            for v in data.get("videos", []):
+                out[str(v["id"])] = {"views": int(v.get("view_count", 0)), "likes": int(v.get("like_count", 0)),
+                                     "comments": int(v.get("comment_count", 0)), "shares": int(v.get("share_count", 0))}
+    return out

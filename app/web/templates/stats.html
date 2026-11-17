@@ -1,0 +1,42 @@
+{% extends "base.html" %}{% block content %}
+{% if refreshing %}<div class="card ok">Relevé et analyse lancés en arrière-plan, recharge la page dans une minute.</div>{% endif %}
+<div class="card">
+  <h3>Ce que l'outil a appris</h3>
+  {% if not learning_on %}<p class="err">Apprentissage désactivé (LEARNING=false).</p>{% endif %}
+  {% if tuned_at %}
+    <p class="mut">Dernière mise à jour : {{ tuned_at.strftime('%d/%m %H:%M') }} UTC · {{ measured }} clips mesurés</p>
+    <ul>{% for i in tuning.insights %}<li>{{ i }}</li>{% endfor %}</ul>
+    {% if tuning.rules %}<h4>Règles tirées par l'IA</h4><ul>{% for r in tuning.rules %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+  {% else %}
+    <p>Pas encore assez de données : {{ measured }} / {{ min_clips }} clips mesurés (chaque clip est jugé 3 jours après sa publication). Les réglages par défaut s'appliquent.</p>
+  {% endif %}
+  <table>
+    <tr><th>Réglage</th><th>Défaut</th><th>Actuel</th></tr>
+    <tr><td>Durée visée</td><td>{{ defaults.clip_target|round|int }} s</td><td>{{ tuning.clip_target|round|int }} s</td></tr>
+    {% for k, label in [('spike','Pics de son'),('density','Débit de parole'),('excite',"Mots d'excitation")] %}
+    <tr><td>Poids : {{ label }}</td><td>{{ (defaults.weights[k]*100)|round|int }} %</td><td>{{ (tuning.weights[k]*100)|round|int }} %</td></tr>
+    {% endfor %}
+    <tr><td>Part de l'IA dans la note</td><td>{{ (defaults.llm_mix*100)|round|int }} %</td><td>{{ (tuning.llm_mix*100)|round|int }} %</td></tr>
+  </table>
+  <form method="post" action="/stats/refresh" style="margin-top:12px"><button>Relever les stats et analyser maintenant</button></form>
+  {% if yt_connected and not yt_analytics %}<p class="mut">Pour la rétention YouTube (% regardé) : active « YouTube Analytics API » dans la console Google puis reconnecte YouTube dans <a href="/accounts">Comptes</a>.</p>{% endif %}
+  {% if not tt_stats %}<p class="mut">Vues TikTok : ajoute le scope <code>video.list</code> à l'app TikTok, mets <code>TIKTOK_STATS=true</code> dans .env puis reconnecte TikTok.</p>{% endif %}
+</div>
+<div class="card">
+  <h3>Clips publiés</h3>
+  <table>
+    <tr><th>Clip</th><th>Plateforme</th><th>Vues</th><th>Likes</th><th>Com.</th><th>Regardé</th><th>Perf.</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.clip.title if r.clip else '?' }}<div class="mut">{{ r.post.published_at.strftime('%d/%m %H:%M') if r.post.published_at }}</div></td>
+      <td>{{ 'YouTube' if r.post.platform=='youtube' else 'TikTok' }}</td>
+      {% if r.stat %}
+      <td>{{ r.stat.views }}</td><td>{{ r.stat.likes }}</td><td>{{ r.stat.comments }}</td>
+      <td>{{ (r.stat.avg_view_pct|round|int ~ ' %') if r.stat.avg_view_pct is not none else '–' }}</td>
+      {% else %}<td colspan="4" class="mut">pas encore relevé</td>{% endif %}
+      <td>{{ ((r.perf*100)|round|int ~ '/100') if r.perf is not none else '–' }}</td>
+    </tr>
+    {% else %}<tr><td colspan="7" class="mut">Aucun clip publié pour l'instant.</td></tr>{% endfor %}
+  </table>
+</div>
+{% endblock %}
