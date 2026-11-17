@@ -6,6 +6,7 @@ import logging
 import re
 import threading
 import secrets
+from html import escape
 from pathlib import Path
 from urllib.parse import quote
 
@@ -22,7 +23,7 @@ from ..publish import creds, tiktok, youtube
 from . import mfa
 
 # Pages accessibles sans connexion (exigées par TikTok / Google, et la connexion elle-même).
-PUBLIC_PATHS = {"/conditions", "/confidentialite", "/login", "/mfa/setup", "/healthz"}
+PUBLIC_PATHS = {"/conditions", "/confidentialite", "/privacy", "/terms", "/login", "/mfa/setup", "/healthz"}
 log = logging.getLogger(__name__)
 VERIFY_FILE = re.compile(r"^/[A-Za-z0-9_-]{1,100}\.txt$")
 
@@ -567,34 +568,112 @@ def disconnect(platform: str):
 # ---------- Pages publiques ----------
 
 _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>
-<style>body{{font-family:system-ui,sans-serif;max-width:680px;margin:40px auto;padding:0 16px;line-height:1.6}}</style>
-</head><body><h1>{title}</h1>{body}</body></html>"""
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title} – Clip</title>
+<style>body{{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px;line-height:1.6;color:#222;background:#fff}}
+h2{{margin-top:1.8em;font-size:1.15em}}a{{color:#0b57d0}}footer{{margin-top:3em;font-size:.9em;color:#666}}</style>
+</head><body><h1>{title}</h1><p><em>Dernière mise à jour : {updated}</em></p>{body}
+<footer><a href="/privacy">Règles de confidentialité</a> · <a href="/terms">Conditions d'utilisation</a></footer>
+</body></html>"""
 
-_TERMS = """<p>Clip est un outil personnel qui crée des extraits courts à partir de vidéos et les publie
-sur les comptes YouTube et TikTok de son propriétaire, avec son autorisation.</p>
-<p>Seul le propriétaire du serveur utilise ce service. Il est responsable des contenus publiés
-et du respect des droits des créateurs d'origine, qui sont crédités dans chaque publication.</p>
-<p>Le service est fourni tel quel, sans garantie. L'accès peut être retiré à tout moment
-depuis les paramètres de YouTube ou de TikTok.</p>"""
-
-_PRIVACY = """<p>Clip fonctionne sur un serveur privé. Les seules données traitées sont :</p>
-<ul><li>les jetons de connexion YouTube et TikTok du propriétaire, stockés uniquement sur ce serveur ;</li>
-<li>les informations de base du compte (nom, identifiant) renvoyées par YouTube et TikTok ;</li>
-<li>les vidéos et clips créés.</li></ul>
-<p>Aucune donnée n'est vendue, partagée ou envoyée à un tiers, en dehors des vidéos publiées
-volontairement sur YouTube et TikTok. Pour supprimer les données, déconnecte les comptes
-dans Clip ou retire l'accès depuis les paramètres de YouTube ou de TikTok.</p>"""
+LEGAL_UPDATED = "17 novembre 2026"
 
 
+def _contact() -> str:
+    mail = get_settings().contact_email.strip()
+    if mail:
+        return f'par e-mail à <a href="mailto:{escape(mail)}">{escape(mail)}</a>'
+    return "via le propriétaire du service"
+
+
+_TERMS = """<p>Clip (« le service ») est un outil personnel, non commercial, qui crée des extraits
+courts à partir de vidéos et les publie sur les comptes YouTube et TikTok de son propriétaire,
+avec son autorisation explicite. En utilisant le service, vous acceptez les présentes conditions.</p>
+
+<h2>1. Utilisateurs</h2>
+<p>Le service est réservé à son propriétaire. L'interface est protégée par mot de passe et
+double authentification ; aucune inscription publique n'est proposée.</p>
+
+<h2>2. Services tiers</h2>
+<p>Le service utilise les services API YouTube. En l'utilisant, vous acceptez également les
+<a href="https://www.youtube.com/t/terms">Conditions d'utilisation de YouTube</a> et les
+<a href="https://policies.google.com/privacy">Règles de confidentialité de Google</a>.
+La publication sur TikTok est soumise aux
+<a href="https://www.tiktok.com/legal/terms-of-service">Conditions d'utilisation de TikTok</a>.</p>
+
+<h2>3. Contenus</h2>
+<p>Le propriétaire est seul responsable des contenus publiés et du respect des droits des
+créateurs d'origine, qui sont crédités dans chaque publication. Les contenus signalés par un
+ayant droit sont retirés sans délai.</p>
+
+<h2>4. Responsabilité</h2>
+<p>Le service est fourni « tel quel », sans garantie de disponibilité. L'autorisation donnée au
+service peut être retirée à tout moment (voir les <a href="/privacy">règles de confidentialité</a>).</p>
+
+<h2>5. Modifications et contact</h2>
+<p>Ces conditions peuvent évoluer ; la date de mise à jour figure en haut de la page.
+Pour toute question : {contact}.</p>"""
+
+_PRIVACY = """<p>Clip est un outil personnel hébergé sur un serveur privé. Cette page décrit les
+données traitées par le service, notamment via les services API YouTube et l'API TikTok.</p>
+
+<h2>1. Services API YouTube</h2>
+<p>Clip utilise les services API YouTube pour publier des vidéos sur la chaîne YouTube du
+propriétaire et lire leurs statistiques. En utilisant Clip, vous acceptez les
+<a href="https://www.youtube.com/t/terms">Conditions d'utilisation de YouTube</a>. Les données
+obtenues via YouTube sont aussi soumises aux
+<a href="https://policies.google.com/privacy">Règles de confidentialité de Google</a>.</p>
+
+<h2>2. Données collectées et utilisées</h2>
+<ul>
+<li><strong>Jetons d'accès OAuth</strong> YouTube et TikTok, pour publier au nom du propriétaire ;</li>
+<li><strong>informations de base du compte</strong> (nom de la chaîne ou du compte, identifiant) ;</li>
+<li><strong>statistiques publiques des vidéos publiées</strong> (vues, mentions J'aime, commentaires),
+pour choisir les meilleurs moments des prochains clips ;</li>
+<li>les vidéos sources et les clips créés.</li>
+</ul>
+<p>Ces données servent uniquement au fonctionnement du service. Elles ne sont utilisées ni pour
+la publicité, ni pour du profilage, ni pour entraîner des modèles tiers.</p>
+
+<h2>3. Stockage et sécurité</h2>
+<p>Toutes les données sont stockées localement sur le serveur du propriétaire, accessible
+uniquement après connexion par mot de passe et double authentification. Le service utilise un
+seul cookie, nécessaire à la connexion à l'interface ; aucun cookie publicitaire ou de mesure
+d'audience n'est déposé.</p>
+
+<h2>4. Partage</h2>
+<p>Aucune donnée n'est vendue, louée ni partagée avec des tiers. Les seules informations
+transmises vers l'extérieur sont les vidéos que le propriétaire publie volontairement sur
+YouTube et TikTok, envoyées directement à ces plateformes.</p>
+
+<h2>5. Conservation et suppression</h2>
+<p>Les jetons sont conservés tant que le compte reste connecté. Le bouton « Déconnecter » de
+Clip supprime immédiatement les jetons du serveur. Les autres données (statistiques, vidéos)
+sont supprimées sur simple demande (voir Contact). Vous pouvez aussi retirer l'accès à tout moment :</p>
+<ul>
+<li>Google / YouTube : <a href="https://security.google.com/settings/security/permissions">page des
+autorisations de sécurité de Google</a> ;</li>
+<li>TikTok : Paramètres et confidentialité &gt; Sécurité &gt; Applications autorisées.</li>
+</ul>
+
+<h2>6. Contact</h2>
+<p>Pour toute question ou demande de suppression : {contact}. Cette page peut évoluer ; la date
+de mise à jour figure en haut.</p>"""
+
+
+def _legal(title: str, body: str) -> str:
+    return _PAGE.format(title=title, updated=LEGAL_UPDATED, body=body.format(contact=_contact()))
+
+
+@app.get("/terms", response_class=HTMLResponse)
 @app.get("/conditions", response_class=HTMLResponse)
 def page_terms():
-    return _PAGE.format(title="Conditions d'utilisation", body=_TERMS)
+    return _legal("Conditions d'utilisation", _TERMS)
 
 
+@app.get("/privacy", response_class=HTMLResponse)
 @app.get("/confidentialite", response_class=HTMLResponse)
 def page_privacy():
-    return _PAGE.format(title="Politique de confidentialité", body=_PRIVACY)
+    return _legal("Règles de confidentialité", _PRIVACY)
 
 
 @app.get("/{name}.txt", response_class=PlainTextResponse)

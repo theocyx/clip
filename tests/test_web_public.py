@@ -58,3 +58,21 @@ def test_keyword_filter():
     assert matches_keywords("gta vi première soirée", "gta, gta vi")
     assert not matches_keywords("Minecraft hardcore", "GTA")
     assert not matches_keywords("agtar", "GTA")
+
+
+def test_privacy_and_terms_pages():
+    for path in ("/privacy", "/terms", "/confidentialite", "/conditions"):
+        r = client.get(path, follow_redirects=False)
+        assert r.status_code == 200, path
+    priv = client.get("/privacy").text
+    assert "services API YouTube" in priv
+    assert "https://www.youtube.com/t/terms" in priv
+    assert "https://policies.google.com/privacy" in priv
+    assert "security.google.com/settings/security/permissions" in priv
+    assert "{contact}" not in priv and "{contact}" not in client.get("/terms").text
+
+
+def test_contact_email_shown(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "contact_email", "moi@exemple.fr")
+    assert "mailto:moi@exemple.fr" in client.get("/privacy").text
