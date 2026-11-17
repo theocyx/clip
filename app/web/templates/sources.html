@@ -28,6 +28,35 @@
     {% else %}<tr><td colspan="5" class="mut">Aucune source pour l'instant.</td></tr>{% endfor %}
   </table>
 </div>
+<div class="card">
+  <h3>🔎 Découverte automatique :
+    {% if discover.on %}<span class="ok">active</span>{% else %}<span class="mut">désactivée</span>{% endif %}</h3>
+  <p class="mut">Cherche les streamers français en live sur {{ discover.games }} (Twitch) et les lives GTA FR sur YouTube,
+    et ajoute ceux qui ont au moins {{ discover.min_viewers }} spectateurs (filtre GTA, lives seulement),
+    {{ discover.max }} au maximum pour ménager le PC.
+    {% if discover.expire %}Une chaîne qui ne fait plus de GTA depuis {{ discover.expire }} jours est retirée.{% endif %}
+    Une chaîne que tu supprimes n'est plus jamais rajoutée.</p>
+  {% if discover.searching %}<p>Recherche en cours… recharge la page dans une minute.</p>
+  {% elif discover.status %}<p>Dernière recherche : {{ discover.status.message }}</p>{% endif %}
+  <p>{% if discover.env_on %}<form class="inline" method="post" action="/sources/discover/toggle"><button class="sec">{{ 'Désactiver' if discover.on else 'Activer' }}</button></form>{% else %}<span class="mut">Désactivée dans .env (DISCOVER=false).</span>{% endif %}
+    <form class="inline" method="post" action="/sources/discover"><button>Chercher maintenant</button></form></p>
+  {% if auto_sources %}
+  <table>
+    <tr><th>Ajoutée automatiquement</th><th>Plateforme</th><th>Vue en live GTA</th><th></th></tr>
+    {% for s in auto_sources %}
+    <tr>
+      <td><a href="{{ s.url }}" target="_blank" rel="noopener">{{ s.name }}</a> <span class="badge">auto</span></td>
+      <td>{{ s.platform }}</td>
+      <td class="mut">{{ s.last_seen.strftime('%d/%m %H:%M') if s.last_seen else '—' }} UTC</td>
+      <td>
+        <form class="inline" method="post" action="/sources/{{ s.id }}/toggle"><button class="sec">{{ 'Désactiver' if s.enabled else 'Activer' }}</button></form>
+        <form class="inline" method="post" action="/sources/{{ s.id }}/delete"><button class="danger">Retirer</button></form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
 {% if suggestions %}
 <div class="card">
   <h3>Streamers français suggérés (spécial GTA 6)</h3>

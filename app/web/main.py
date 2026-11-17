@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import threading
 import secrets
 from pathlib import Path
 from urllib.parse import quote
@@ -12,15 +14,16 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Red
 from fastapi.templating import Jinja2Templates
 from sqlmodel import col, func, select
 
-from .. import db, gta6, learning, notify
+from .. import db, discovery, gta6, health, learning, notify
 from ..config import get_settings
-from ..models import Clip, Post, PostStat, Source, Video
+from ..models import Clip, DiscoverIgnore, Post, PostStat, Source, Video
 from ..pipeline import process, sources
 from ..publish import creds, tiktok, youtube
 from . import mfa
 
 # Pages accessibles sans connexion (exigées par TikTok / Google, et la connexion elle-même).
-PUBLIC_PATHS = {"/conditions", "/confidentialite", "/login", "/mfa/setup"}
+PUBLIC_PATHS = {"/conditions", "/confidentialite", "/login", "/mfa/setup", "/healthz"}
+log = logging.getLogger(__name__)
 VERIFY_FILE = re.compile(r"^/[A-Za-z0-9_-]{1,100}\.txt$")
 
 
@@ -53,9 +56,28 @@ def back(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
 
 
+_stop = threading.Event()
+
+
 @app.on_event("startup")
 def _startup():
     db.get_engine()
+    crashed = health.started("web")
+    if crashed:
+        notify.send(health.crash_message("web", crashed))
+    # l'interface surveille le worker (et le worker surveille l'interface)
+    threading.Thread(target=health.loop, args=("web", _stop), daemon=True, name="health").start()
+
+
+@app.on_event("shutdown")
+def _shutdown():
+    _stop.set()
+    health.stopped("web")
+
+
+@app.get("/healthz", response_class=PlainTextResponse)
+def healthz():
+    return "ok"
 
 
 # ---------- Connexion (mot de passe + code MFA) ----------
@@ -163,7 +185,7 @@ def dashboard(request: Request):
             day_one["queued"] = [src.name if src else v.title for v, src in queued]
     return templates.TemplateResponse(request, "dashboard.html", {
         "counts": counts, "posts": posts, "videos": videos, "n_sources": n_sources, "accounts": accounts_status(),
-        "gta6": day_one, **ctx})
+        "gta6": day_one, "health": health.snapshot(), **ctx})
 
 
 @app.post("/gta6")
@@ -187,12 +209,30 @@ def accounts_status() -> dict:
 # ---------- Sources ----------
 
 @app.get("/sources")
-def list_sources(request: Request):
+def list_sources(request: Request, searching: bool = False):
     with db.session() as s:
         items = s.exec(select(Source).order_by(col(Source.created_at))).all()
     followed = {i.url.lower() for i in items}
     suggestions = [c for c in suggested_channels() if c["url"].lower() not in followed]
-    return templates.TemplateResponse(request, "sources.html", {"sources": items, "suggestions": suggestions})
+    cfg = get_settings()
+    return templates.TemplateResponse(request, "sources.html", {
+        "sources": [i for i in items if not i.auto], "auto_sources": [i for i in items if i.auto],
+        "suggestions": suggestions, "discover": {
+            "on": discovery.enabled(), "env_on": cfg.discover, "status": discovery.last_status(),
+            "max": cfg.discover_max_sources, "min_viewers": cfg.discover_min_viewers,
+            "games": cfg.discover_games, "expire": cfg.discover_expire_days, "searching": searching}})
+
+
+@app.post("/sources/discover")
+def discover_now(tasks: BackgroundTasks):
+    tasks.add_task(discovery.run)
+    return back("/sources?searching=1")
+
+
+@app.post("/sources/discover/toggle")
+def discover_toggle():
+    discovery.set_enabled(not discovery.enabled())
+    return back("/sources")
 
 
 def suggested_channels() -> list[dict]:
@@ -235,6 +275,8 @@ def delete_source(sid: int):
     with db.session() as s:
         src = s.get(Source, sid)
         if src:
+            if src.auto:  # retirée à la main : la découverte ne la rajoutera pas
+                s.merge(DiscoverIgnore(url=discovery.key_of(src.url)))
             for v in s.exec(select(Video).where(Video.source_id == sid)).all():
                 v.source_id = None
                 s.add(v)

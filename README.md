@@ -105,6 +105,14 @@ Actif automatiquement de la veille au soir du 19/11/2026 pendant 3 jours (ou bou
 - les clips GTA 6 les plus récents sont publiés d'abord, toutes les 30 min et à toute heure (le quota YouTube reste ~6 envois/jour) ;
 - une notification est envoyée à chaque nouveau live GTA 6.
 
+## Santé du serveur
+
+Le tableau de bord affiche le disque, la température du CPU, la mémoire, la charge, l'état du worker et de l'IA. Une notification (Discord/Telegram) part quand le disque dépasse 90 % (ou moins de 5 Go libres), le CPU 90 °C, la mémoire 92 %, quand l'interface web, Ollama ou une tâche du worker ne répond plus, quand le worker ne donne plus signe de vie depuis 10 min, ou après un plantage (redémarrage brutal). Rappel toutes les 6 h tant que ça dure, puis « ✅ Réglé ». Réglages `HEALTH_*` (`HEALTH=false` pour couper).
+
+## Découverte automatique des streamers
+
+Toutes les 30 min (10 min pendant le mode GTA 6), Clip cherche les lives français sur Twitch (catégories `DISCOVER_GAMES`, par défaut GTA VI et GTA V) et les lives GTA FR sur YouTube, et ajoute ceux qui ont au moins `DISCOVER_MIN_VIEWERS` (150) spectateurs : filtre de titre GTA, lives seulement (pas de rediffusions), `DISCOVER_PER_RUN` (2) par recherche et `DISCOVER_MAX_SOURCES` (10) au total pour ménager le CPU. Ils sont marqués « auto » dans Sources ; une chaîne qui ne fait plus de GTA depuis `DISCOVER_EXPIRE_DAYS` (7) jours est retirée, et une chaîne que tu supprimes n'est jamais rajoutée. Bouton « Chercher maintenant » et activation/désactivation dans Sources.
+
 ## Réglages utiles (`.env`)
 
 | Variable | Rôle | Défaut |

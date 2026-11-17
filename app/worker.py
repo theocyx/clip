@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from sqlmodel import col, select
 
-from . import db, gta6, learning, maintenance, notify
+from . import db, discovery, gta6, health, learning, maintenance, notify
 from .config import get_settings
 from .models import Clip, ClipInfo, Post, Source, Video, now
 from .pipeline import process, sources
@@ -475,6 +475,10 @@ def maintenance_loop():
         stop.wait(6 * 3600)  # la sauvegarde n'est faite qu'une fois par jour
 
 
+def discover_loop():
+    discovery.loop(stop)
+
+
 def reset_interrupted():
     """Remet en file les tâches coupées par un redémarrage."""
     with db.session() as s:
@@ -522,17 +526,22 @@ def main():
     reset_interrupted()
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
+    crashed = health.started("worker")
     threads = [threading.Thread(target=f, daemon=True, name=f.__name__)
-               for f in (poll_loop, record_loop, process_loop, publish_loop, stats_loop, maintenance_loop)]
+               for f in (poll_loop, record_loop, process_loop, publish_loop, stats_loop, maintenance_loop,
+                         discover_loop)]
     for t in threads:
         t.start()
+    # la surveillance démarre après : elle vérifie que les autres tâches tournent toujours
+    threading.Thread(target=health.loop, args=("worker", stop, threads), daemon=True, name="health").start()
     log.info("Worker démarré")
-    notify.send("🟢 Clip a démarré")
+    notify.send(health.crash_message("worker", crashed) if crashed else "🟢 Clip a démarré")
     while not stop.wait(3600):
         pass
     recs = list(recorders.values())
     # le traitement s'arrête à la fin de la phrase en cours ; on lui laisse jusqu'à 90 s
     wait_for([t for t in threads if t.name == "process_loop"], recs, 90)
+    health.stopped("worker")
     log.info("Worker arrêté proprement")
 
 

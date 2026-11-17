@@ -20,6 +20,8 @@ class Source(SQLModel, table=True):
     include_videos: bool = True  # vidéos YouTube / VOD Twitch publiées
     keywords: str = ""  # mots-clés séparés par des virgules (ex. « GTA ») : seuls ces titres sont clippés
     initialized: bool = False  # premier scan fait (l'historique existant est ignoré)
+    auto: bool = False  # ajoutée par la découverte automatique
+    last_seen: Optional[datetime] = None  # dernière fois vue en live sur GTA par la découverte
     last_checked: Optional[datetime] = None
     created_at: datetime = Field(default_factory=now)
 
@@ -110,3 +112,10 @@ class Tuning(SQLModel, table=True):
     created_at: datetime = Field(default_factory=now)
     samples: int = 0
     data: str = "{}"  # JSON
+
+
+class DiscoverIgnore(SQLModel, table=True):
+    """Chaîne supprimée à la main : la découverte automatique ne la rajoute plus."""
+
+    url: str = Field(primary_key=True)
+    created_at: datetime = Field(default_factory=now)

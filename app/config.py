@@ -95,6 +95,28 @@ class Settings(BaseSettings):
     notify_published: bool = True
     notify_errors: bool = True
 
+    # Santé du serveur : alertes par notification (disque, température, mémoire, services)
+    health: bool = True
+    health_interval: int = 300  # secondes entre deux vérifications
+    health_disk_pct: float = 90  # alerte au-delà de ce % de disque utilisé…
+    health_disk_min_gb: float = 5  # … ou sous ce nombre de Go libres
+    health_temp_max: float = 90  # °C (le Ryzen 4700U se protège vers 105 °C)
+    health_ram_pct: float = 92
+    health_repeat_hours: float = 6  # rappel tant que le problème dure (0 = une seule fois)
+    health_worker_timeout: int = 600  # worker sans signe de vie depuis N secondes = planté
+    health_web_url: str = "http://web:8000/healthz"  # vide = pas de vérification de l'interface
+
+    # Découverte automatique des streamers FR qui jouent à GTA
+    discover: bool = True
+    discover_games: str = "Grand Theft Auto VI,Grand Theft Auto V"  # catégories Twitch
+    discover_youtube: bool = True
+    discover_youtube_queries: str = "gta 6 fr,gta rp fr"  # recherches de lives YouTube
+    discover_min_viewers: int = 150  # spectateurs minimum pour être ajouté
+    discover_max_sources: int = 10  # plafond de chaînes ajoutées automatiquement (CPU)
+    discover_per_run: int = 2  # ajouts max par recherche
+    discover_interval_minutes: int = 30  # 10 min max pendant le mode GTA 6
+    discover_expire_days: int = 7  # chaîne auto retirée si plus vue en live GTA depuis N jours (0 = jamais)
+
     # Sauvegarde de la base et ménage du disque
     backup_keep: int = 7  # nombre de sauvegardes quotidiennes gardées (0 = pas de sauvegarde)
     source_keep_days: int = 3  # vidéos sources (échecs, lives enregistrés) supprimées après N jours
