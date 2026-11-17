@@ -364,9 +364,20 @@ def in_publish_window(at: datetime | None = None) -> bool:
     return any((a <= m < b) if a <= b else (m >= a or m < b) for a, b in ranges)
 
 
-def post_limit() -> int:
+def post_limit(platform: str = "youtube") -> int:
+    """Envois max sur 24 h glissantes, 0 = pas de limite. Réglage de l'interface, sinon le .env."""
     cfg = get_settings()
-    return cfg.gta6_max_posts_per_day if gta6.active() and cfg.gta6_max_posts_per_day > 0 else cfg.max_posts_per_day
+    if gta6.active() and cfg.gta6_max_posts_per_day > 0:
+        return cfg.gta6_max_posts_per_day
+    ui = platforms.daily_limit(platform)
+    return ui if ui is not None else max(0, cfg.max_posts_per_day)
+
+
+def quota_reset() -> datetime:
+    """Prochain minuit, heure du Pacifique (remise à zéro du quota YouTube), en UTC sans fuseau."""
+    pt = datetime.now(ZoneInfo("America/Los_Angeles"))
+    nxt = (pt + timedelta(days=1)).replace(hour=0, minute=5, second=0, microsecond=0)
+    return nxt.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
 
 
 def post_gap() -> int:
@@ -390,17 +401,23 @@ def used_today(s, platform: str) -> int:
 
 
 def can_post(s, platform: str) -> bool:
+    if platforms.blocked_until(platform):
+        return False
     if not anytime() and not in_publish_window():
         return False
     last = last_published(s, platform)
     if last and now() - last < timedelta(minutes=post_gap()):
         return False
-    return used_today(s, platform) < post_limit()
+    limit = post_limit(platform)
+    return not limit or used_today(s, platform) < limit
 
 
 def slots_left(s, platform: str) -> int:
     """Envois encore possibles d'ici minuit (quota, écart minimum entre deux envois, heures de publication)."""
-    left = post_limit() - used_today(s, platform)
+    if platforms.blocked_until(platform):
+        return 0
+    limit = post_limit(platform)
+    left = limit - used_today(s, platform) if limit else 10_000
     if left <= 0:
         return 0
     tz = ZoneInfo(get_settings().timezone)
@@ -459,7 +476,11 @@ def plan(s) -> dict[str, dict]:
         q = queue(s, platform)
         on = platforms.enabled(platform) and connected(platform)
         left = slots_left(s, platform) if on else 0
-        out[platform] = {"on": on, "used": used_today(s, platform), "limit": post_limit(), "left": left,
+        until = platforms.blocked_until(platform)
+        out[platform] = {"on": on, "used": used_today(s, platform), "limit": post_limit(platform), "left": left,
+                         "ui_limit": platforms.daily_limit(platform),
+                         "blocked": until.replace(tzinfo=ZoneInfo("UTC")).astimezone(
+                             ZoneInfo(get_settings().timezone)).strftime("%d/%m %H:%M") if until else "",
                          "today": {p.id: i + 1 for i, (p, _) in enumerate(q[:left])},
                          "manual": [p.id for p, _ in q[left:]], "pending": len(q)}
     return out
@@ -488,12 +509,24 @@ def publish_once(platform: str) -> bool:
         s.add(post)
         s.commit()
     desc, tags = description(clip, video)
+    quota_hit = False
     try:
         if not Path(clip.path).exists():
             raise RuntimeError("Fichier du clip introuvable")
         remote = PUBLISHERS[platform](clip, desc, tags)
         status, err = "published", ""
         log.info("Publié sur %s : %s", platform, clip.title)
+    except youtube.QuotaExceeded as e:
+        # quota du jour atteint : rien n'est perdu, les clips restent en file jusqu'à la remise à zéro
+        until = quota_reset()
+        platforms.block_until(platform, until)
+        remote, err, status, quota_hit = "", "", "pending", True
+        with db.session() as s:
+            waiting = len(queue(s, platform))
+        local = until.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo(get_settings().timezone))
+        log.warning("Quota %s atteint, reprise le %s UTC : %s", platform, until, e)
+        notify.send(f"⏸ Quota {platforms.LABELS[platform]} atteint : envois en pause jusqu'au "
+                    f"{local:%d/%m à %H:%M}. {waiting + 1} clip(s) en file, à poster à la main si besoin.")
     except Exception as e:
         log.exception("Publication %s échouée", platform)
         remote, err = "", str(e)[:1000]
@@ -503,6 +536,8 @@ def publish_once(platform: str) -> bool:
     with db.session() as s:
         post = s.get(Post, post.id)
         post.status, post.remote_id, post.error = status, remote, err
+        if quota_hit:
+            post.attempts = max(0, post.attempts - 1)  # ne compte pas comme un essai raté
         if status == "published":
             post.published_at = now()
         s.add(post)

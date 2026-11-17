@@ -2,13 +2,18 @@
 <div class="card">
   <h3>📅 Envois d'aujourd'hui</h3>
   {% for name, p in plan.items() %}
-  <div>{{ labels[name] }} :
-    {% if p.on %}<b>{{ p.used }}/{{ p.limit }}</b> envois sur 24 h · <span class="ok">{{ p.today|length }} prévu(s) d'ici minuit</span>
+  <div style="margin:4px 0">{{ labels[name] }} :
+    {% if p.blocked %}<span class="err">quota YouTube atteint, reprise le {{ p.blocked }}</span>
+      <form class="inline" method="post" action="/platforms/{{ name }}/limit"><input type="hidden" name="resume" value="1"><button class="sec">Reprendre maintenant</button></form>
+    {% elif p.on %}<b>{{ p.used }}{% if p.limit %}/{{ p.limit }}{% endif %}</b> envois sur 24 h · <span class="ok">{{ p.today|length }} prévu(s) d'ici minuit</span>
     {% else %}<span class="err">publication auto en pause ou compte non connecté</span>{% endif %}
     · <span class="{{ 'err' if p.manual else 'mut' }}">{{ p.manual|length }} à poster à la main</span>
+    <form class="inline" method="post" action="/platforms/{{ name }}/limit">
+      <span class="mut">limite/jour</span> <input type="number" min="0" name="limit" value="{{ p.ui_limit if p.ui_limit is not none else '' }}" placeholder="{{ p.limit or 'aucune' }}" style="width:80px;min-width:0">
+      <button class="sec">OK</button></form>
   </div>
   {% endfor %}
-  <p class="mut">Le quota du jour est gardé pour les clips les mieux notés{% if gta6 %} (en mode GTA 6, les plus récents comptent plus){% endif %}.
+  <p class="mut">Les envois du jour vont d'abord aux clips les mieux notés (limite vide = celle du .env, 0 = aucune ; si YouTube refuse pour quota atteint, reprise automatique le lendemain){% if gta6 %} (en mode GTA 6, les plus récents comptent plus){% endif %}.
     Les autres sont à télécharger et à poster depuis l'appli, puis à marquer « posté à la main » pour qu'ils ne partent pas en double.</p>
 </div>
 <div style="margin:12px 0">
