@@ -175,3 +175,24 @@ def test_quota_exceeded_pauses_until_tomorrow(monkeypatch):
     client.post("/platforms/youtube/limit", data={"resume": "1"})
     assert platforms.blocked_until("youtube") is None
     _clear()
+
+
+def test_schedule_from_panel(monkeypatch):
+    monkeypatch.setattr(worker.gta6, "active", lambda: False)
+    assert platforms.valid_hours("12-14,18-22:30") and platforms.valid_hours("")
+    assert not platforms.valid_hours("12h-14h") and not platforms.valid_hours("25-26")
+    client = TestClient(main.app)
+    client.cookies.set(mfa.SESSION_COOKIE, mfa.make_token("session", 3600))
+    r = client.post("/schedule", data={"hours": "9-11, 20-23", "gap": "45"}, follow_redirects=False)
+    assert r.headers["location"] == "/clips?sched=ok"
+    assert platforms.publish_hours() == "9-11,20-23" and platforms.min_gap() == 45
+    tz = ZoneInfo(worker.get_settings().timezone)
+    assert worker.in_publish_window(datetime(2026, 11, 17, 10, 0, tzinfo=tz))
+    assert not worker.in_publish_window(datetime(2026, 11, 17, 13, 0, tzinfo=tz))
+    assert worker.post_gap() == 45
+    r = client.post("/schedule", data={"hours": "midi", "next": "/accounts"}, follow_redirects=False)
+    assert r.headers["location"] == "/accounts?sched=ko" and platforms.publish_hours() == "9-11,20-23"
+    assert "9-11,20-23" in client.get("/clips").text and "9-11,20-23" in client.get("/accounts").text
+    client.post("/schedule", data={"reset": "1"})
+    assert platforms.publish_hours() == worker.get_settings().publish_hours
+    assert platforms.min_gap() == worker.get_settings().min_minutes_between_posts

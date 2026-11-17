@@ -13,6 +13,7 @@
       <button class="sec">OK</button></form>
   </div>
   {% endfor %}
+  {% with next="/clips" %}{% include "_schedule.html" %}{% endwith %}
   <p class="mut">Les envois du jour vont d'abord aux clips les mieux notés (limite vide = celle du .env, 0 = aucune ; si YouTube refuse pour quota atteint, reprise automatique le lendemain){% if gta6 %} (en mode GTA 6, les plus récents comptent plus){% endif %}.
     Les autres sont à télécharger et à poster depuis l'appli, puis à marquer « posté à la main » pour qu'ils ne partent pas en double.</p>
 </div>

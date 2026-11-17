@@ -3,11 +3,13 @@
 Une plateforme coupée ne perd rien : les clips restent en attente pour elle et partent
 quand on la rallume (ou peuvent être retirés de la file d'un clic).
 """
+import re
 from datetime import datetime
 
 from sqlmodel import col, func, select
 
 from . import db
+from .config import get_settings
 from .models import Post, Setting, now
 
 PLATFORMS = ("youtube", "tiktok")
@@ -80,6 +82,42 @@ def blocked_until(platform: str) -> datetime | None:
 
 def block_until(platform: str, until: datetime | None) -> None:
     _put(f"quota_until_{platform}", until.isoformat() if until else None)
+
+
+HOURS_RE = re.compile(r"^\s*(\d{1,2}(:\d{2})?\s*-\s*\d{1,2}(:\d{2})?)(\s*,\s*\d{1,2}(:\d{2})?\s*-\s*\d{1,2}(:\d{2})?)*\s*$")
+
+
+def valid_hours(spec: str) -> bool:
+    """« 12-14,18-22:30 » ; vide = à toute heure."""
+    if not spec.strip():
+        return True
+    if not HOURS_RE.match(spec):
+        return False
+    for t in re.findall(r"\d{1,2}(?::\d{2})?", spec):
+        h, _, m = t.partition(":")
+        if int(h) > 24 or int(m or 0) > 59 or (int(h) == 24 and int(m or 0)):
+            return False
+    return True
+
+
+def publish_hours() -> str:
+    """Heures d'envoi réglées dans l'interface, sinon PUBLISH_HOURS du .env."""
+    v = _get("publish_hours")
+    return get_settings().publish_hours if v is None else v
+
+
+def min_gap() -> int:
+    """Minutes minimum entre deux envois (interface, sinon MIN_MINUTES_BETWEEN_POSTS)."""
+    v = _get("min_gap")
+    return int(v) if v and v.isdigit() else get_settings().min_minutes_between_posts
+
+
+def set_schedule(hours: str | None, gap: int | None) -> None:
+    """None = revenir à la valeur du .env."""
+    if hours is not None and not valid_hours(hours):
+        raise ValueError(hours)
+    _put("publish_hours", None if hours is None else re.sub(r"\s+", "", hours))
+    _put("min_gap", None if gap is None else str(max(0, gap)))
 
 
 def drop_pending(platform: str) -> int:
