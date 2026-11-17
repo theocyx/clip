@@ -66,6 +66,10 @@ Pour 1 h de vidéo : transcription ≈ 15-25 min (`WHISPER_MODEL=small`), IA ≈
 
 Sur le tableau de bord (et la page **Comptes**), un bouton par plateforme met la publication en pause ou la réactive. **TikTok est en pause par défaut** tant que l'app n'est pas validée. En pause, les clips restent en attente pour cette plateforme et partent à la réactivation (en mode GTA 6, les plus récents d'abord) ; « Vider la file » les retire (republiables depuis **Clips**).
 
+## Quota du jour et envoi manuel (page **Clips**)
+
+Le quota YouTube (~6 envois/jour) est réservé aux clips **les mieux notés** (en mode GTA 6, les plus récents comptent plus). La page **Clips** affiche les envois utilisés et prévus d'ici minuit, et trie les clips en onglets : **À poster à la main** (ceux qui ne passeront pas aujourd'hui), **Prévus aujourd'hui** (avec leur ordre), **Déjà publiés** (auto ou à la main). Pour chaque clip : **Télécharger** le MP4, **Textes à copier** (titre, description, légende TikTok, hashtags), puis **✅ Posté sur YouTube/TikTok** pour qu'il ne parte pas en double.
+
 ## Apprendre de ce qui marche (page **Stats**)
 
 Toutes les 6 h, Clip relève les vues, likes, commentaires (et la rétention YouTube) de chaque clip publié, puis compare les clips entre eux à 3 jours d'âge. Dès 10 clips mesurés, il ajuste tout seul, doucement :

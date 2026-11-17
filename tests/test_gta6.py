@@ -145,7 +145,8 @@ def test_fast_publishing(monkeypatch, day_one):
         s.add(new)
         s.commit()
         clips = [Clip(video_id=other.id, group="o", start=0, end=60, score=0.99, title="mc", path=__file__),
-                 Clip(video_id=old.id, group="m", start=0, end=60, score=0.9, title="matin", path=__file__),
+                 Clip(video_id=old.id, group="m", start=0, end=60, score=0.9, title="matin", path=__file__,
+                      created_at=worker.now() - worker.timedelta(hours=6)),
                  Clip(video_id=new.id, group="n", start=0, end=60, score=0.5, title="soir", path=__file__)]
         s.add_all(clips)
         s.commit()

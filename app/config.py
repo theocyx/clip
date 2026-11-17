@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     gta6_min_minutes_between_posts: int = 30
     gta6_publish_anytime: bool = True  # ignore les heures de publication pendant le mode
     gta6_max_posts_per_day: int = 0  # 0 = comme MAX_POSTS_PER_DAY
+    gta6_fresh_hours: float = 3  # mode GTA 6 : le score d'un clip est divisé par 2 toutes les N heures
 
     # Notifications (laisser vide pour désactiver)
     discord_webhook_url: str = ""

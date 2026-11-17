@@ -364,39 +364,105 @@ def in_publish_window(at: datetime | None = None) -> bool:
     return any((a <= m < b) if a <= b else (m >= a or m < b) for a, b in ranges)
 
 
-def can_post(s, platform: str) -> bool:
+def post_limit() -> int:
     cfg = get_settings()
-    day_one = gta6.active()  # la hype est courte : on publie plus vite, à toute heure
-    if not (day_one and cfg.gta6_publish_anytime) and not in_publish_window():
-        return False
-    gap = cfg.gta6_min_minutes_between_posts if day_one else cfg.min_minutes_between_posts
-    last = s.exec(select(Post).where(Post.platform == platform, Post.status == "published")
+    return cfg.gta6_max_posts_per_day if gta6.active() and cfg.gta6_max_posts_per_day > 0 else cfg.max_posts_per_day
+
+
+def post_gap() -> int:
+    cfg = get_settings()
+    return cfg.gta6_min_minutes_between_posts if gta6.active() else cfg.min_minutes_between_posts
+
+
+def anytime() -> bool:
+    return gta6.active() and get_settings().gta6_publish_anytime  # la hype est courte : on publie à toute heure
+
+
+def last_published(s, platform: str) -> datetime | None:
+    return s.exec(select(Post.published_at).where(Post.platform == platform, Post.status == "published")
                   .order_by(col(Post.published_at).desc())).first()
-    if last and last.published_at and now() - last.published_at < timedelta(minutes=gap):
+
+
+def used_today(s, platform: str) -> int:
+    """Envois automatiques des dernières 24 h (c'est ce que compte le quota)."""
+    return len(s.exec(select(Post.id).where(Post.platform == platform, Post.status == "published",
+                                            Post.published_at >= now() - timedelta(days=1))).all())
+
+
+def can_post(s, platform: str) -> bool:
+    if not anytime() and not in_publish_window():
         return False
-    day = s.exec(select(Post).where(Post.platform == platform, Post.status == "published",
-                                    Post.published_at >= now() - timedelta(days=1))).all()
-    limit = cfg.gta6_max_posts_per_day if day_one and cfg.gta6_max_posts_per_day > 0 else cfg.max_posts_per_day
-    return len(day) < limit
+    last = last_published(s, platform)
+    if last and now() - last < timedelta(minutes=post_gap()):
+        return False
+    return used_today(s, platform) < post_limit()
+
+
+def slots_left(s, platform: str) -> int:
+    """Envois encore possibles d'ici minuit (quota, écart minimum entre deux envois, heures de publication)."""
+    left = post_limit() - used_today(s, platform)
+    if left <= 0:
+        return 0
+    tz = ZoneInfo(get_settings().timezone)
+    t = datetime.now(tz).replace(second=0, microsecond=0)
+    midnight = (t + timedelta(days=1)).replace(hour=0, minute=0)
+    last = last_published(s, platform)
+    if last:  # published_at est en UTC sans fuseau
+        nxt = last.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz) + timedelta(minutes=post_gap())
+        t = max(t, nxt)
+    n, gap = 0, timedelta(minutes=max(1, post_gap()))
+    while t < midnight and n < left:
+        if anytime() or in_publish_window(t):
+            n += 1
+            t += gap
+        else:
+            t += timedelta(minutes=1)
+    return n
+
+
+def rank(clip: Clip, video: Video, at: datetime | None = None) -> float:
+    """Valeur d'un clip pour la file : son score, et en mode GTA 6 la fraîcheur compte (la hype ne dure pas)."""
+    if not gta6.active():
+        return clip.score
+    age_h = max(0.0, ((at or now()) - clip.created_at).total_seconds() / 3600)
+    half = get_settings().gta6_fresh_hours
+    fresh = 0.5 ** (age_h / half) if half > 0 else 1.0
+    return clip.score * fresh * (1.0 if gta6.is_gta6(video.title) else 0.5)
+
+
+def queue(s, platform: str) -> list[tuple[Post, Clip]]:
+    """Clips en attente dans l'ordre d'envoi : les suites d'un clip d'abord, puis les mieux classés."""
+    rows = s.exec(select(Post, Clip, Video).join(Clip, Clip.id == Post.clip_id).join(Video, Video.id == Clip.video_id)
+                  .where(Post.platform == platform, Post.status == "pending", Clip.status == "ready")).all()
+    at = now()
+    rows = sorted(rows, key=lambda r: (r[1].part <= 1, -rank(r[1], r[2], at), -r[1].id))
+    return [(post, clip) for post, clip, _ in rows]
 
 
 def next_post(s, platform: str) -> Post | None:
     """Prochain envoi : les parties suivantes d'un clip passent en priorité, dans l'ordre."""
-    rows = s.exec(select(Post, Clip, Video).join(Clip, Clip.id == Post.clip_id).join(Video, Video.id == Clip.video_id)
-                  .where(Post.platform == platform, Post.status == "pending", Clip.status == "ready")
-                  .order_by(col(Clip.part).desc(), col(Clip.score).desc())).all()
-    if gta6.active():
-        # mode GTA 6 : les suites d'abord, puis les clips GTA 6 les plus récents (la hype ne dure pas)
-        rows = sorted(rows, key=lambda r: (r[1].part <= 1, not gta6.is_gta6(r[2].title), -r[2].id))
-    pending = [(post, clip) for post, clip, _ in rows]
-    for post, clip in pending:
+    for post, clip in queue(s, platform):
         if clip.part > 1:
             prev = s.exec(select(Post).join(Clip, Clip.id == Post.clip_id).where(
                 Clip.group == clip.group, Clip.part == clip.part - 1, Post.platform == platform)).first()
-            if prev and prev.status != "published":
+            if prev and prev.status not in ("published", "manual"):
                 continue
         return post
     return None
+
+
+def plan(s) -> dict[str, dict]:
+    """Par plateforme : envois utilisés / restants aujourd'hui, clips qui partiront aujourd'hui (rang)
+    et clips en trop, à poster à la main."""
+    out = {}
+    for platform in ("youtube", "tiktok"):
+        q = queue(s, platform)
+        on = platforms.enabled(platform) and connected(platform)
+        left = slots_left(s, platform) if on else 0
+        out[platform] = {"on": on, "used": used_today(s, platform), "limit": post_limit(), "left": left,
+                         "today": {p.id: i + 1 for i, (p, _) in enumerate(q[:left])},
+                         "manual": [p.id for p, _ in q[left:]], "pending": len(q)}
+    return out
 
 
 def connected(platform: str) -> bool:
