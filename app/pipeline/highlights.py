@@ -191,5 +191,24 @@ def find_moments(loudness: np.ndarray, segments: list[dict], *, count: int, targ
             continue
         i0, i1 = int(b), max(int(b) + 1, int(e))
         feats = {k: round(float(v[i0:i1].mean()), 3) if len(v[i0:i1]) else 0.0 for k, v in comps.items()}
+        if i1 > i0 and len(scores[i0:i1]):
+            feats["peak"] = float(i0 + int(np.argmax(_smooth(scores, 3)[i0:i1])))  # seconde la plus forte
         moments.append(Moment(b, e, sc, features=feats))
     return moments
+
+
+def teaser(segments: list[dict], peak: float | None, begin: float, end: float,
+           length: float = 2.5) -> tuple[float, float] | None:
+    """Extrait de ~`length` s autour du moment le plus fort, montré en ouverture du clip (« cold open »).
+
+    Les 2 premières secondes décident si on reste : on montre tout de suite le meilleur passage,
+    puis le clip reprend depuis le début. None si le pic est déjà au début (inutile)."""
+    if peak is None or length <= 0 or not (begin <= peak <= end) or peak - begin < length + 4:
+        return None
+    words = [w for s in segments for w in s.get("words", []) if peak - 1.5 <= w["start"] <= peak + length]
+    start = next((w["start"] for w in words if w["start"] >= peak - 1.2), peak - 1.0)
+    start = max(begin, start - 0.1)
+    ends = [w["end"] for w in words if start + 1.2 <= w["end"] <= start + length + 0.5]
+    stop = (max(ends) + 0.15) if ends else start + length
+    stop = min(stop, end)
+    return (round(start, 2), round(stop, 2)) if stop - start >= 1.0 else None

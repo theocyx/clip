@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     hook_seconds: float = 0  # durée d'affichage de l'accroche (0 = tout le clip)
     hook_emojis: bool = True  # emojis en lien avec le contenu dans l'accroche
     keep_source_videos: bool = False
+    # Ouverture choc : les ~2,5 s les plus fortes du clip montrées en premier, puis le clip depuis le début
+    teaser: bool = True
+    teaser_seconds: float = 2.5
+    title_hashtags: int = 2  # hashtags ajoutés à la fin du titre YouTube (s'il reste de la place)
+    tiktok_max_hashtags: int = 5  # TikTok conseille 3 à 5 hashtags ciblés
     # Mise en page : auto (split si une facecam est détectée, sinon classique), split, classic
     layout: str = "auto"
     split_cam_height: int = 640  # hauteur de la facecam en haut du clip (le jeu prend le reste)

@@ -142,6 +142,8 @@ Toutes les 30 min (10 min pendant le mode GTA 6), Clip cherche les lives frança
 | `MIN_MINUTES_BETWEEN_POSTS` / `MAX_POSTS_PER_DAY` | rythme de publication (0 = pas de limite, réglable aussi dans **Clips**) | 90 / 100 |
 | `HASHTAGS` | hashtags ajoutés | `#shorts #clip #fr` |
 | `HOOK_TITLE` / `HOOK_SECONDS` | accroche en haut de la vidéo / durée (0 = tout le clip) | true / 0 |
+| `TEASER` / `TEASER_SECONDS` | ouverture choc : le passage le plus fort montré en premier, puis le clip depuis le début (gardée ou non selon les stats) | true / 2.5 |
+| `TITLE_HASHTAGS` / `TIKTOK_MAX_HASHTAGS` | hashtags ciblés en fin de titre YouTube / nombre max de hashtags sur TikTok | 2 / 5 |
 | `KEEP_SOURCE_VIDEOS` | garder les vidéos complètes | false |
 
 ## Droits

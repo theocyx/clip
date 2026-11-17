@@ -35,7 +35,7 @@ DURATION_BUCKETS = [(0, 45, 40), (45, 60, 52), (60, 75, 67), (75, 90, 82), (90, 
 
 def defaults() -> dict:
     return {"weights": dict(DEFAULT_WEIGHTS), "llm_mix": 0.6, "clip_target": get_settings().clip_target,
-            "rules": [], "top": [], "flop": [], "insights": []}
+            "rules": [], "top": [], "flop": [], "insights": [], "teaser": True}
 
 
 def latest() -> Tuning | None:
@@ -263,7 +263,17 @@ def learn(force: bool = False) -> dict:
         insights.append("Les accroches en forme de question marchent mieux." if better
                         else "Les accroches affirmatives marchent mieux que les questions.")
 
-    # 5. Streamers (à titre d'info)
+    # 5. Ouverture choc (meilleur passage montré en premier) : gardée seulement si elle aide
+    out["teaser"] = prev.get("teaser", True)
+    with_t = [r["perf"] for r in rows if r.get("teaser") is True]
+    without = [r["perf"] for r in rows if r.get("teaser") is False]
+    if len(with_t) >= 3 and len(without) >= 3 and abs(np.mean(with_t) - np.mean(without)) > 0.1:
+        out["teaser"] = bool(np.mean(with_t) > np.mean(without))
+        insights.append("Les clips qui ouvrent sur leur meilleur passage marchent mieux : ouverture choc gardée."
+                        if out["teaser"] else
+                        "Les clips sans ouverture choc marchent mieux : elle devient l'exception.")
+
+    # 6. Streamers (à titre d'info)
     by_src: dict[str, list[float]] = {}
     for r in rows:
         if r["source"]:
@@ -272,7 +282,7 @@ def learn(force: bool = False) -> dict:
     if len(ranked) >= 2:
         insights.append(f"Meilleure source : {ranked[0][1]} ; la moins bonne : {ranked[-1][1]}.")
 
-    # 6. Exemples + règles écrites par l'IA locale
+    # 7. Exemples + règles écrites par l'IA locale
     ordered = sorted(rows, key=lambda r: -r["perf"])
     pick = lambda r: {"title": r["title"], "hook": r.get("hook", ""), "text": r.get("text", ""),  # noqa: E731
                       "perf": round(r["perf"], 2)}
