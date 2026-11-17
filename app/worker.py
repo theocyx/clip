@@ -288,7 +288,7 @@ def process_loop():
 # ---------- Publication ----------
 
 PUBLISHERS = {
-    "youtube": lambda clip, desc, tags: youtube.upload(clip.path, clip.title, desc, tags),
+    "youtube": lambda clip, desc, tags: youtube.upload(clip.path, youtube_title(clip.title, tags), desc, tags),
     "tiktok": lambda clip, desc, tags: tiktok.upload(clip.path, tiktok_caption(clip, desc, tags)),
 }
 
@@ -336,9 +336,33 @@ def description(clip: Clip, video: Video) -> tuple[str, list[str]]:
     return "\n".join(lines), tags_
 
 
+def youtube_title(title: str, tags: list[str]) -> str:
+    """Titre + les 1-2 hashtags les plus ciblés à la fin (cliquables et indexés par la recherche Shorts)."""
+    n = get_settings().title_hashtags
+    out = title.strip()
+    for t in [t for t in tags if t.lower() != "shorts"][:max(0, n)]:
+        if "#" + t.lower() in out.lower():
+            continue
+        cand = f"{out} #{t}"
+        if len(cand) > 100:
+            break
+        out = cand
+    return out
+
+
 def tiktok_caption(clip: Clip, desc: str, tags: list[str]) -> str:
+    """Légende TikTok : titre + streamer + phrase de mots-clés (la recherche TikTok lit la légende)
+    + quelques hashtags ciblés (TikTok conseille 3 à 5)."""
+    s = get_settings()
     who = next((ln.split(": ", 1)[1] for ln in desc.splitlines() if ln.startswith("🎮 Streamer : ")), "")
-    return f"{clip.title}" + (f" 🎮 {who}" if who else "") + " " + " ".join("#" + t for t in tags)
+    src = next((ln.split(": ", 1)[1] for ln in desc.splitlines() if ln.startswith("Extrait de : ")), "")
+    picked = [t for t in tags if t.lower() != "shorts"]
+    if s.tiktok_max_hashtags > 0:
+        picked = picked[:s.tiktok_max_hashtags]
+    cap = f"{clip.title}" + (f" 🎮 {who}" if who else "") + " " + " ".join("#" + t for t in picked)
+    if src and src.lower() not in clip.title.lower():
+        cap += f"\n\nExtrait de « {src} »" + (f" de {who}" if who else "")
+    return cap
 
 
 def parse_hours(spec: str) -> list[tuple[int, int]]:

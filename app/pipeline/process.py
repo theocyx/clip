@@ -117,6 +117,16 @@ def pick_layout(src: Path, start: float, end: float):
     return cam
 
 
+def use_teaser(tun: dict) -> bool:
+    """Ouverture choc ou non : on suit ce que l'apprentissage a retenu, en gardant une part de clips
+    de l'autre façon (EXPLORE) pour continuer à comparer."""
+    s = get_settings()
+    if not s.teaser or s.teaser_seconds <= 0:
+        return False
+    keep = 1 - s.explore if tun.get("teaser", True) else s.explore
+    return random.random() < keep
+
+
 def check_duplicate(video: Video, m) -> bool:
     """Vrai si la scène a déjà un meilleur clip (autre streamer) : on ne crée pas celui-ci.
 
@@ -237,6 +247,7 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
     set_status(video_id, "rendering")
     progress = Progress(video_id, every=0)
     created = 0
+    tun = learning.current()
     todo = sorted(moments, key=lambda m: m.start)
     for k, m in enumerate(todo):
         stop_if_stopping()
@@ -251,6 +262,9 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
         cam = pick_layout(src, m.start, m.end)
         m.features["layout"] = "split" if cam else "classic"
         top = render.split_top(s.split_cam_height) if cam else 0
+        tease = None
+        if use_teaser(tun):
+            tease = highlights.teaser(segments, m.features.get("peak"), parts[0][0], m.end, s.teaser_seconds)
         for i, (a, b) in enumerate(parts, 1):
             if i in done_parts:
                 created += 1
@@ -258,6 +272,7 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
             stop_if_stopping()
             label = f"Partie {i}/{len(parts)}" if len(parts) > 1 else ""
             out = s.clips_dir / str(video_id) / f"{group}_p{i}.mp4"
+            t_i = None
             try:
                 hook_text = (m.hook or m.title) if s.hook_title else ""
                 png = ""
@@ -266,9 +281,19 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                     png = render_hook_png(hook_text, out)
                 if not png:
                     hook_text = hook.strip_emojis(hook_text)
-                ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook_text, s.hook_seconds,
-                                          hook_in_ass=not png, top=top)
-                render.render(src, a, b, ass, out, png, s.hook_seconds, cam)
+                t_i = tease if i == 1 else None
+                try:
+                    ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook_text, s.hook_seconds,
+                                              hook_in_ass=not png, top=top, pieces=[t_i, (a, b)] if t_i else None)
+                    render.render(src, a, b, ass, out, png, s.hook_seconds, cam, t_i)
+                except RuntimeError as e:
+                    if not t_i:
+                        raise
+                    log.warning("Ouverture choc impossible (%s), rendu sans.", str(e)[-200:])
+                    t_i = None
+                    ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook_text, s.hook_seconds,
+                                              hook_in_ass=not png, top=top)
+                    render.render(src, a, b, ass, out, png, s.hook_seconds, cam)
             except Exception as e:
                 log.exception("Rendu échoué")
                 status, err = "failed", str(e)
@@ -282,7 +307,8 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                 ss.add(clip)
                 ss.commit()
                 learning.save_clip_info(clip.id, {**m.features, "title": m.title, "hook": m.hook,
-                                                  "part": i, "part_count": len(parts)})
+                                                  "part": i, "part_count": len(parts),
+                                                  "teaser": bool(t_i) if status == "ready" else False})
                 if status == "ready":
                     created += 1
                     if s.auto_publish:

@@ -22,7 +22,12 @@ Voici la transcription d'un extrait de la vidéo « {video_title} » :
 Évalue son potentiel viral (drôle, surprenant, émouvant, instructif, autonome et compréhensible sans contexte).
 Si l'extrait est une publicité, un passage sponsorisé, un placement de produit, un partenariat, un code promo,
 un appel à s'abonner ou à cliquer sur un lien : mets "pub": true et "score": 1.
-Réponds UNIQUEMENT en JSON : {{"pub": <true|false>, "score": <entier 1-10>, "title": "<titre accrocheur en français, 70 caractères max, sans hashtag>", "hook": "<accroche très courte affichée en haut de la vidéo, 3 à 6 mots, qui donne envie de rester jusqu'à la fin, terminée par 1 ou 2 emojis en lien avec le contenu (ex. 😂 🤯 😱 🔥 💀 💰), sans hashtag>"}}"""
+Règles pour être vu au maximum sur TikTok et YouTube Shorts :
+- Titre : 40 à 60 caractères, commence par le mot-clé que les gens cherchent (le jeu, le serveur RP ou le
+  streamer s'ils sont connus), crée de la curiosité SANS dévoiler la fin, langage parlé, pas tout en majuscules.
+- Accroche : 3 à 6 mots lisibles en 1 seconde, qui posent une tension ou une question (« Il n'aurait jamais dû… »,
+  « Personne ne s'attendait à ça »), jamais un résumé plat.
+Réponds UNIQUEMENT en JSON : {{"pub": <true|false>, "score": <entier 1-10>, "title": "<titre en français, 60 caractères max, sans hashtag>", "hook": "<accroche très courte affichée en haut de la vidéo, 3 à 6 mots, terminée par 1 ou 2 emojis en lien avec le contenu (ex. 😂 🤯 😱 🔥 💀 💰), sans hashtag>"}}"""
 
 
 def _ollama_ok() -> bool:

@@ -19,8 +19,21 @@ Style: Hook,{font},78,&H00FFFFFF,&H00FFFFFF,&H00000000,&HB4000000,-1,0,0,0,100,1
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-HIGHLIGHT = r"{\c&H00E5FF&}"  # jaune
-RESET = r"{\c&HFFFFFF&}"
+import re
+
+HIGHLIGHT = r"{\c&H00E5FF&\fscx115\fscy115}"  # mot prononcé : jaune et un peu plus gros (« pop »)
+RESET = r"{\c&HFFFFFF&\fscx100\fscy100}"
+KEYWORD = r"{\c&H3CFF5A&}"  # mots forts en vert, pour accrocher l'œil même hors du mot prononcé
+KEYWORD_RESET = r"{\c&HFFFFFF&}"
+# Mots qui portent l'émotion ou l'enjeu (nombres et sommes d'argent aussi)
+EMPHASIS = {
+    "mdr", "ptdr", "wow", "waouh", "putain", "incroyable", "dingue", "fou", "folle", "folie", "jamais", "sérieux",
+    "énorme", "bordel", "insane", "omg", "gg", "impossible", "mort", "morts", "tué", "police", "flic", "flics",
+    "argent", "million", "millions", "milliard", "euros", "dollars", "gagné", "perdu", "record", "première",
+    "premier", "dernier", "dernière", "secret", "braquage", "banque", "prison", "arrêté", "explose", "explosé",
+    "catastrophe", "terrible", "magnifique", "parfait", "légendaire", "choqué", "hallucine", "gta", "gta6",
+}
+_TOKEN = re.compile(r"[\wàâäéèêëïîôöùûüç']+", re.I)
 NL = r"\N"  # retour à la ligne ASS
 
 
@@ -46,6 +59,26 @@ def words_in(segments: list[dict], a: float, b: float) -> list[dict]:
             mid = (w["start"] + w["end"]) / 2
             if a <= mid <= b:
                 out.append({"start": w["start"] - a, "end": w["end"] - a, "word": w["word"]})
+    return out
+
+
+def is_keyword(word: str) -> bool:
+    w = word.strip().lower()
+    if any(c.isdigit() for c in w) or "€" in w or "$" in w:
+        return True
+    return any(tok in EMPHASIS for tok in _TOKEN.findall(w))
+
+
+def words_in_pieces(segments: list[dict], pieces: list[tuple[float, float]]) -> list[list[dict]]:
+    """Mots de chaque morceau monté bout à bout, en temps de la vidéo finale."""
+    out, offset = [], 0.0
+    for a, b in pieces:
+        ws = words_in(segments, a, b)
+        for w in ws:
+            w["start"] = max(0.0, w["start"]) + offset
+            w["end"] = min(w["end"], b - a) + offset
+        out.append(ws)
+        offset += b - a
     return out
 
 
@@ -83,12 +116,23 @@ def hook_lines(text: str, per_line: int = 18, max_lines: int = 2) -> list[str]:
     return lines
 
 
+def _word_text(word: str, active: bool) -> str:
+    if active:
+        return HIGHLIGHT + _escape(word) + RESET
+    if is_keyword(word):
+        return KEYWORD + _escape(word) + KEYWORD_RESET
+    return _escape(word)
+
+
 def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: str = "",
-              hook: str = "", hook_seconds: float = 0, hook_in_ass: bool = True, top: int = 0) -> str:
+              hook: str = "", hook_seconds: float = 0, hook_in_ass: bool = True, top: int = 0,
+              pieces: list[tuple[float, float]] | None = None) -> str:
     """hook_in_ass=False : l'accroche est rendue à part en image (emojis couleur), on garde juste la place.
 
-    top : décalage vers le bas de l'accroche et de « Partie x/y » (format split : sous la facecam)."""
-    dur = b - a
+    top : décalage vers le bas de l'accroche et de « Partie x/y » (format split : sous la facecam).
+    pieces : morceaux de la source montés bout à bout (extrait d'ouverture + clip) ; par défaut [(a, b)]."""
+    pieces = pieces or [(a, b)]
+    dur = sum(y - x for x, y in pieces)
     hl = hook_lines(hook) if hook else []
     part_v = (170 + 115 * len(hl) + 40 if hl else 180) + top
     lines = [HEADER.format(w=W, h=H, font=font, part_v=part_v, hook_v=170 + top)]
@@ -97,7 +141,7 @@ def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: s
         lines.append(f"Dialogue: 2,{ts(0)},{ts(end)},Hook,,0,0,0,,{NL.join(_escape(x) for x in hl)}")
     if part_label:
         lines.append(f"Dialogue: 1,{ts(0)},{ts(dur)},Part,,0,0,0,,{_escape(part_label)}")
-    groups = group_words(words_in(segments, a, b))
+    groups = [g for ws in words_in_pieces(segments, pieces) for g in group_words(ws)]
     for gi, g in enumerate(groups):
         g_end = g[-1]["end"]
         if gi + 1 < len(groups):
@@ -107,8 +151,6 @@ def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: s
             end = g[i + 1]["start"] if i + 1 < len(g) else g_end
             if end <= start:
                 end = start + 0.05
-            text = " ".join(
-                (HIGHLIGHT + _escape(x["word"]) + RESET) if j == i else _escape(x["word"]) for j, x in enumerate(g)
-            )
+            text = " ".join(_word_text(x["word"], j == i) for j, x in enumerate(g))
             lines.append(f"Dialogue: 0,{ts(start)},{ts(min(end, dur))},Sub,,0,0,0,,{text}")
     return "\n".join(lines) + "\n"
