@@ -116,7 +116,8 @@ def process_loop():
         try:
             if v.status == "new":
                 process.set_status(v.id, "downloading")
-                path = sources.download(v.url, process.video_dir(v.id), lambda: is_skipped(v.id))
+                path = sources.download(v.url, process.video_dir(v.id), lambda: is_skipped(v.id),
+                                        process.Progress(v.id))
                 if is_skipped(v.id):
                     raise sources.Cancelled()
                 process.set_status(v.id, "downloaded", path=str(path))

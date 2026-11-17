@@ -38,6 +38,7 @@ class Video(SQLModel, table=True):
     error: str = ""
     path: str = ""
     duration: float = 0.0
+    progress: float = 0.0  # avancement (0-100) de l'étape en cours
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
 

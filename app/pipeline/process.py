@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import random
 import shutil
+import time
 import uuid
 from pathlib import Path
 
@@ -21,12 +22,41 @@ def set_status(video_id: int, status: str, **fields) -> Video:
     with db.session() as s:
         v = s.get(Video, video_id)
         v.status = status
+        v.progress = 0.0
         v.updated_at = now()
         for k, val in fields.items():
             setattr(v, k, val)
         s.add(v)
         s.commit()
         return v
+
+
+def set_progress(video_id: int, pct: float) -> None:
+    """Enregistre l'avancement (0-100) de l'étape en cours, sans changer le statut."""
+    with db.session() as s:
+        v = s.get(Video, video_id)
+        if v is None:
+            return
+        v.progress = round(max(0.0, min(100.0, pct)), 1)
+        s.add(v)
+        s.commit()
+
+
+class Progress:
+    """Rappel d'avancement qui n'écrit en base qu'au plus toutes les `every` secondes (ou à 100 %)."""
+
+    def __init__(self, video_id: int, every: float = 3.0):
+        self.video_id, self.every = video_id, every
+        self.last_t, self.last_pct = -1e9, -1.0
+
+    def __call__(self, pct: float) -> None:
+        t = time.monotonic()
+        if pct >= 100 or (t - self.last_t >= self.every and abs(pct - self.last_pct) >= 0.5):
+            self.last_t, self.last_pct = t, pct
+            try:
+                set_progress(self.video_id, pct)
+            except Exception as e:  # l'affichage de l'avancement ne doit jamais bloquer le traitement
+                log.debug("Avancement non enregistré : %s", e)
 
 
 def stop_if_skipped(video_id: int) -> None:
@@ -108,11 +138,13 @@ def process(video_id: int) -> int:
     wav = work / "audio.wav"
     if not wav.exists():
         media.extract_audio(src, wav)
-    segments = transcribe.transcribe(wav, work / "transcript.json", dur)
+    segments = transcribe.transcribe(wav, work / "transcript.json", dur, Progress(video_id))
 
     stop_if_skipped(video_id)
     set_status(video_id, "analyzing")
+    progress = Progress(video_id)
     loud = media.loudness_per_second(wav)
+    progress(10)
     n = clip_count(dur)
     which = llm.provider()
     use_llm = which != "none"
@@ -128,7 +160,9 @@ def process(video_id: int) -> int:
     if moments:
         hmax = max(m.score for m in moments)
         hmin = min(m.score for m in moments)
-    for m in moments:
+    progress(20)
+    for k, m in enumerate(moments):
+        progress(20 + 80 * k / len(moments))
         text = highlights.text_between(segments, m.start, m.end)
         heur = (m.score - hmin) / (hmax - hmin) if hmax > hmin else 0.5
         rated = llm.rate(text, video.title, which, guidance) if use_llm else None
@@ -149,8 +183,11 @@ def process(video_id: int) -> int:
 
     stop_if_skipped(video_id)
     set_status(video_id, "rendering")
+    progress = Progress(video_id, every=0)
     created = 0
-    for m in sorted(moments, key=lambda m: m.start):
+    todo = sorted(moments, key=lambda m: m.start)
+    for k, m in enumerate(todo):
+        progress(100 * k / len(todo))
         if check_duplicate(video, m):
             continue
         parts = highlights.split_parts(m.start, m.end, segments, s.part_max)
@@ -190,6 +227,7 @@ def process(video_id: int) -> int:
                     created += 1
                     if s.auto_publish:
                         queue_posts(ss, clip)
+            progress(100 * (k + i / len(parts)) / len(todo))
     stop_if_skipped(video_id)
     set_status(video_id, "done", error="")
     cleanup(video_id)
