@@ -40,8 +40,13 @@ def test_suggested_channels_catalog():
 
 
 def test_sources_page_lists_suggestions():
-    s = get_settings()
-    r = client.get("/sources", auth=(s.admin_user, s.admin_password))
+    from app.web.main import auth
+
+    app.dependency_overrides[auth] = lambda: None
+    try:
+        r = client.get("/sources")
+    finally:
+        app.dependency_overrides.pop(auth, None)
     assert r.status_code == 200 and "twitch.tv/zerator" in r.text
 
 
