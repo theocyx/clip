@@ -4,10 +4,10 @@ from __future__ import annotations
 import re
 import secrets
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from sqlmodel import col, func, select
 
@@ -16,27 +16,35 @@ from ..config import get_settings
 from ..models import Clip, Post, Source, Video
 from ..pipeline import process, sources
 from ..publish import creds, tiktok, youtube
+from . import mfa
 
-security = HTTPBasic(auto_error=False)
-
-# Pages accessibles sans mot de passe (exigées par TikTok / Google).
-PUBLIC_PATHS = {"/conditions", "/confidentialite"}
+# Pages accessibles sans connexion (exigées par TikTok / Google, et la connexion elle-même).
+PUBLIC_PATHS = {"/conditions", "/confidentialite", "/login", "/mfa/setup"}
 VERIFY_FILE = re.compile(r"^/[A-Za-z0-9_-]{1,100}\.txt$")
 
 
-def auth(request: Request, c: HTTPBasicCredentials | None = Depends(security)):
+class LoginRequired(Exception):
+    pass
+
+
+def auth(request: Request):
     path = request.url.path
     if path in PUBLIC_PATHS or VERIFY_FILE.match(path):
         return
-    s = get_settings()
-    ok = c is not None and secrets.compare_digest(c.username.encode(), s.admin_user.encode()) and secrets.compare_digest(
-        c.password.encode(), s.admin_password.encode())
-    if not ok:
-        raise HTTPException(401, "Identifiants invalides", headers={"WWW-Authenticate": "Basic"})
+    if not mfa.valid_token("session", request.cookies.get(mfa.SESSION_COOKIE)):
+        if request.method == "GET":
+            raise LoginRequired()
+        raise HTTPException(401, "Connexion requise")
 
 
 app = FastAPI(title="Clip", dependencies=[Depends(auth)])
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+@app.exception_handler(LoginRequired)
+def _to_login(request: Request, _exc: LoginRequired):
+    nxt = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    return RedirectResponse(f"/login?next={quote(nxt)}", status_code=303)
 _oauth_states: dict[str, dict] = {}
 
 
@@ -47,6 +55,91 @@ def back(url: str) -> RedirectResponse:
 @app.on_event("startup")
 def _startup():
     db.get_engine()
+
+
+# ---------- Connexion (mot de passe + code MFA) ----------
+
+def _safe_next(nxt: str) -> str:
+    return nxt if nxt.startswith("/") and not nxt.startswith("//") and "\\" not in nxt else "/"
+
+
+def _set_cookie(request: Request, resp, name: str, value: str, max_age: int):
+    https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https" \
+        or get_settings().public_url.startswith("https")
+    resp.set_cookie(name, value, max_age=max_age, httponly=True, samesite="lax", secure=https)
+
+
+def _login_page(request: Request, error: str = "", nxt: str = "/", status: int = 200):
+    return templates.TemplateResponse(request, "login.html", {
+        "error": error, "next": _safe_next(nxt), "need_code": get_settings().mfa and mfa.configured()},
+        status_code=status)
+
+
+@app.get("/login")
+def login_form(request: Request, next: str = "/"):
+    return _login_page(request, nxt=next)
+
+
+@app.post("/login")
+def login(request: Request, username: str = Form(""), password: str = Form(""), code: str = Form(""),
+          next: str = Form("/")):
+    if mfa.blocked():
+        return _login_page(request, "Trop d'essais ratés. Réessaie dans 15 minutes.", next, 429)
+    s = get_settings()
+    ok = mfa.check_password(username, password)
+    if ok and s.mfa and not mfa.configured():
+        resp = back("/mfa/setup?next=" + quote(_safe_next(next)))
+        _set_cookie(request, resp, mfa.SETUP_COOKIE, mfa.make_token("setup", mfa.SETUP_TTL), mfa.SETUP_TTL)
+        return resp
+    if ok and s.mfa:
+        ok = mfa.verify_code(code)
+    if not ok:
+        mfa.record_failure()
+        return _login_page(request, "Identifiant, mot de passe ou code incorrect.", next, 401)
+    resp = back(_safe_next(next))
+    _set_cookie(request, resp, mfa.SESSION_COOKIE, mfa.make_token("session", mfa.session_ttl()), mfa.session_ttl())
+    return resp
+
+
+def _setup_allowed(request: Request) -> bool:
+    return get_settings().mfa and not mfa.configured() and mfa.valid_token(
+        "setup", request.cookies.get(mfa.SETUP_COOKIE))
+
+
+def _setup_page(request: Request, nxt: str, error: str = "", status: int = 200):
+    secret = mfa.pending_secret()
+    return templates.TemplateResponse(request, "mfa_setup.html", {
+        "qr": mfa.qr_svg(mfa.provisioning_uri(secret)), "secret": secret, "error": error,
+        "next": _safe_next(nxt)}, status_code=status)
+
+
+@app.get("/mfa/setup")
+def mfa_setup_form(request: Request, next: str = "/"):
+    if not _setup_allowed(request):
+        return back("/login")
+    return _setup_page(request, next)
+
+
+@app.post("/mfa/setup")
+def mfa_setup(request: Request, code: str = Form(""), next: str = Form("/")):
+    if not _setup_allowed(request):
+        return back("/login")
+    if mfa.blocked():
+        return _setup_page(request, next, "Trop d'essais ratés. Réessaie dans 15 minutes.", 429)
+    if not mfa.confirm_setup(code):
+        mfa.record_failure()
+        return _setup_page(request, next, "Code incorrect, vérifie l'heure du téléphone et réessaie.", 400)
+    resp = back(_safe_next(next))
+    resp.delete_cookie(mfa.SETUP_COOKIE)
+    _set_cookie(request, resp, mfa.SESSION_COOKIE, mfa.make_token("session", mfa.session_ttl()), mfa.session_ttl())
+    return resp
+
+
+@app.post("/logout")
+def logout():
+    resp = back("/login")
+    resp.delete_cookie(mfa.SESSION_COOKIE)
+    return resp
 
 
 # ---------- Tableau de bord ----------

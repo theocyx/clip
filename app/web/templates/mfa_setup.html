@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block logout %}{% endblock %}
+{% block content %}
+<form class="card login" method="post" action="/mfa/setup">
+  <h2 style="margin-top:0">Activer la double authentification</h2>
+  <p class="mut">Scanne ce QR code avec Google Authenticator (ou Authy, 2FAS, Bitwarden…), puis tape le code à 6 chiffres affiché.</p>
+  <div class="qr">{{ qr | safe }}</div>
+  <p class="mut" style="font-size:13px;word-break:break-all">Clé à saisir à la main si besoin : <code>{{ secret }}</code></p>
+  {% if error %}<p class="err">{{ error }}</p>{% endif %}
+  <input type="hidden" name="next" value="{{ next }}">
+  <label for="c">Code à 6 chiffres</label>
+  <input type="text" id="c" name="code" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" autocomplete="one-time-code" placeholder="123 456" required autofocus>
+  <button>Activer</button>
+</form>
+{% endblock %}

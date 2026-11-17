@@ -81,3 +81,23 @@ def test_hook_title_at_top():
     assert hook_line.endswith("…") and r"IL A VRAIMENT FAIT\NÇA" in hook_line
     assert "60,60,440,1" in ass  # « Partie » descend sous l'accroche
     assert llm.parse('{"score": 8, "title": "Titre", "hook": "Il a osé !"}') == (8.0, "Titre", "Il a osé !")
+
+
+def test_hook_emojis(tmp_path):
+    from app.pipeline import hook
+    assert hook.add_emojis("Il a osé 😱🔥💀") == "Il a osé 😱🔥"
+    assert hook.add_emojis("Il perd tout son argent") == "Il perd tout son argent 💰"
+    assert hook.add_emojis("Regardez bien", "un moment calme") == "Regardez bien 👀"
+    assert hook.strip_emojis("Trop fort 🔥 non ❤️") == "Trop fort non"
+    ass = subtitles.build_ass([], 0, 10, "Montserrat", "", "Salut 😂", 0, hook_in_ass=False)
+    assert ",Hook," not in ass.split("[Events]")[1]
+    n = hook.render_png("Il a osé faire ça en plein live 😱🔥", "Montserrat", tmp_path / "h.png")
+    assert n == 2 and (tmp_path / "h.png").stat().st_size > 1000
+
+
+def test_render_overlay_cmd(tmp_path):
+    from app.pipeline import render
+    cmd = render.build_cmd(tmp_path / "s.mp4", 0, 10, "c.ass", tmp_path / "o.mp4", "libx264", "/x/h.png", 4)
+    assert cmd[cmd.index("-filter_complex") - 1] == "/x/h.png"
+    vf = cmd[cmd.index("-filter_complex") + 1]
+    assert "[1:v]overlay=0:0" in vf and "lte(t,4.00)" in vf and vf.index("overlay=0:0") < vf.index("ass=")
