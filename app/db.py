@@ -33,12 +33,17 @@ def get_engine():
 
 def _migrate(engine):
     """Ajoute les colonnes apparues après la création de la base."""
-    with engine.begin() as conn:
-        cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(source)")}
-        if "keywords" not in cols:
+    for table, column, ddl in (
+        ("source", "keywords", "VARCHAR NOT NULL DEFAULT ''"),
+        ("video", "progress", "FLOAT NOT NULL DEFAULT 0"),
+    ):
+        with engine.begin() as conn:
+            cols = {r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+            if column in cols:
+                continue
             try:
-                conn.exec_driver_sql("ALTER TABLE source ADD COLUMN keywords VARCHAR NOT NULL DEFAULT ''")
-            except OperationalError as e:  # le worker l'a ajoutée en même temps
+                conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+            except OperationalError as e:  # l'autre processus l'a ajoutée en même temps
                 if "duplicate column" not in str(e):
                     raise
 

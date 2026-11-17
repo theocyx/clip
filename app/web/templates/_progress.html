@@ -1,0 +1,4 @@
+{% if steps %}<div class="steps">{% for st in steps %}<div class="step {{ st.state }}" title="{{ st.name }} : {{ st.pct }} %">
+  <div class="sl"><span>{{ st.name }}</span><b>{% if st.note %}{{ st.note }}{% if st.state == 'run' %} · {{ st.pct }} %{% endif %}{% elif st.state == 'todo' %}–{% else %}{{ st.pct }} %{% endif %}</b></div>
+  <div class="bar"><i style="width:{{ st.pct }}%"></i></div>
+</div>{% endfor %}</div>{% endif %}

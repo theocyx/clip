@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -116,16 +117,49 @@ def probe_url(url: str) -> Found:
     return Found(key, info.get("webpage_url") or url, info.get("title", ""), live)
 
 
+PROGRESS_TAG = "[clip-progress]"
+
+
 def download_cmd(url: str, out_dir: Path, live: bool) -> list[str]:
-    cmd = [
-        "yt-dlp", "--no-progress", "--no-part", "-f", FORMAT,
-        "-o", str(out_dir / "source.%(ext)s"), "--retries", "10", "--fragment-retries", "50",
-    ]
+    cmd = ["yt-dlp", "--no-part", "-f", FORMAT,
+           "-o", str(out_dir / "source.%(ext)s"), "--retries", "10", "--fragment-retries", "50"]
     if live:
-        cmd += ["--hls-use-mpegts", "--no-live-from-start"]
+        cmd += ["--no-progress", "--hls-use-mpegts", "--no-live-from-start"]
     else:
-        cmd += ["--merge-output-format", "mp4"]
+        cmd += ["--newline", "--progress-template",
+                f"download:{PROGRESS_TAG} %(info.format_id)s %(progress.downloaded_bytes)s "
+                "%(progress.total_bytes)s %(progress.total_bytes_estimate)s",
+                "--merge-output-format", "mp4"]
     return cmd + [url]
+
+
+class DownloadProgress:
+    """Calcule l'avancement global (0-100) à partir des lignes de progression de yt-dlp.
+
+    Avec « vidéo + audio », yt-dlp télécharge deux fichiers à la suite : la vidéo compte pour 90 %."""
+
+    def __init__(self):
+        self.parts: list[str] = []
+        self.pct = 0.0
+
+    def feed(self, line: str) -> float | None:
+        if PROGRESS_TAG not in line:
+            return None
+        fields = line.split(PROGRESS_TAG, 1)[1].split()
+        if len(fields) < 4:
+            return None
+        fmt, done, total, est = fields[:4]
+        try:
+            size = float(total) if total not in ("NA", "None") else float(est)
+            frac = min(1.0, float(done) / size) if size > 0 else 0.0
+        except ValueError:
+            return None
+        if fmt not in self.parts:
+            self.parts.append(fmt)
+        idx = self.parts.index(fmt)
+        pct = 90 * frac if idx == 0 else 90 + 10 * frac
+        self.pct = max(self.pct, min(99.0, pct))  # 100 % une fois la fusion terminée
+        return self.pct
 
 
 def find_output(out_dir: Path) -> Path | None:
@@ -137,13 +171,26 @@ class Cancelled(Exception):
     """Téléchargement arrêté parce que la vidéo a été ignorée."""
 
 
-def download(url: str, out_dir: Path, should_stop=None) -> Path:
-    """Télécharge une vidéo. `should_stop()` est vérifié toutes les 2 s pour pouvoir l'annuler."""
+def _read_progress(stream, tracker: DownloadProgress) -> None:
+    for line in stream:
+        tracker.feed(line)
+
+
+def download(url: str, out_dir: Path, should_stop=None, on_progress=None) -> Path:
+    """Télécharge une vidéo. `should_stop()` est vérifié toutes les 2 s pour pouvoir l'annuler.
+
+    `on_progress(pct)` reçoit l'avancement (0-100) toutes les 2 s."""
     out_dir.mkdir(parents=True, exist_ok=True)
     log_file = out_dir / "download.log"
+    tracker = DownloadProgress()
     with open(log_file, "w") as err:
-        proc = subprocess.Popen(download_cmd(url, out_dir, False), stdout=subprocess.DEVNULL, stderr=err)
+        proc = subprocess.Popen(download_cmd(url, out_dir, False), stdout=subprocess.PIPE, stderr=err,
+                                text=True, errors="replace")
+        reader = threading.Thread(target=_read_progress, args=(proc.stdout, tracker), daemon=True)
+        reader.start()
         while proc.poll() is None:
+            if on_progress and tracker.pct:
+                on_progress(tracker.pct)
             if should_stop and should_stop():
                 proc.terminate()
                 try:
@@ -152,8 +199,11 @@ def download(url: str, out_dir: Path, should_stop=None) -> Path:
                     proc.kill()
                 raise Cancelled()
             time.sleep(2)
+        reader.join(5)
     path = find_output(out_dir)
     if proc.returncode != 0 or not path:
         tail = log_file.read_text(errors="replace")[-500:] if log_file.exists() else ""
         raise RuntimeError(f"Téléchargement échoué : {tail}")
+    if on_progress:
+        on_progress(100)
     return path

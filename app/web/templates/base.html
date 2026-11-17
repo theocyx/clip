@@ -21,6 +21,12 @@ form.inline{display:inline}.mut{color:var(--mut)}.ok{color:var(--ok)}.err{color:
 video{width:100%;aspect-ratio:9/16;background:#000;border-radius:8px}
 .login{max-width:380px;margin:40px auto}.login label{display:block;margin:12px 0 4px}.login input{width:100%;min-width:0}.login button{margin-top:16px;width:100%;padding:10px}
 .qr{background:#fff;border-radius:8px;padding:8px;width:220px;margin:12px auto}.qr svg{display:block;width:100%;height:auto}
+.steps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-top:8px;font-size:12px}
+.step .sl{display:flex;justify-content:space-between;gap:4px;color:var(--mut)}.step .sl span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.step .sl b{font-weight:600;color:var(--fg);white-space:nowrap}.step.todo .sl b{color:var(--mut)}
+.bar{height:6px;background:#2a2f3a;border-radius:99px;overflow:hidden;margin-top:3px}.bar i{display:block;height:100%;background:var(--acc);transition:width .6s}
+.step.done .bar i{background:var(--ok)}.step.live .bar i{width:100%!important;background:repeating-linear-gradient(90deg,var(--err) 0 8px,#2a2f3a 8px 16px)}
+@media(max-width:700px){.steps{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .stats{display:flex;gap:16px;flex-wrap:wrap}.stat{flex:1;min-width:140px}.stat b{font-size:28px;display:block}
 </style>
 </head>

@@ -152,8 +152,10 @@ def dashboard(request: Request):
         posts = dict(s.exec(select(Post.status, func.count()).group_by(Post.status)).all())
         videos = s.exec(select(Video).where(Video.status != "skipped").order_by(col(Video.created_at).desc()).limit(10)).all()
         n_sources = s.exec(select(func.count()).select_from(Source)).one()
+        ctx = progress_context(s, videos)
     return templates.TemplateResponse(request, "dashboard.html", {
-        "counts": counts, "posts": posts, "videos": videos, "n_sources": n_sources, "accounts": accounts_status()})
+        "counts": counts, "posts": posts, "videos": videos, "n_sources": n_sources, "accounts": accounts_status(),
+        **ctx})
 
 
 def accounts_status() -> dict:
@@ -226,6 +228,57 @@ def delete_source(sid: int):
 
 # ---------- Vidéos ----------
 
+STEPS = ("Téléchargement", "Transcription", "Analyse IA", "Montage", "Publication")
+STEP_OF = {"recording": 0, "downloading": 0, "downloaded": 1, "transcribing": 1, "analyzing": 2,
+           "rendering": 3, "done": 4}
+ACTIVE = {"recording", "downloading", "downloaded", "transcribing", "analyzing", "rendering"}
+
+
+def publish_counts(s, video_ids: list[int]) -> dict[int, tuple[int, int]]:
+    """{vidéo: (envois publiés, envois prévus)} hors envois annulés."""
+    out: dict[int, list[int]] = {}
+    if not video_ids:
+        return {}
+    rows = s.exec(select(Clip.video_id, Post.status).join(Post, Post.clip_id == Clip.id)
+                  .where(col(Clip.video_id).in_(video_ids), Post.status != "cancelled")).all()
+    for vid, status in rows:
+        c = out.setdefault(vid, [0, 0])
+        c[1] += 1
+        c[0] += status == "published"
+    return {k: (a, b) for k, (a, b) in out.items()}
+
+
+def video_steps(v: Video, pub: tuple[int, int] | None = None) -> list[dict] | None:
+    """Avancement de chaque étape d'une vidéo, ou None si elle n'est pas (ou plus) en traitement."""
+    cur = STEP_OF.get(v.status)
+    if cur is None:
+        return None
+    steps = []
+    for i, name in enumerate(STEPS):
+        if i < cur:
+            pct, state, note = 100.0, "done", ""
+        elif i > cur:
+            pct, state, note = 0.0, "todo", ""
+        elif i == 4:
+            done, total = pub or (0, 0)
+            pct = 100.0 * done / total if total else 0.0
+            state = "done" if total and done == total else "run" if total else "todo"
+            note = f"{done}/{total}" if total else "rien en file"
+        elif v.status == "recording":
+            pct, state, note = 0.0, "live", "en direct"
+        elif v.status == "downloaded":  # transcription pas encore commencée
+            pct, state, note = 0.0, "wait", "en attente"
+        else:
+            pct, state, note = float(v.progress or 0), "run", ""
+        steps.append({"name": name, "pct": round(pct), "state": state, "note": note})
+    return steps
+
+
+def progress_context(s, videos: list[Video]) -> dict:
+    pubs = publish_counts(s, [v.id for v in videos if v.status == "done"])
+    return {"steps": {v.id: video_steps(v, pubs.get(v.id)) for v in videos}}
+
+
 @app.get("/videos")
 def list_videos(request: Request, all: bool = False):
     with db.session() as s:
@@ -233,7 +286,20 @@ def list_videos(request: Request, all: bool = False):
         if not all:
             q = q.where(Video.status != "skipped")
         items = s.exec(q).all()
-    return templates.TemplateResponse(request, "videos.html", {"videos": items, "all": all})
+        ctx = progress_context(s, items)
+    return templates.TemplateResponse(request, "videos.html", {"videos": items, "all": all, **ctx})
+
+
+@app.get("/videos/progress")
+def videos_progress(ids: str = ""):
+    """Avancement des vidéos demandées (rafraîchissement automatique de la page)."""
+    wanted = [int(x) for x in ids.split(",") if x.strip().isdigit()][:200]
+    with db.session() as s:
+        items = s.exec(select(Video).where(col(Video.id).in_(wanted))).all() if wanted else []
+        ctx = progress_context(s, items)
+    tpl = templates.env.get_template("_progress.html")
+    return {str(v.id): {"status": v.status, "active": v.status in ACTIVE,
+                        "html": tpl.render(steps=ctx["steps"][v.id], v=v)} for v in items}
 
 
 @app.post("/videos")

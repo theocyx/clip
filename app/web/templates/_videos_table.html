@@ -3,7 +3,8 @@
 {% for v in videos %}
 <tr>
   <td><a href="{{ v.url }}" target="_blank" rel="noopener">{{ v.title or v.url }}</a>{% if v.is_live %} <span class="badge">live</span>{% endif %}
-    {% if v.error %}<div class="err">{{ v.error[:300] }}</div>{% endif %}</td>
+    {% if v.error %}<div class="err">{{ v.error[:300] }}</div>{% endif %}
+    <div data-progress="{{ v.id }}" data-status="{{ v.status }}"{% if v.status in ('recording','downloading','downloaded','transcribing','analyzing','rendering') or (v.status == 'done' and steps and steps.get(v.id) and steps[v.id][4].state == 'run') %} data-active="1"{% endif %}>{% with steps=(steps or {}).get(v.id) %}{% include "_progress.html" %}{% endwith %}</div></td>
   <td><span class="badge">{{ {'new':'en attente','recording':'enregistrement','downloading':'téléchargement','downloaded':'téléchargée','transcribing':'transcription','analyzing':'analyse','rendering':'montage','done':'terminée','failed':'échec','skipped':'ignorée'}.get(v.status, v.status) }}</span></td>
   <td>{% if v.duration %}{{ (v.duration // 60)|int }} min{% endif %}</td>
   <td>
@@ -13,3 +14,29 @@
 </tr>
 {% else %}<tr><td colspan="4" class="mut">Aucune vidéo.</td></tr>{% endfor %}
 </table>
+<script>
+(function () {
+  // Rafraîchit l'avancement des vidéos en cours toutes les 3 s (et recharge la page quand une étape change de statut).
+  function tick() {
+    var cells = document.querySelectorAll('[data-progress][data-active]');
+    if (!cells.length) return;
+    if (document.hidden) return setTimeout(tick, 3000);
+    var ids = Array.prototype.map.call(cells, function (c) { return c.dataset.progress; }).join(',');
+    fetch('/videos/progress?ids=' + ids, {credentials: 'same-origin'}).then(function (r) {
+      if (!r.ok) throw r; return r.json();
+    }).then(function (data) {
+      var reload = false;
+      cells.forEach(function (c) {
+        var d = data[c.dataset.progress];
+        if (!d) return;
+        if (d.status !== c.dataset.status && (d.status === 'done' || d.status === 'failed' || d.status === 'skipped')) reload = true;
+        c.dataset.status = d.status;
+        c.innerHTML = d.html;
+        if (!d.active && !c.querySelector('.step.run')) c.removeAttribute('data-active');
+      });
+      if (reload) location.reload(); else setTimeout(tick, 3000);
+    }).catch(function () { setTimeout(tick, 15000); });
+  }
+  setTimeout(tick, 3000);
+})();
+</script>
