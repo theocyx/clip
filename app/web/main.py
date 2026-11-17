@@ -5,15 +5,15 @@ import re
 import secrets
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from sqlmodel import col, func, select
 
-from .. import db
+from .. import db, learning
 from ..config import get_settings
-from ..models import Clip, Post, Source, Video
+from ..models import Clip, Post, PostStat, Source, Video
 from ..pipeline import process, sources
 from ..publish import creds, tiktok, youtube
 
@@ -223,6 +223,36 @@ def clip_delete(cid: int):
         s.commit()
     Path(c.path).unlink(missing_ok=True)
     return back("/clips")
+
+
+# ---------- Statistiques et apprentissage ----------
+
+@app.get("/stats")
+def stats_page(request: Request, refreshing: bool = False):
+    perf = learning.performances()
+    with db.session() as s:
+        posts = s.exec(select(Post).where(Post.status == "published").order_by(
+            col(Post.published_at).desc()).limit(100)).all()
+        clips = {c.id: c for c in s.exec(select(Clip).where(col(Clip.id).in_([p.clip_id for p in posts]))).all()}
+        last: dict[int, PostStat] = {}
+        for st in s.exec(select(PostStat).where(col(PostStat.post_id).in_([p.id for p in posts]))
+                         .order_by(col(PostStat.fetched_at))).all():
+            last[st.post_id] = st
+    rows = [{"post": p, "clip": clips.get(p.clip_id), "stat": last.get(p.id), "perf": perf.get(p.clip_id)}
+            for p in posts]
+    t = learning.latest()
+    return templates.TemplateResponse(request, "stats.html", {
+        "rows": rows, "tuning": learning.current(), "tuned_at": t.created_at if t else None,
+        "defaults": learning.defaults(), "measured": len(perf), "min_clips": get_settings().learn_min_clips,
+        "learning_on": get_settings().learning, "yt_analytics": youtube.has_analytics(),
+        "yt_connected": creds.load("youtube") is not None, "tt_stats": get_settings().tiktok_stats,
+        "refreshing": refreshing})
+
+
+@app.post("/stats/refresh")
+def stats_refresh(tasks: BackgroundTasks):
+    tasks.add_task(learning.run, True)
+    return back("/stats?refreshing=1")
 
 
 # ---------- Comptes (OAuth) ----------

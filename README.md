@@ -60,6 +60,21 @@ Pour 1 h de vidéo : transcription ≈ 15-25 min (`WHISPER_MODEL=small`), IA ≈
 
 ⚠️ Tant que TikTok n'a pas **audité l'app** (quelques jours à quelques semaines), les vidéos ne peuvent être publiées qu'en **privé** (`TIKTOK_PRIVACY=SELF_ONLY`). Après approbation, mets `TIKTOK_PRIVACY=PUBLIC_TO_EVERYONE`. Alternative : `TIKTOK_MODE=draft` envoie les clips en brouillon dans l'appli TikTok, tu n'as plus qu'à appuyer sur « Publier ».
 
+## Apprendre de ce qui marche (page **Stats**)
+
+Toutes les 6 h, Clip relève les vues, likes, commentaires (et la rétention YouTube) de chaque clip publié, puis compare les clips entre eux à 3 jours d'âge. Dès 10 clips mesurés, il ajuste tout seul, doucement :
+
+- le poids des signaux qui repèrent les moments forts (pics de son, débit de parole, mots d'excitation) ;
+- la durée visée des clips (avec ±15 % de variation pour continuer à tester) ;
+- la confiance accordée à la note de l'IA ;
+- les titres et accroches : l'IA locale compare les meilleurs et les pires clips, en tire des règles, et s'en sert pour les clips suivants.
+
+Tout reste local. La page **Stats** montre les chiffres, ce qui a été appris et un bouton pour lancer l'analyse.
+
+- **Rétention YouTube** : active aussi « YouTube Analytics API » dans la console Google, puis reconnecte YouTube.
+- **Vues TikTok** : ajoute le scope `video.list` à l'app TikTok, mets `TIKTOK_STATS=true`, puis reconnecte TikTok.
+- Les clips privés (projet Google ou app TikTok pas encore audités) n'ont pas de vues : rien ne sera appris avant.
+
 ## Réglages utiles (`.env`)
 
 | Variable | Rôle | Défaut |

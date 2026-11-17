@@ -23,6 +23,7 @@ class Moment:
     title: str = ""
     hook: str = ""
     parts: list[tuple[float, float]] = field(default_factory=list)
+    features: dict = field(default_factory=dict)
 
     @property
     def duration(self) -> float:
@@ -47,11 +48,14 @@ def _rolling_median(x: np.ndarray, w: int) -> np.ndarray:
     return np.array([np.median(x[max(0, i - half): i + half + 1]) for i in range(len(x))]) if len(x) else x
 
 
-def second_scores(loudness: np.ndarray, segments: list[dict]) -> np.ndarray:
-    """Score d'intérêt pour chaque seconde."""
+DEFAULT_WEIGHTS = {"spike": 0.45, "density": 0.25, "excite": 0.30}
+
+
+def components(loudness: np.ndarray, segments: list[dict]) -> dict[str, np.ndarray]:
+    """Signaux par seconde : pics de sonie, densité de parole, excitation (mots, ponctuation)."""
     n = len(loudness)
     if n == 0:
-        return loudness
+        return {k: np.zeros(0) for k in DEFAULT_WEIGHTS}
     # pics de sonie par rapport au niveau local (60 s), calculés sur un signal sous-échantillonné pour la vitesse
     step = 5 if n > 3600 else 1
     base = _rolling_median(loudness[::step], max(3, 60 // step))
@@ -73,9 +77,19 @@ def second_scores(loudness: np.ndarray, segments: list[dict]) -> np.ndarray:
                 tokens = _WORD.findall(w["word"].lower())
                 if any(t in EXCITE for t in tokens):
                     excite[i] += 1
-    density = _z(_smooth(density, 5))
-    excite = _z(_smooth(excite, 5))
-    return 0.45 * spike + 0.25 * density + 0.30 * excite
+    return {"spike": spike, "density": _z(_smooth(density, 5)), "excite": _z(_smooth(excite, 5))}
+
+
+def combine(comps: dict[str, np.ndarray], weights: dict[str, float] | None = None) -> np.ndarray:
+    w = {**DEFAULT_WEIGHTS, **(weights or {})}
+    return sum(w[k] * comps[k] for k in DEFAULT_WEIGHTS)
+
+
+def second_scores(loudness: np.ndarray, segments: list[dict], weights: dict[str, float] | None = None) -> np.ndarray:
+    """Score d'intérêt pour chaque seconde."""
+    if len(loudness) == 0:
+        return loudness
+    return combine(components(loudness, segments), weights)
 
 
 def candidate_windows(scores: np.ndarray, length: int, count: int, step: int = 5, gap: int = 10) -> list[tuple[int, float]]:
@@ -156,14 +170,17 @@ def text_between(segments: list[dict], a: float, b: float) -> str:
 
 
 def find_moments(loudness: np.ndarray, segments: list[dict], *, count: int, target: float, min_len: float,
-                 max_len: float, pool_factor: int = 1) -> list[Moment]:
+                 max_len: float, pool_factor: int = 1, weights: dict[str, float] | None = None) -> list[Moment]:
     total = float(len(loudness))
-    scores = second_scores(loudness, segments)
+    comps = components(loudness, segments)
+    scores = combine(comps, weights) if len(loudness) else loudness
     wins = candidate_windows(scores, int(target), count * pool_factor)
     moments = []
     for a, sc in wins:
         b, e = snap(a, segments, target, min_len, max_len, total)
         if any(min(e, m.end) - max(b, m.start) > 5 for m in moments):
             continue
-        moments.append(Moment(b, e, sc))
+        i0, i1 = int(b), max(int(b) + 1, int(e))
+        feats = {k: round(float(v[i0:i1].mean()), 3) if len(v[i0:i1]) else 0.0 for k, v in comps.items()}
+        moments.append(Moment(b, e, sc, features=feats))
     return moments

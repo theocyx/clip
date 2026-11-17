@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import logging
+import random
 import shutil
 import uuid
 from pathlib import Path
 
 from sqlmodel import select
 
-from .. import db
+from .. import db, learning
 from ..config import get_settings
 from ..models import Clip, Post, Video, now
 from . import highlights, llm, media, render, subtitles, transcribe
@@ -72,9 +73,14 @@ def process(video_id: int) -> int:
     n = clip_count(dur)
     which = llm.provider()
     use_llm = which != "none"
+    # réglages appris des clips déjà publiés, avec une petite variation pour continuer à tester
+    tun = learning.current()
+    target = tun["clip_target"] * random.uniform(1 - s.explore, 1 + s.explore)
+    target = min(max(target, s.clip_min), s.clip_max)
+    guidance = learning.guidance(tun) if use_llm else ""
     moments = highlights.find_moments(
-        loud, segments, count=n, target=s.clip_target, min_len=s.clip_min, max_len=s.clip_max,
-        pool_factor=3 if use_llm else 1,
+        loud, segments, count=n, target=target, min_len=s.clip_min, max_len=s.clip_max,
+        pool_factor=3 if use_llm else 1, weights=tun["weights"],
     )
     if moments:
         hmax = max(m.score for m in moments)
@@ -82,13 +88,16 @@ def process(video_id: int) -> int:
     for m in moments:
         text = highlights.text_between(segments, m.start, m.end)
         heur = (m.score - hmin) / (hmax - hmin) if hmax > hmin else 0.5
-        rated = llm.rate(text, video.title, which) if use_llm else None
+        rated = llm.rate(text, video.title, which, guidance) if use_llm else None
         if rated:
-            m.score = 0.4 * heur + 0.6 * rated[0] / 10
+            mix = tun["llm_mix"]
+            m.score = (1 - mix) * heur + mix * rated[0] / 10
             m.title, m.hook = rated[1], rated[2]
         else:
             m.score = heur
         m.title = m.title or fallback_title(text) or video.title
+        m.features.update(heur=round(heur, 3), llm=rated[0] if rated else None, target=round(target, 1),
+                          tuning_id=tun.get("tuning_id"), text=text[:400])
     moments = sorted(moments, key=lambda m: -m.score)[:n]
     moments = [m for m in moments if m.score >= s.min_score]
 
@@ -117,6 +126,8 @@ def process(video_id: int) -> int:
                             description=err)
                 ss.add(clip)
                 ss.commit()
+                learning.save_clip_info(clip.id, {**m.features, "title": m.title, "hook": m.hook,
+                                                  "part": i, "part_count": len(parts)})
                 if status == "ready":
                     created += 1
                     if s.auto_publish:

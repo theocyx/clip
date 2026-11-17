@@ -10,7 +10,7 @@ from pathlib import Path
 
 from sqlmodel import col, select
 
-from . import db
+from . import db, learning
 from .config import get_settings
 from .models import Clip, Post, Source, Video, now
 from .pipeline import process, sources
@@ -218,6 +218,20 @@ def publish_loop():
         stop.wait(60)
 
 
+# ---------- Statistiques et apprentissage ----------
+
+def stats_loop():
+    cfg = get_settings()
+    stop.wait(300)  # laisse le reste démarrer
+    while not stop.is_set():
+        if cfg.learning:
+            try:
+                log.info("Apprentissage : %s", learning.run()["message"])
+            except Exception:
+                log.exception("Relevé des statistiques échoué")
+        stop.wait(cfg.stats_interval_hours * 3600)
+
+
 def reset_interrupted():
     """Remet en file les tâches coupées par un redémarrage."""
     with db.session() as s:
@@ -240,7 +254,7 @@ def main():
     db.get_engine()
     reset_interrupted()
     threads = [threading.Thread(target=f, daemon=True, name=f.__name__)
-               for f in (poll_loop, record_loop, process_loop, publish_loop)]
+               for f in (poll_loop, record_loop, process_loop, publish_loop, stats_loop)]
     for t in threads:
         t.start()
     log.info("Worker démarré")
