@@ -33,7 +33,8 @@ def test_transcribe_progress(monkeypatch, tmp_path):
     segs = [SimpleNamespace(start=i * 60, end=i * 60 + 60, text="a", words=[]) for i in range(3)]
     monkeypatch.setattr(transcribe, "_get_model", lambda: SimpleNamespace(transcribe=lambda *a, **k: (iter(segs), None)))
     seen = []
-    transcribe.transcribe(tmp_path / "a.wav", tmp_path / "t.json", 600, seen.append)
+    from tests.test_transcribe import make_wav
+    transcribe.transcribe(make_wav(tmp_path / "a.wav", 1), tmp_path / "t.json", 600, seen.append)
     assert seen == [10, 20, 30, 100]
 
 
