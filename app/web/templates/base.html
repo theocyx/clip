@@ -12,18 +12,20 @@ main{max-width:1100px;margin:0 auto;padding:20px 16px}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:16px}
 table{width:100%;border-collapse:collapse}td,th{padding:8px;border-bottom:1px solid var(--bd);text-align:left;vertical-align:top}
 th{color:var(--mut);font-weight:500}
-input[type=text],input[type=url]{background:#0b0d11;border:1px solid var(--bd);color:var(--fg);padding:8px 10px;border-radius:6px;min-width:260px}
+input[type=text],input[type=url],input[type=password]{background:#0b0d11;border:1px solid var(--bd);color:var(--fg);padding:8px 10px;border-radius:6px;min-width:260px}
 button,.btn{background:var(--acc);color:#111;border:0;padding:7px 12px;border-radius:6px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
 button.sec{background:#2a2f3a;color:var(--fg)}button.danger{background:var(--err);color:#fff}
 form.inline{display:inline}.mut{color:var(--mut)}.ok{color:var(--ok)}.err{color:var(--err)}
 .badge{display:inline-block;padding:1px 8px;border-radius:99px;background:#2a2f3a;font-size:12px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
 video{width:100%;aspect-ratio:9/16;background:#000;border-radius:8px}
+.login{max-width:380px;margin:40px auto}.login label{display:block;margin:12px 0 4px}.login input{width:100%;min-width:0}.login button{margin-top:16px;width:100%;padding:10px}
+.qr{background:#fff;border-radius:8px;padding:8px;width:220px;margin:12px auto}.qr svg{display:block;width:100%;height:auto}
 .stats{display:flex;gap:16px;flex-wrap:wrap}.stat{flex:1;min-width:140px}.stat b{font-size:28px;display:block}
 </style>
 </head>
 <body>
-<nav><a class="logo" href="/">✂ Clip</a><a href="/sources">Sources</a><a href="/videos">Vidéos</a><a href="/clips">Clips</a><a href="/accounts">Comptes</a></nav>
+<nav><a class="logo" href="/">✂ Clip</a><a href="/sources">Sources</a><a href="/videos">Vidéos</a><a href="/clips">Clips</a><a href="/accounts">Comptes</a>{% block logout %}<form class="inline" method="post" action="/logout" style="margin-left:auto"><button class="sec">Déconnexion</button></form>{% endblock %}</nav>
 <main>{% block content %}{% endblock %}</main>
 </body>
 </html>

@@ -24,7 +24,9 @@ nano .env            # au minimum : ADMIN_PASSWORD, PUBLIC_URL, DOMAIN
 docker compose --profile https up -d --build
 ```
 
-L'interface est sur `https://<ton domaine>` (identifiant `admin` + ton mot de passe). Le premier traitement télécharge les modèles d'IA (≈ 2,5 Go).
+L'interface est sur `https://<ton domaine>` (identifiant `admin` + ton mot de passe).
+
+**Double authentification (MFA)** : à la première connexion, Clip affiche un QR code à scanner avec Google Authenticator (ou Authy, 2FAS…). Ensuite il faut identifiant + mot de passe + code à 6 chiffres. La connexion reste valable 30 jours (`SESSION_DAYS`). Téléphone perdu : `docker compose exec web python -m app.web.mfa reset`, puis reconnecte-toi pour scanner un nouveau QR code. Le premier traitement télécharge les modèles d'IA (≈ 2,5 Go).
 
 ### Nom de domaine et HTTPS
 
