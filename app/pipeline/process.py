@@ -1,11 +1,14 @@
 """Chaîne complète pour une vidéo téléchargée : transcription → moments → rendu des clips."""
 from __future__ import annotations
 
+import json
 import logging
 import random
+import threading
 import shutil
 import time
 import uuid
+from dataclasses import asdict
 from pathlib import Path
 
 from sqlmodel import select
@@ -16,6 +19,15 @@ from ..models import Clip, Post, Video, now
 from . import dedupe, facecam, highlights, hook, llm, media, render, subtitles, transcribe
 
 log = logging.getLogger(__name__)
+# Mis à vrai par le worker quand il s'arrête (mise à jour…) : le traitement s'interrompt proprement
+# entre deux étapes et reprendra au redémarrage, sans refaire ce qui est déjà fait.
+stopping = threading.Event()
+Interrupted = transcribe.Interrupted
+
+
+def stop_if_stopping() -> None:
+    if stopping.is_set():
+        raise Interrupted()
 
 
 def set_status(video_id: int, status: str, **fields) -> Video:
@@ -138,9 +150,27 @@ def process(video_id: int) -> int:
     wav = work / "audio.wav"
     if not wav.exists():
         media.extract_audio(src, wav)
-    segments = transcribe.transcribe(wav, work / "transcript.json", dur, Progress(video_id))
+    segments = transcribe.transcribe(wav, work / "transcript.json", dur, Progress(video_id), stopping.is_set)
 
     stop_if_skipped(video_id)
+    stop_if_stopping()
+    saved = work / "analysis.json"
+    work.mkdir(parents=True, exist_ok=True)
+    if saved.exists():  # analyse déjà faite avant un redémarrage : on ne la refait pas
+        moments = [highlights.Moment(**d) for d in json.loads(saved.read_text())]
+        log.info("Analyse reprise depuis la sauvegarde (%d moment(s))", len(moments))
+    else:
+        moments = analyze(video, wav, segments, dur)
+        tmp = saved.with_suffix(".tmp")
+        tmp.write_text(json.dumps([asdict(m) for m in moments], ensure_ascii=False, default=float))
+        tmp.replace(saved)
+    return render_moments(video, src, segments, moments)
+
+
+def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
+    """Choisit et note les moments à découper."""
+    s = get_settings()
+    video_id = video.id
     set_status(video_id, "analyzing")
     progress = Progress(video_id)
     loud = media.loudness_per_second(wav)
@@ -162,6 +192,7 @@ def process(video_id: int) -> int:
         hmin = min(m.score for m in moments)
     progress(20)
     for k, m in enumerate(moments):
+        stop_if_stopping()
         progress(20 + 80 * k / len(moments))
         text = highlights.text_between(segments, m.start, m.end)
         heur = (m.score - hmin) / (hmax - hmin) if hmax > hmin else 0.5
@@ -180,22 +211,37 @@ def process(video_id: int) -> int:
                           abs_end=dedupe.abs_time(video.created_at, video.is_live, m.end))
     moments = sorted(moments, key=lambda m: -m.score)[:n]
     moments = [m for m in moments if m.score >= s.min_score]
+    for m in moments:
+        m.features["group"] = uuid.uuid4().hex[:10]
+    return moments
 
+
+def render_moments(video: Video, src: Path, segments: list[dict], moments: list) -> int:
+    s = get_settings()
+    video_id = video.id
     stop_if_skipped(video_id)
     set_status(video_id, "rendering")
     progress = Progress(video_id, every=0)
     created = 0
     todo = sorted(moments, key=lambda m: m.start)
     for k, m in enumerate(todo):
+        stop_if_stopping()
         progress(100 * k / len(todo))
-        if check_duplicate(video, m):
+        group = m.features.get("group") or uuid.uuid4().hex[:10]
+        with db.session() as ss:  # parties déjà rendues avant un redémarrage
+            done_parts = {c.part for c in ss.exec(select(Clip).where(Clip.video_id == video_id,
+                                                                     Clip.group == group)).all()}
+        if not done_parts and check_duplicate(video, m):
             continue
         parts = highlights.split_parts(m.start, m.end, segments, s.part_max)
-        group = uuid.uuid4().hex[:10]
         cam = pick_layout(src, m.start, m.end)
         m.features["layout"] = "split" if cam else "classic"
         top = render.split_top(s.split_cam_height) if cam else 0
         for i, (a, b) in enumerate(parts, 1):
+            if i in done_parts:
+                created += 1
+                continue
+            stop_if_stopping()
             label = f"Partie {i}/{len(parts)}" if len(parts) > 1 else ""
             out = s.clips_dir / str(video_id) / f"{group}_p{i}.mp4"
             try:
@@ -246,6 +292,7 @@ def queue_posts(ss, clip: Clip) -> None:
 def cleanup(video_id: int) -> None:
     work = video_dir(video_id)
     (work / "audio.wav").unlink(missing_ok=True)
+    (work / "analysis.json").unlink(missing_ok=True)
     if not get_settings().keep_source_videos:
         for p in work.glob("source.*"):
             p.unlink(missing_ok=True)

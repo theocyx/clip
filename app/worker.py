@@ -57,7 +57,11 @@ def check_source(src: Source, lives: list[sources.Found] | None = None, videos: 
             for v in s.exec(select(Video).where(Video.source_id == src.id, Video.is_live == True,  # noqa: E712
                                                 Video.status == "new")).all():
                 if gta6.base_key(v.key) not in live_keys:
-                    v.status, v.error = "skipped", "Live terminé avant d'être enregistré"
+                    path = finish_recording(v.id)  # début enregistré avant un redémarrage
+                    if path and path.stat().st_size > 1_000_000:
+                        v.status, v.path = "downloaded", str(path)
+                    else:
+                        v.status, v.error = "skipped", "Live terminé avant d'être enregistré"
                     s.add(v)
         src = s.get(Source, src.id)
         src.initialized = True
@@ -166,7 +170,9 @@ def finish_recordings() -> None:
             continue
         del recorders[vid]
         rec_started.pop(vid, None)
-        path = sources.find_output(process.video_dir(vid))
+        if stop.is_set():  # arrêt du worker : l'enregistrement reprendra au redémarrage
+            continue
+        path = finish_recording(vid)
         if path and path.stat().st_size > 1_000_000:
             log.info("Live %d terminé", vid)
             process.set_status(vid, "downloaded", path=str(path))
@@ -188,6 +194,37 @@ def record_loop():
         for v in lives_to_start(lives):
             start_recording(v)
         stop.wait(15)
+
+
+def stash_recording(video_id: int) -> bool:
+    """Met de côté le morceau de live déjà enregistré (avant un redémarrage). Vrai s'il y en a un."""
+    work = process.video_dir(video_id)
+    path = sources.find_output(work)
+    if path and path.stat().st_size > 0:
+        n = len(list(work.glob("part*")))
+        path.rename(work / f"part{n + 1:02d}{path.suffix}")
+    return any(work.glob("part*"))
+
+
+def finish_recording(video_id: int) -> Path | None:
+    """Recolle les morceaux d'un live coupé par des redémarrages en un seul fichier."""
+    work = process.video_dir(video_id)
+    parts = sorted(work.glob("part*"))
+    last = sources.find_output(work)
+    if last:
+        parts.append(last)
+    if len(parts) <= 1:
+        return parts[0] if parts else None
+    out = work / "joined.ts"
+    r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", "concat:" + "|".join(str(p) for p in parts),
+                        "-c", "copy", "-f", "mpegts", str(out)], capture_output=True, text=True)
+    if r.returncode != 0 or not out.exists():
+        log.error("Recollage du live %d impossible : %s", video_id, r.stderr[-500:])
+        out.unlink(missing_ok=True)
+        return max(parts, key=lambda p: p.stat().st_size)
+    for p in parts:
+        p.unlink(missing_ok=True)
+    return out.rename(work / "source.ts")
 
 
 # ---------- Traitement ----------
@@ -213,6 +250,8 @@ def next_video() -> Video | None:
 
 def process_loop():
     while not stop.is_set():
+        if process.stopping.is_set():
+            return
         v = next_video()
         if not v:
             stop.wait(10)
@@ -220,7 +259,8 @@ def process_loop():
         try:
             if v.status == "new":
                 process.set_status(v.id, "downloading")
-                path = sources.download(v.url, process.video_dir(v.id), lambda: is_skipped(v.id),
+                path = sources.download(v.url, process.video_dir(v.id),
+                                        lambda: process.stopping.is_set() or is_skipped(v.id),
                                         process.Progress(v.id))
                 if is_skipped(v.id):
                     raise sources.Cancelled()
@@ -228,7 +268,13 @@ def process_loop():
             log.info("Traitement de « %s »", v.title)
             n = process.process(v.id)
             log.info("« %s » : %d clip(s) créé(s)", v.title, n)
+        except process.Interrupted:
+            log.info("« %s » : arrêt du worker, le traitement reprendra au redémarrage", v.title)
+            return
         except sources.Cancelled:
+            if process.stopping.is_set() and not is_skipped(v.id):
+                log.info("« %s » : arrêt du worker, le téléchargement reprendra au redémarrage", v.title)
+                return
             log.info("« %s » ignorée : traitement arrêté", v.title)
             process.delete_video_files(v.id)
         except Exception as e:
@@ -435,8 +481,9 @@ def reset_interrupted():
         for v in s.exec(select(Video).where(col(Video.status).in_(
                 ["downloading", "transcribing", "analyzing", "rendering", "recording"]))).all():
             if v.status == "recording":
-                path = sources.find_output(process.video_dir(v.id))
-                v.status, v.path = ("downloaded", str(path)) if path else ("failed", "")
+                # le live continue peut-être : on relance l'enregistrement, les morceaux seront recollés
+                stash_recording(v.id)
+                v.status = "new"
             else:
                 v.status = "downloaded" if v.path and Path(v.path).exists() else "new"
             s.add(v)
@@ -446,21 +493,47 @@ def reset_interrupted():
         s.commit()
 
 
+def shutdown(*_):
+    """Arrêt demandé (docker compose up --build, restart…) : on termine proprement."""
+    if stop.is_set():
+        return
+    log.info("Arrêt demandé : sauvegarde du travail en cours…")
+    stop.set()
+    process.stopping.set()
+    for p in recorders.values():  # yt-dlp finalise le fichier du live sur Ctrl+C
+        if p.poll() is None:
+            p.send_signal(signal.SIGINT)
+
+
+def wait_for(threads: list[threading.Thread], recs: list[subprocess.Popen], timeout: float) -> None:
+    end = time.monotonic() + timeout
+    for t in threads:
+        t.join(max(0.0, end - time.monotonic()))
+    for p in recs:
+        try:
+            p.wait(max(0.1, end - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            p.kill()
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     db.get_engine()
     reset_interrupted()
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
     threads = [threading.Thread(target=f, daemon=True, name=f.__name__)
                for f in (poll_loop, record_loop, process_loop, publish_loop, stats_loop, maintenance_loop)]
     for t in threads:
         t.start()
     log.info("Worker démarré")
     notify.send("🟢 Clip a démarré")
-    try:
-        while True:
-            time.sleep(3600)
-    except KeyboardInterrupt:
-        stop.set()
+    while not stop.wait(3600):
+        pass
+    recs = list(recorders.values())
+    # le traitement s'arrête à la fin de la phrase en cours ; on lui laisse jusqu'à 90 s
+    wait_for([t for t in threads if t.name == "process_loop"], recs, 90)
+    log.info("Worker arrêté proprement")
 
 
 if __name__ == "__main__":
