@@ -20,7 +20,7 @@ Voici la transcription d'un extrait de la vidéo « {video_title} » :
 \"\"\"{text}\"\"\"
 
 Évalue son potentiel viral (drôle, surprenant, émouvant, instructif, autonome et compréhensible sans contexte).
-Réponds UNIQUEMENT en JSON : {{"score": <entier 1-10>, "title": "<titre accrocheur en français, 70 caractères max, sans hashtag>", "hook": "<accroche très courte affichée en haut de la vidéo, 3 à 6 mots, qui donne envie de rester, sans hashtag ni emoji>"}}"""
+Réponds UNIQUEMENT en JSON : {{"score": <entier 1-10>, "title": "<titre accrocheur en français, 70 caractères max, sans hashtag>", "hook": "<accroche très courte affichée en haut de la vidéo, 3 à 6 mots, qui donne envie de rester jusqu'à la fin, terminée par 1 ou 2 emojis en lien avec le contenu (ex. 😂 🤯 😱 🔥 💀 💰), sans hashtag>"}}"""
 
 
 def _ollama_ok() -> bool:
@@ -55,7 +55,7 @@ def parse(content: str) -> tuple[float, str, str] | None:
         return None
     data = json.loads(m.group(0))
     clean = lambda k, n: str(data.get(k, "")).strip().strip('"')[:n]  # noqa: E731
-    return float(data.get("score", 0)), clean("title", 90), clean("hook", 50)
+    return float(data.get("score", 0)), clean("title", 90), clean("hook", 60)
 
 
 def _ask_ollama(prompt: str) -> str:

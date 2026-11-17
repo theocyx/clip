@@ -57,9 +57,10 @@ def test_learns_from_stats(monkeypatch):
     # rien de neuf : pas de nouvelle analyse
     assert not learning.learn()["learned"]
 
-    client = TestClient(__import__("app.web.main", fromlist=["app"]).app)
-    s = get_settings()
-    r = client.get("/stats", auth=(s.admin_user, s.admin_password))
+    from app.web import main, mfa
+    client = TestClient(main.app)
+    client.cookies.set(mfa.SESSION_COOKIE, mfa.make_token("session", 3600))
+    r = client.get("/stats")
     assert r.status_code == 200 and "Miser sur les cris" in r.text
 
 

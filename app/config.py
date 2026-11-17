@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     public_url: str = "http://localhost:8000"  # URL publique (sert aux redirections OAuth)
     admin_user: str = "admin"
     admin_password: str = "change-moi"
+    mfa: bool = True  # code à 6 chiffres (Google Authenticator…) en plus du mot de passe
+    session_days: float = 30  # durée de connexion avant de redemander mot de passe + code
 
     # Surveillance des sources
     poll_interval: int = 600  # secondes entre deux vérifications des chaînes
@@ -42,6 +44,7 @@ class Settings(BaseSettings):
     font_name: str = "Montserrat"
     hook_title: bool = True  # accroche courte en haut de la vidéo
     hook_seconds: float = 0  # durée d'affichage de l'accroche (0 = tout le clip)
+    hook_emojis: bool = True  # emojis en lien avec le contenu dans l'accroche
     keep_source_videos: bool = False
 
     # Publication

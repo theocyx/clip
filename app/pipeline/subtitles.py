@@ -84,11 +84,12 @@ def hook_lines(text: str, per_line: int = 18, max_lines: int = 2) -> list[str]:
 
 
 def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: str = "",
-              hook: str = "", hook_seconds: float = 0) -> str:
+              hook: str = "", hook_seconds: float = 0, hook_in_ass: bool = True) -> str:
+    """hook_in_ass=False : l'accroche est rendue à part en image (emojis couleur), on garde juste la place."""
     dur = b - a
     hl = hook_lines(hook) if hook else []
     lines = [HEADER.format(w=W, h=H, font=font, part_v=170 + 115 * len(hl) + 40 if hl else 180)]
-    if hl:
+    if hl and hook_in_ass:
         end = min(hook_seconds, dur) if hook_seconds > 0 else dur
         lines.append(f"Dialogue: 2,{ts(0)},{ts(end)},Hook,,0,0,0,,{NL.join(_escape(x) for x in hl)}")
     if part_label:

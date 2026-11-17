@@ -11,8 +11,10 @@ def test_public_pages_without_password():
     assert client.get("/confidentialite").status_code == 200
 
 
-def test_admin_needs_password():
-    assert client.get("/").status_code == 401
+def test_admin_needs_login():
+    r = client.get("/clips", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/login?next=/clips"
+    assert client.post("/sources", data={"url": "x"}).status_code == 401
 
 
 def test_verify_file():
