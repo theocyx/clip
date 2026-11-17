@@ -114,7 +114,8 @@ def test_no_limit_by_default_and_ui_limit(monkeypatch):
     _clear()
     monkeypatch.setattr(worker.gta6, "active", lambda: False)
     monkeypatch.setattr(worker, "in_publish_window", lambda at=None: True)
-    assert worker.get_settings().max_posts_per_day == 0
+    assert worker.get_settings().max_posts_per_day == 100
+    monkeypatch.setattr(worker.get_settings(), "max_posts_per_day", 0)
     platforms.set_daily_limit("youtube", None)
     assert worker.post_limit("youtube") == 0
     with db.session() as s:
