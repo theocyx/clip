@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Red
 from fastapi.templating import Jinja2Templates
 from sqlmodel import col, func, select
 
-from .. import db, learning
+from .. import db, learning, notify
 from ..config import get_settings
 from ..models import Clip, Post, PostStat, Source, Video
 from ..pipeline import process, sources
@@ -364,9 +364,12 @@ def stats_refresh(tasks: BackgroundTasks):
 # ---------- Comptes (OAuth) ----------
 
 @app.get("/accounts")
-def accounts(request: Request):
+def accounts(request: Request, notif: str = ""):
+    s = get_settings()
     return templates.TemplateResponse(request, "accounts.html", {
-        "accounts": accounts_status(), "yt_redirect": youtube.redirect_uri(), "tt_redirect": tiktok.redirect_uri()})
+        "accounts": accounts_status(), "yt_redirect": youtube.redirect_uri(), "tt_redirect": tiktok.redirect_uri(),
+        "notify_on": notify.configured(), "notif": notif, "publish_hours": s.publish_hours,
+        "timezone": s.timezone})
 
 
 @app.get("/auth/youtube")
@@ -404,6 +407,12 @@ def auth_tiktok_cb(code: str, state: str):
         raise HTTPException(400, "État OAuth invalide, recommence la connexion")
     tiktok.finish_auth(code)
     return back("/accounts")
+
+
+@app.post("/accounts/notify-test")
+def notify_test():
+    ok = notify.send("🔔 Test de notification de Clip : tout fonctionne !")
+    return back(f"/accounts?notif={'ok' if ok else 'ko'}")
 
 
 @app.post("/accounts/{platform}/disconnect")

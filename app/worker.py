@@ -4,13 +4,15 @@ from __future__ import annotations
 import logging
 import subprocess
 import threading
+import re
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from sqlmodel import col, select
 
-from . import db, learning
+from . import db, learning, maintenance, notify
 from .config import get_settings
 from .models import Clip, Post, Source, Video, now
 from .pipeline import process, sources
@@ -82,6 +84,7 @@ def record_loop():
                 process.set_status(vid, "downloaded", path=str(path))
             else:
                 process.set_status(vid, "failed", error="Enregistrement du live vide ou échoué")
+                notify.error(f"Enregistrement du live {vid} vide ou échoué")
         stop.wait(15)
 
 
@@ -126,25 +129,77 @@ def process_loop():
                 continue
             log.exception("Traitement de la vidéo %d échoué", v.id)
             process.set_status(v.id, "failed", error=str(e)[:1000])
+            notify.error(f"Traitement échoué : {v.title}", str(e))
 
 
 # ---------- Publication ----------
 
 PUBLISHERS = {
     "youtube": lambda clip, desc, tags: youtube.upload(clip.path, clip.title, desc, tags),
-    "tiktok": lambda clip, desc, tags: tiktok.upload(clip.path, f"{clip.title} {' '.join('#' + t for t in tags)}"),
+    "tiktok": lambda clip, desc, tags: tiktok.upload(clip.path, tiktok_caption(clip, desc, tags)),
 }
+
+
+def streamer_tag(name: str) -> str:
+    """« Le Bouseuh » → « LeBouseuh » (hashtag)."""
+    return re.sub(r"[^\w]", "", name or "", flags=re.UNICODE)
+
+
+def credit(video: Video) -> tuple[str, str]:
+    """(nom du streamer, lien de sa chaîne) de la source de la vidéo, ou ("", "")."""
+    if not get_settings().credit_streamer or not video.source_id:
+        return "", ""
+    with db.session() as s:
+        src = s.get(Source, video.source_id)
+    return (src.name, src.url) if src else ("", "")
 
 
 def description(clip: Clip, video: Video) -> tuple[str, list[str]]:
     s = get_settings()
     tags = [t.lstrip("#") for t in s.hashtags.split() if t.strip("#")]
-    desc = f"{clip.title}\n\nExtrait de : {video.title}\n{video.url}\n\n{' '.join('#' + t for t in tags)}"
-    return desc, tags
+    name, channel = credit(video)
+    tag = streamer_tag(name)
+    if tag and tag.lower() not in (t.lower() for t in tags):
+        tags.insert(0, tag)
+    lines = [clip.title, ""]
+    if name:
+        lines += [f"🎮 Streamer : {name}", f"👉 Sa chaîne : {channel}", ""]
+    lines += [f"Extrait de : {video.title}", video.url, "", " ".join("#" + t for t in tags)]
+    return "\n".join(lines), tags
+
+
+def tiktok_caption(clip: Clip, desc: str, tags: list[str]) -> str:
+    who = next((ln.split(": ", 1)[1] for ln in desc.splitlines() if ln.startswith("🎮 Streamer : ")), "")
+    return f"{clip.title}" + (f" 🎮 {who}" if who else "") + " " + " ".join("#" + t for t in tags)
+
+
+def parse_hours(spec: str) -> list[tuple[int, int]]:
+    """« 12-14,18-22:30 » → [(720, 840), (1080, 1350)] en minutes depuis minuit."""
+    def minutes(x: str) -> int:
+        h, _, m = x.strip().partition(":")
+        return int(h) * 60 + int(m or 0)
+    out = []
+    for part in (spec or "").split(","):
+        if "-" in part:
+            a, b = part.split("-", 1)
+            out.append((minutes(a), minutes(b)))
+    return out
+
+
+def in_publish_window(at: datetime | None = None) -> bool:
+    cfg = get_settings()
+    ranges = parse_hours(cfg.publish_hours)
+    if not ranges:
+        return True
+    t = at or datetime.now(ZoneInfo(cfg.timezone))
+    m = t.hour * 60 + t.minute
+    return any((a <= m < b) if a <= b else (m >= a or m < b) for a, b in ranges)
 
 
 def can_post(s, platform: str) -> bool:
     cfg = get_settings()
+    if not in_publish_window():
+        return False
     last = s.exec(select(Post).where(Post.platform == platform, Post.status == "published")
                   .order_by(col(Post.published_at).desc())).first()
     if last and last.published_at and now() - last.published_at < timedelta(minutes=cfg.min_minutes_between_posts):
@@ -200,6 +255,8 @@ def publish_once(platform: str) -> bool:
         log.exception("Publication %s échouée", platform)
         remote, err = "", str(e)[:1000]
         status = "failed" if post.attempts >= 3 else "pending"
+        if status == "failed":
+            notify.error(f"Publication {platform} abandonnée après 3 essais : {clip.title}", err)
     with db.session() as s:
         post = s.get(Post, post.id)
         post.status, post.remote_id, post.error = status, remote, err
@@ -207,6 +264,8 @@ def publish_once(platform: str) -> bool:
             post.published_at = now()
         s.add(post)
         s.commit()
+    if status == "published":
+        notify.published(platform, clip.title, remote)
     return status == "published"
 
 
@@ -234,6 +293,13 @@ def stats_loop():
         stop.wait(cfg.stats_interval_hours * 3600)
 
 
+def maintenance_loop():
+    stop.wait(120)
+    while not stop.is_set():
+        maintenance.run()
+        stop.wait(6 * 3600)  # la sauvegarde n'est faite qu'une fois par jour
+
+
 def reset_interrupted():
     """Remet en file les tâches coupées par un redémarrage."""
     with db.session() as s:
@@ -256,10 +322,11 @@ def main():
     db.get_engine()
     reset_interrupted()
     threads = [threading.Thread(target=f, daemon=True, name=f.__name__)
-               for f in (poll_loop, record_loop, process_loop, publish_loop, stats_loop)]
+               for f in (poll_loop, record_loop, process_loop, publish_loop, stats_loop, maintenance_loop)]
     for t in threads:
         t.start()
     log.info("Worker démarré")
+    notify.send("🟢 Clip a démarré")
     try:
         while True:
             time.sleep(3600)

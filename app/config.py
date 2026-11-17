@@ -54,6 +54,22 @@ class Settings(BaseSettings):
     min_minutes_between_posts: int = 90
     max_posts_per_day: int = 6  # par plateforme (quota YouTube : ~6 envois/jour)
     hashtags: str = "#shorts #clip #fr"
+    # Heures de publication (heure de Paris), plages séparées par des virgules. Vide = à toute heure.
+    publish_hours: str = "12-14,18-22"
+    timezone: str = "Europe/Paris"
+    credit_streamer: bool = True  # nom + chaîne du streamer dans la description
+
+    # Notifications (laisser vide pour désactiver)
+    discord_webhook_url: str = ""
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    notify_published: bool = True
+    notify_errors: bool = True
+
+    # Sauvegarde de la base et ménage du disque
+    backup_keep: int = 7  # nombre de sauvegardes quotidiennes gardées (0 = pas de sauvegarde)
+    source_keep_days: int = 3  # vidéos sources (échecs, lives enregistrés) supprimées après N jours
+    clip_keep_days: int = 14  # fichiers des clips déjà publiés supprimés après N jours (0 = jamais)
 
     youtube_client_id: str = ""
     youtube_client_secret: str = ""
@@ -81,6 +97,10 @@ class Settings(BaseSettings):
     @property
     def videos_dir(self) -> Path:
         return self.data_dir / "videos"
+
+    @property
+    def backups_dir(self) -> Path:
+        return self.data_dir / "backups"
 
     @property
     def clips_dir(self) -> Path:
