@@ -1,4 +1,4 @@
-from app import db, worker
+from app import db, platforms, worker
 from app.models import Clip, Post, Video
 
 
@@ -17,6 +17,7 @@ def test_publication_order_and_limits(monkeypatch):
         s.commit()
 
     sent = []
+    platforms.set_enabled("tiktok", True)
     monkeypatch.setattr(worker, "connected", lambda p: True)
     monkeypatch.setitem(worker.PUBLISHERS, "tiktok", lambda clip, d, t: sent.append(clip.title) or "id")
     monkeypatch.setattr(worker.get_settings(), "min_minutes_between_posts", 0)
@@ -69,7 +70,7 @@ def test_ignored_video_stops_download(monkeypatch, tmp_path):
 def test_check_source_keyword_filter(monkeypatch):
     from sqlmodel import select
 
-    from app import db, worker
+    from app import db, platforms, worker
     from app.models import Source, Video
     from app.pipeline import sources
 

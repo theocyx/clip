@@ -1,4 +1,5 @@
 {% extends "base.html" %}{% block content %}
+{% with next="/accounts" %}{% include "_platforms.html" %}{% endwith %}
 <div class="card">
   <h3>YouTube Shorts</h3>
   {% if accounts.youtube.connected %}

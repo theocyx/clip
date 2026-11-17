@@ -6,13 +6,14 @@
   <div class="card stat"><span class="mut">Clips publiés</span><b>{{ posts.get('published',0) }}</b></div>
   <div class="card stat"><span class="mut">En attente de publication</span><b>{{ posts.get('pending',0) }}</b></div>
 </div>
+{% with next="/" %}{% include "_platforms.html" %}{% endwith %}
 <div class="card">
   <h3>🎮 Mode GTA 6 day one :
     {% if gta6.active %}<span class="ok">actif</span>{% else %}<span class="mut">inactif</span>{% endif %}</h3>
   <p class="mut">{% if gta6.mode == 'auto' %}Automatique : actif {{ gta6.window }}.{% elif gta6.mode == 'on' %}Forcé à « activé ».{% else %}Désactivé.{% endif %}
     Lives GTA 6 vérifiés toutes les ~1,5 min, {{ gta6.max_rec }} enregistrés en même temps (les plus regardés d'abord, les autres en file),
     {% if gta6.chunk %}découpés en morceaux de {{ gta6.chunk|int }} min pour sortir les premiers clips vite,{% endif %}
-    publication toutes les {{ gta6.gap }} min{% if gta6.anytime %} à toute heure{% endif %}.</p>
+    publication toutes les {{ gta6.gap }} min{% if gta6.anytime %} à toute heure{% endif %}{% for p in platforms if not p.on %} ({{ p.label }} en pause : ses clips GTA 6 attendent){% endfor %}.</p>
   {% if gta6.active %}
   <div>Enregistrement : {{ gta6.recording|join(', ') or '—' }}</div>
   <div>En file : {{ gta6.queued|join(', ') or '—' }}</div>

@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Red
 from fastapi.templating import Jinja2Templates
 from sqlmodel import col, func, select
 
-from .. import db, discovery, gta6, health, learning, notify
+from .. import db, discovery, gta6, health, learning, notify, platforms
 from ..config import get_settings
 from ..models import Clip, DiscoverIgnore, Post, PostStat, Source, Video
 from ..pipeline import process, sources
@@ -185,7 +185,24 @@ def dashboard(request: Request):
             day_one["queued"] = [src.name if src else v.title for v, src in queued]
     return templates.TemplateResponse(request, "dashboard.html", {
         "counts": counts, "posts": posts, "videos": videos, "n_sources": n_sources, "accounts": accounts_status(),
-        "gta6": day_one, "health": health.snapshot(), **ctx})
+        "gta6": day_one, "health": health.snapshot(), "platforms": platforms.status(), **ctx})
+
+
+@app.post("/platforms/{platform}")
+def platform_toggle(platform: str, on: str = Form(...), next: str = Form("/")):
+    try:
+        platforms.set_enabled(platform, on == "1")
+    except ValueError:
+        raise HTTPException(400, "Plateforme inconnue")
+    return back(next if next in ("/", "/accounts") else "/")
+
+
+@app.post("/platforms/{platform}/drop")
+def platform_drop(platform: str, next: str = Form("/")):
+    if platform not in platforms.PLATFORMS:
+        raise HTTPException(400, "Plateforme inconnue")
+    platforms.drop_pending(platform)
+    return back(next if next in ("/", "/accounts") else "/")
 
 
 @app.post("/gta6")
@@ -494,6 +511,7 @@ def accounts(request: Request, notif: str = ""):
     return templates.TemplateResponse(request, "accounts.html", {
         "accounts": accounts_status(), "yt_redirect": youtube.redirect_uri(), "tt_redirect": tiktok.redirect_uri(),
         "notify_on": notify.configured(), "notif": notif, "publish_hours": s.publish_hours,
+        "platforms": platforms.status(),
         "timezone": s.timezone})
 
 
