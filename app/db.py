@@ -36,6 +36,8 @@ def _migrate(engine):
     for table, column, ddl in (
         ("source", "keywords", "VARCHAR NOT NULL DEFAULT ''"),
         ("video", "progress", "FLOAT NOT NULL DEFAULT 0"),
+        ("source", "auto", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("source", "last_seen", "DATETIME"),
     ):
         with engine.begin() as conn:
             cols = {r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table})")}

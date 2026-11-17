@@ -22,6 +22,32 @@
       <button class="{{ '' if gta6.mode == m else 'sec' }}">{{ label }}</button></form>
   {% endfor %}</p>
 </div>
+{% set h = health %}
+<div class="card">
+  <h3>🖥️ Santé du serveur :
+    {% if h.problems %}<span class="err">{{ h.problems|length }} problème(s)</span>{% else %}<span class="ok">tout va bien</span>{% endif %}</h3>
+  {% for p in h.problems %}<div class="err">{{ p }}</div>{% endfor %}
+  <div class="stats">
+    <div class="stat"><span class="mut">Disque</span>
+      <b class="{{ 'err' if h.disk.pct >= h.cfg.health_disk_pct or h.disk.free_gb < h.cfg.health_disk_min_gb else '' }}">{{ h.disk.pct|round|int }} %</b>
+      <span class="mut">{{ h.disk.free_gb }} Go libres / {{ h.disk.total_gb }}</span></div>
+    <div class="stat"><span class="mut">Température CPU</span>
+      {% if h.temp is not none %}<b class="{{ 'err' if h.temp >= h.cfg.health_temp_max else '' }}">{{ h.temp|round|int }} °C</b>{% else %}<b class="mut">—</b><span class="mut">capteur non lisible</span>{% endif %}</div>
+    <div class="stat"><span class="mut">Mémoire</span>
+      {% if h.ram %}<b class="{{ 'err' if h.ram.pct >= h.cfg.health_ram_pct else '' }}">{{ h.ram.pct|round|int }} %</b>
+      <span class="mut">{{ h.ram.free_gb }} Go libres / {{ h.ram.total_gb }}</span>{% else %}<b class="mut">—</b>{% endif %}</div>
+    <div class="stat"><span class="mut">Charge CPU</span><b>{{ h.load.pct }} %</b>
+      <span class="mut">{{ h.load.load }} sur {{ h.load.cores }} cœurs</span></div>
+  </div>
+  <p>Worker :
+    {% if h.worker_age is none %}<span class="mut">pas encore démarré</span>
+    {% elif h.worker_ok %}<span class="ok">actif</span> <span class="mut">(signe de vie il y a {{ h.worker_age|int }} s)</span>
+    {% else %}<span class="err">arrêté depuis {{ (h.worker_age / 60)|int }} min</span>{% endif %}
+    · IA (Ollama) :
+    {% if h.ollama is none %}<span class="mut">—</span>{% elif h.ollama %}<span class="ok">ok</span>{% else %}<span class="err">injoignable</span>{% endif %}
+    · Plantages (24 h) : <span class="{{ 'err' if h.crashes else 'ok' }}">{{ h.crashes }}</span></p>
+  <p class="mut">Alerte par notification si disque &gt; {{ h.cfg.health_disk_pct|int }} %, CPU &gt; {{ h.cfg.health_temp_max|int }} °C, mémoire &gt; {{ h.cfg.health_ram_pct|int }} % ou service planté{% if not h.cfg.health %} (alertes désactivées : HEALTH=false){% endif %}.</p>
+</div>
 <div class="card">
   <h3>Comptes</h3>
   {% for name, a in accounts.items() %}
