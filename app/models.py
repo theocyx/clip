@@ -67,7 +67,7 @@ class Post(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     clip_id: int = Field(foreign_key="clip.id", index=True)
     platform: str  # youtube / tiktok
-    status: str = Field(default="pending", index=True)  # pending, publishing, published, failed, cancelled
+    status: str = Field(default="pending", index=True)  # pending, publishing, published, manual (posté à la main), failed, cancelled
     remote_id: str = ""
     error: str = ""
     attempts: int = 0

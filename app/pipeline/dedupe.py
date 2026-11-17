@@ -96,7 +96,7 @@ def find(video_id: int, text: str, t0: float | None, t1: float | None) -> list[M
             if not is_duplicate(sim, same, s.dedupe_similarity):
                 continue
             posts = ss.exec(select(Post).join(Clip, Clip.id == Post.clip_id).where(Clip.group == clip.group)).all()
-            posted = any(p.status in ("published", "publishing") for p in posts)
+            posted = any(p.status in ("published", "publishing", "manual") for p in posts)
             found.append(Match(clip.group, clip.video_id, clip.score, sim, posted))
     return sorted(found, key=lambda m: -m.similarity)
 

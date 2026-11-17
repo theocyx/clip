@@ -1,20 +1,64 @@
 {% extends "base.html" %}{% block content %}
+<div class="card">
+  <h3>📅 Envois d'aujourd'hui</h3>
+  {% for name, p in plan.items() %}
+  <div>{{ labels[name] }} :
+    {% if p.on %}<b>{{ p.used }}/{{ p.limit }}</b> envois sur 24 h · <span class="ok">{{ p.today|length }} prévu(s) d'ici minuit</span>
+    {% else %}<span class="err">publication auto en pause ou compte non connecté</span>{% endif %}
+    · <span class="{{ 'err' if p.manual else 'mut' }}">{{ p.manual|length }} à poster à la main</span>
+  </div>
+  {% endfor %}
+  <p class="mut">Le quota du jour est gardé pour les clips les mieux notés{% if gta6 %} (en mode GTA 6, les plus récents comptent plus){% endif %}.
+    Les autres sont à télécharger et à poster depuis l'appli, puis à marquer « posté à la main » pour qu'ils ne partent pas en double.</p>
+</div>
+<div style="margin:12px 0">
+  {% for k, label in views.items() %}<a href="/clips?vue={{ k }}" class="badge {{ 'ok' if vue == k else '' }}" style="text-decoration:none;margin-right:6px">{{ label }} ({{ counts[k] }})</a>{% endfor %}
+</div>
 <div class="grid">
 {% for c in clips %}
+  {% set st = state[c.id] %}
   <div class="card">
     {% if c.status == 'ready' %}<video src="/clips/{{ c.id }}/video" controls preload="none"></video>
     {% else %}<p class="err">Rendu échoué : {{ c.description[:200] }}</p>{% endif %}
     <form method="post" action="/clips/{{ c.id }}/title"><input type="text" name="title" value="{{ c.title }}" style="min-width:0;width:100%;margin:8px 0"></form>
     <div class="mut">{{ (c.end - c.start)|round|int }} s · score {{ '%.2f'|format(c.score) }}{% if c.part_count > 1 %} · partie {{ c.part }}/{{ c.part_count }}{% endif %}</div>
     <div style="margin:8px 0">
-      {% for p in posts.get(c.id, []) %}
-        <span class="badge {{ 'ok' if p.status=='published' else 'err' if p.status=='failed' else '' }}" title="{{ p.error }}">
-          {{ 'YouTube' if p.platform=='youtube' else 'TikTok' }} : {{ {'pending':'en file','publishing':'envoi…','published':'publié','failed':'échec','cancelled':'annulé'}.get(p.status, p.status) }}</span>
+      {% for p in posts.get(c.id, []) %}{% set k, r = st.get(p.platform, (p.status, None)) %}
+        <span class="badge {{ 'ok' if k in ('published','manual','today') else 'err' if k in ('failed','todo') else '' }}" title="{{ p.error }}">
+          {{ 'YouTube' if p.platform=='youtube' else 'TikTok' }} :
+          {% if k == 'today' %}auto aujourd'hui (n°{{ r }}){% elif k == 'todo' %}à poster à la main{% else %}{{ {'publishing':'envoi…','published':'publié auto','manual':'posté à la main','failed':'échec','cancelled':'annulé'}.get(k, k) }}{% endif %}</span>
       {% endfor %}
     </div>
+    {% if c.status == 'ready' %}
+    <a href="/clips/{{ c.id }}/download"><button class="sec" type="button">⬇ Télécharger</button></a>
+    <details style="margin:8px 0"><summary>Textes à copier</summary>
+      {% set t = texts[c.id] %}
+      {% for label, val in [('Titre', t.title), ('Description YouTube', t.desc), ('Légende TikTok', t.tiktok), ('Hashtags', t.tags)] %}
+      <div class="mut" style="margin-top:6px">{{ label }} <button class="sec" type="button" onclick="copyNext(this)">Copier</button></div>
+      <textarea readonly rows="{{ 6 if 'Description' in label else 2 }}" style="width:100%">{{ val }}</textarea>
+      {% endfor %}
+    </details>
+    {% for name in ('youtube', 'tiktok') %}{% set k = st.get(name, (None, None))[0] %}
+      {% if k == 'manual' %}
+      <form class="inline" method="post" action="/clips/{{ c.id }}/manual"><input type="hidden" name="platform" value="{{ name }}"><input type="hidden" name="undo" value="1"><input type="hidden" name="vue" value="{{ vue }}"><button class="sec">Annuler « posté » {{ 'YouTube' if name=='youtube' else 'TikTok' }}</button></form>
+      {% elif k not in ('published', 'publishing') %}
+      <form class="inline" method="post" action="/clips/{{ c.id }}/manual"><input type="hidden" name="platform" value="{{ name }}"><input type="hidden" name="vue" value="{{ vue }}"><button>✅ Posté sur {{ 'YouTube' if name=='youtube' else 'TikTok' }}</button></form>
+      {% endif %}
+    {% endfor %}
+    {% endif %}
+    <div style="margin-top:8px">
     <form class="inline" method="post" action="/clips/{{ c.id }}/publish"><button class="sec">Republier</button></form>
     <form class="inline" method="post" action="/clips/{{ c.id }}/delete"><button class="danger">Supprimer</button></form>
+    </div>
   </div>
-{% else %}<p class="mut">Aucun clip pour l'instant.</p>{% endfor %}
+{% else %}<p class="mut">Aucun clip ici.</p>{% endfor %}
 </div>
+<script>
+function copyNext(btn) {
+  var ta = btn.parentNode.nextElementSibling;
+  var done = function () { btn.textContent = 'Copié ✓'; setTimeout(function () { btn.textContent = 'Copier'; }, 1500); };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(ta.value).then(done);
+  else { ta.select(); document.execCommand('copy'); done(); }
+}
+</script>
 {% endblock %}

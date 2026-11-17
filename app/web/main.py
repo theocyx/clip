@@ -15,9 +15,9 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Red
 from fastapi.templating import Jinja2Templates
 from sqlmodel import col, func, select
 
-from .. import db, discovery, gta6, health, learning, notify, platforms
+from .. import db, discovery, gta6, health, learning, notify, platforms, worker
 from ..config import get_settings
-from ..models import Clip, DiscoverIgnore, Post, PostStat, Source, Video
+from ..models import Clip, DiscoverIgnore, Post, PostStat, Source, Video, now
 from ..pipeline import process, sources
 from ..publish import creds, tiktok, youtube
 from . import mfa
@@ -177,6 +177,7 @@ def dashboard(request: Request):
         n_sources = s.exec(select(func.count()).select_from(Source)).one()
         ctx = progress_context(s, videos)
         day_one = gta6.status()
+        plan = worker.plan(s)
         if day_one["active"]:
             lives = s.exec(select(Video, Source).join(Source, isouter=True).where(
                 Video.is_live == True, col(Video.status).in_(["recording", "new"]))).all()  # noqa: E712
@@ -186,7 +187,7 @@ def dashboard(request: Request):
             day_one["queued"] = [src.name if src else v.title for v, src in queued]
     return templates.TemplateResponse(request, "dashboard.html", {
         "counts": counts, "posts": posts, "videos": videos, "n_sources": n_sources, "accounts": accounts_status(),
-        "gta6": day_one, "health": health.snapshot(), "platforms": platforms.status(), **ctx})
+        "gta6": day_one, "health": health.snapshot(), "platforms": platforms.status(), "plan": plan, **ctx})
 
 
 @app.post("/platforms/{platform}")
@@ -418,15 +419,86 @@ def delete_video(vid: int):
 
 # ---------- Clips ----------
 
-@app.get("/clips")
-def list_clips(request: Request):
-    with db.session() as s:
-        clips = s.exec(select(Clip).where(Clip.status != "deleted").order_by(col(Clip.created_at).desc()).limit(100)).all()
-        posts = s.exec(select(Post).where(col(Post.clip_id).in_([c.id for c in clips]))).all()
-    by_clip: dict[int, list[Post]] = {}
+VIEWS = {"manuel": "À poster à la main", "auto": "Prévus aujourd'hui", "publies": "Déjà publiés", "tous": "Tous"}
+
+
+def clip_state(posts: list[Post], pl: dict) -> dict:
+    """Par plateforme : « today » (rang d'envoi aujourd'hui), « manual » (en trop), « published », « manual_done »…"""
+    out = {}
     for p in posts:
-        by_clip.setdefault(p.clip_id, []).append(p)
-    return templates.TemplateResponse(request, "clips.html", {"clips": clips, "posts": by_clip})
+        if p.status == "pending":
+            rank = pl[p.platform]["today"].get(p.id)
+            out[p.platform] = ("today", rank) if rank else ("todo", None)
+        else:
+            out[p.platform] = (p.status, None)
+    return out
+
+
+@app.get("/clips")
+def list_clips(request: Request, vue: str = "manuel"):
+    vue = vue if vue in VIEWS else "manuel"
+    with db.session() as s:
+        pl = worker.plan(s)
+        clips = s.exec(select(Clip).where(Clip.status != "deleted").order_by(col(Clip.created_at).desc()).limit(300)).all()
+        posts = s.exec(select(Post).where(col(Post.clip_id).in_([c.id for c in clips]))).all()
+        by_clip: dict[int, list[Post]] = {}
+        for p in posts:
+            by_clip.setdefault(p.clip_id, []).append(p)
+        state = {c.id: clip_state(by_clip.get(c.id, []), pl) for c in clips}
+        tests = {
+            "manuel": lambda st: any(v[0] == "todo" for v in st.values()),
+            "auto": lambda st: any(v[0] in ("today", "publishing") for v in st.values()),
+            "publies": lambda st: any(v[0] in ("published", "manual") for v in st.values()),
+            "tous": lambda st: True,
+        }
+        counts = {k: sum(1 for c in clips if f(state[c.id])) for k, f in tests.items()}
+        shown = [c for c in clips if tests[vue](state[c.id])]
+        if vue == "auto":  # dans l'ordre d'envoi
+            shown.sort(key=lambda c: min((r for k, r in state[c.id].values() if k == "today" and r), default=99))
+        elif vue == "manuel":  # les meilleurs d'abord
+            shown.sort(key=lambda c: -c.score)
+        shown = shown[:100]
+        texts = {}
+        for c in shown:
+            v = s.get(Video, c.video_id)
+            desc, tags = worker.description(c, v)
+            texts[c.id] = {"title": c.title, "desc": desc, "tiktok": worker.tiktok_caption(c, desc, tags),
+                           "tags": " ".join("#" + t for t in tags)}
+    return templates.TemplateResponse(request, "clips.html", {
+        "clips": shown, "posts": by_clip, "state": state, "plan": pl, "vue": vue, "views": VIEWS,
+        "counts": counts, "texts": texts, "labels": platforms.LABELS, "gta6": gta6.active()})
+
+
+@app.get("/clips/{cid}/download")
+def clip_download(cid: int):
+    with db.session() as s:
+        c = s.get(Clip, cid)
+    if not c or not Path(c.path).exists():
+        raise HTTPException(404)
+    name = re.sub(r"[^\w\- ]", "", c.title, flags=re.UNICODE).strip()[:60] or f"clip-{cid}"
+    return FileResponse(c.path, media_type="video/mp4", filename=f"{name}.mp4")
+
+
+@app.post("/clips/{cid}/manual")
+def clip_manual(cid: int, platform: str = Form(...), undo: str = Form(""), vue: str = Form("manuel")):
+    """Marque le clip comme posté à la main sur cette plateforme (il ne partira pas en double)."""
+    if platform not in platforms.PLATFORMS:
+        raise HTTPException(400, "Plateforme inconnue")
+    with db.session() as s:
+        if not s.get(Clip, cid):
+            raise HTTPException(404)
+        p = s.exec(select(Post).where(Post.clip_id == cid, Post.platform == platform)
+                   .order_by(col(Post.id).desc())).first()
+        if undo:
+            if p and p.status == "manual":
+                p.status, p.published_at = "pending", None
+                s.add(p)
+        elif not p or p.status not in ("published", "publishing"):
+            p = p or Post(clip_id=cid, platform=platform)
+            p.status, p.published_at, p.error = "manual", now(), ""
+            s.add(p)
+        s.commit()
+    return back(f"/clips?vue={vue if vue in VIEWS else 'manuel'}")
 
 
 @app.get("/clips/{cid}/video")
