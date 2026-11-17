@@ -356,7 +356,7 @@ def parse_hours(spec: str) -> list[tuple[int, int]]:
 
 def in_publish_window(at: datetime | None = None) -> bool:
     cfg = get_settings()
-    ranges = parse_hours(cfg.publish_hours)
+    ranges = parse_hours(platforms.publish_hours())
     if not ranges:
         return True
     t = at or datetime.now(ZoneInfo(cfg.timezone))
@@ -382,7 +382,7 @@ def quota_reset() -> datetime:
 
 def post_gap() -> int:
     cfg = get_settings()
-    return cfg.gta6_min_minutes_between_posts if gta6.active() else cfg.min_minutes_between_posts
+    return cfg.gta6_min_minutes_between_posts if gta6.active() else platforms.min_gap()
 
 
 def anytime() -> bool:

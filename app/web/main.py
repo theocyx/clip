@@ -220,6 +220,21 @@ def platform_limit(platform: str, limit: str = Form(""), resume: str = Form(""))
     return back("/clips")
 
 
+@app.post("/schedule")
+def schedule(hours: str = Form(""), gap: str = Form(""), reset: str = Form(""), next: str = Form("/clips")):
+    """Heures d'envoi et écart minimum entre deux envois, modifiables depuis l'interface."""
+    nxt = next if next in ("/clips", "/accounts", "/") else "/clips"
+    sep = "&" if "?" in nxt else "?"
+    if reset:
+        platforms.set_schedule(None, None)
+        return back(nxt)
+    if not platforms.valid_hours(hours):
+        return back(f"{nxt}{sep}sched=ko")
+    g = gap.strip()
+    platforms.set_schedule(hours, int(g) if g.isdigit() else None)
+    return back(f"{nxt}{sep}sched=ok")
+
+
 @app.post("/gta6")
 def gta6_mode(mode: str = Form(...)):
     try:
@@ -448,7 +463,7 @@ def clip_state(posts: list[Post], pl: dict) -> dict:
 
 
 @app.get("/clips")
-def list_clips(request: Request, vue: str = "manuel"):
+def list_clips(request: Request, vue: str = "manuel", sched: str = ""):
     vue = vue if vue in VIEWS else "manuel"
     with db.session() as s:
         pl = worker.plan(s)
@@ -479,7 +494,9 @@ def list_clips(request: Request, vue: str = "manuel"):
                            "tags": " ".join("#" + t for t in tags)}
     return templates.TemplateResponse(request, "clips.html", {
         "clips": shown, "posts": by_clip, "state": state, "plan": pl, "vue": vue, "views": VIEWS,
-        "counts": counts, "texts": texts, "labels": platforms.LABELS, "gta6": gta6.active()})
+        "counts": counts, "texts": texts, "labels": platforms.LABELS, "gta6": gta6.active(),
+        "publish_hours": platforms.publish_hours(), "gap": platforms.min_gap(), "sched": sched,
+        "timezone": get_settings().timezone})
 
 
 @app.get("/clips/{cid}/download")
@@ -592,11 +609,12 @@ def stats_refresh(tasks: BackgroundTasks):
 # ---------- Comptes (OAuth) ----------
 
 @app.get("/accounts")
-def accounts(request: Request, notif: str = ""):
+def accounts(request: Request, notif: str = "", sched: str = ""):
     s = get_settings()
     return templates.TemplateResponse(request, "accounts.html", {
         "accounts": accounts_status(), "yt_redirect": youtube.redirect_uri(), "tt_redirect": tiktok.redirect_uri(),
-        "notify_on": notify.configured(), "notif": notif, "publish_hours": s.publish_hours,
+        "notify_on": notify.configured(), "notif": notif, "publish_hours": platforms.publish_hours(),
+        "gap": platforms.min_gap(), "sched": sched,
         "platforms": platforms.status(),
         "timezone": s.timezone})
 

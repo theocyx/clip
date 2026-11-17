@@ -32,6 +32,7 @@
   <h3>Heures de publication</h3>
   <p>{% if publish_hours %}Les clips sont publiés entre <b>{{ publish_hours.replace(",", " h et ").replace("-", " h – ") }} h</b> ({{ timezone }}).
   {% else %}Les clips sont publiés à toute heure.{% endif %}
-  <span class="mut">Réglage : PUBLISH_HOURS dans .env.</span></p>
+  </p>
+  {% with next="/accounts" %}{% include "_schedule.html" %}{% endwith %}
 </div>
 {% endblock %}
