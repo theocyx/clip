@@ -46,6 +46,20 @@ app = FastAPI(title="Clip", dependencies=[Depends(auth)])
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
+def _local_time(dt, fmt: str = "%d/%m %H:%M") -> str:
+    """Date UTC (naïve, comme en base) -> texte à l'heure locale (TIMEZONE)."""
+    if not dt:
+        return ""
+    from datetime import timezone as _tz
+    from zoneinfo import ZoneInfo
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_tz.utc)
+    return dt.astimezone(ZoneInfo(get_settings().timezone)).strftime(fmt)
+
+
+templates.env.filters["local"] = _local_time
+
+
 @app.exception_handler(LoginRequired)
 def _to_login(request: Request, _exc: LoginRequired):
     nxt = request.url.path + (f"?{request.url.query}" if request.url.query else "")

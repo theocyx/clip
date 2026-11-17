@@ -4,7 +4,7 @@
   <h3>Ce que l'outil a appris</h3>
   {% if not learning_on %}<p class="err">Apprentissage désactivé (LEARNING=false).</p>{% endif %}
   {% if tuned_at %}
-    <p class="mut">Dernière mise à jour : {{ tuned_at.strftime('%d/%m %H:%M') }} UTC · {{ measured }} clips mesurés</p>
+    <p class="mut">Dernière mise à jour : {{ tuned_at|local }} · {{ measured }} clips mesurés</p>
     <ul>{% for i in tuning.insights %}<li>{{ i }}</li>{% endfor %}</ul>
     {% if tuning.rules %}<h4>Règles tirées par l'IA</h4><ul>{% for r in tuning.rules %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
   {% else %}
@@ -28,7 +28,7 @@
     <tr><th>Clip</th><th>Plateforme</th><th>Vues</th><th>Likes</th><th>Com.</th><th>Regardé</th><th>Perf.</th></tr>
     {% for r in rows %}
     <tr>
-      <td>{{ r.clip.title if r.clip else '?' }}<div class="mut">{{ r.post.published_at.strftime('%d/%m %H:%M') if r.post.published_at }}</div></td>
+      <td>{{ r.clip.title if r.clip else '?' }}<div class="mut">{{ r.post.published_at|local if r.post.published_at }}</div></td>
       <td>{{ 'YouTube' if r.post.platform=='youtube' else 'TikTok' }}</td>
       {% if r.stat %}
       <td>{{ r.stat.views }}</td><td>{{ r.stat.likes }}</td><td>{{ r.stat.comments }}</td>
