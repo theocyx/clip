@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block logout %}{% endblock %}
+{% block content %}
+<form class="card login" method="post" action="/login">
+  <h2 style="margin-top:0">Connexion</h2>
+  {% if error %}<p class="err">{{ error }}</p>{% endif %}
+  <input type="hidden" name="next" value="{{ next }}">
+  <label for="u">Identifiant</label><input type="text" id="u" name="username" autocomplete="username" required autofocus>
+  <label for="p">Mot de passe</label><input type="password" id="p" name="password" autocomplete="current-password" required>
+  {% if need_code %}
+  <label for="c">Code de l'appli d'authentification</label>
+  <input type="text" id="c" name="code" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" autocomplete="one-time-code" placeholder="123 456" required>
+  {% endif %}
+  <button>Se connecter</button>
+</form>
+{% endblock %}

@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg fonts-montserrat fonts-dejavu-core ca-certificates \
+        ffmpeg fontconfig fonts-montserrat fonts-dejavu-core fonts-noto-color-emoji ca-certificates \
         intel-media-va-driver mesa-va-drivers vainfo \
     && rm -rf /var/lib/apt/lists/*
 

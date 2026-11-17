@@ -11,7 +11,7 @@ from sqlmodel import select
 from .. import db
 from ..config import get_settings
 from ..models import Clip, Post, Video, now
-from . import highlights, llm, media, render, subtitles, transcribe
+from . import highlights, hook, llm, media, render, subtitles, transcribe
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +49,16 @@ def clip_count(duration: float) -> int:
 def fallback_title(text: str) -> str:
     text = text.strip()
     return (text[:67] + "…") if len(text) > 70 else text
+
+
+def render_hook_png(text: str, out: Path) -> str:
+    """Accroche avec emojis en image ; "" si impossible (repli sur l'accroche ASS sans emoji)."""
+    png = out.parent / f"{out.stem}_hook.png"
+    try:
+        return str(png.resolve()) if hook.render_png(text, get_settings().font_name, png) else ""
+    except Exception as e:
+        log.warning("Accroche en image impossible (%s), repli sans emoji.", e)
+        return ""
 
 
 def process(video_id: int) -> int:
@@ -102,9 +112,16 @@ def process(video_id: int) -> int:
             label = f"Partie {i}/{len(parts)}" if len(parts) > 1 else ""
             out = s.clips_dir / str(video_id) / f"{group}_p{i}.mp4"
             try:
-                hook = (m.hook or m.title) if s.hook_title else ""
-                ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook, s.hook_seconds)
-                render.render(src, a, b, ass, out)
+                hook_text = (m.hook or m.title) if s.hook_title else ""
+                png = ""
+                if hook_text and s.hook_emojis:
+                    hook_text = hook.add_emojis(hook_text, m.title)
+                    png = render_hook_png(hook_text, out)
+                if not png:
+                    hook_text = hook.strip_emojis(hook_text)
+                ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook_text, s.hook_seconds,
+                                          hook_in_ass=not png)
+                render.render(src, a, b, ass, out, png, s.hook_seconds)
             except Exception as e:
                 log.exception("Rendu échoué")
                 status, err = "failed", str(e)
