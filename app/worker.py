@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from sqlmodel import col, select
 
-from . import db, discovery, gta6, health, learning, maintenance, notify
+from . import db, discovery, gta6, health, learning, maintenance, notify, platforms
 from .config import get_settings
 from .models import Clip, ClipInfo, Post, Source, Video, now
 from .pipeline import process, sources
@@ -406,6 +406,8 @@ def connected(platform: str) -> bool:
 
 
 def publish_once(platform: str) -> bool:
+    if not platforms.enabled(platform):  # coupée dans l'interface : les clips restent en attente
+        return False
     if not connected(platform):
         return False
     with db.session() as s:

@@ -1,0 +1,18 @@
+<div class="card">
+  <h3>📤 Publication automatique</h3>
+  {% for p in platforms %}
+  <div>{{ p.label }} :
+    {% if p.on %}<span class="ok">activée</span>{% else %}<span class="err">en pause</span>{% endif %}
+    <span class="mut">· {{ p.pending }} clip(s) en attente</span>
+    <form class="inline" method="post" action="/platforms/{{ p.name }}">
+      <input type="hidden" name="on" value="{{ '0' if p.on else '1' }}"><input type="hidden" name="next" value="{{ next }}">
+      <button class="{{ 'sec' if p.on else '' }}">{{ 'Mettre en pause' if p.on else 'Activer' }}</button></form>
+    {% if not p.on and p.pending %}
+    <form class="inline" method="post" action="/platforms/{{ p.name }}/drop"><input type="hidden" name="next" value="{{ next }}">
+      <button class="sec">Vider la file</button></form>
+    {% endif %}
+  </div>
+  {% endfor %}
+  <p class="mut">En pause, les nouveaux clips restent en attente pour cette plateforme et partent à la réactivation
+    (en mode GTA 6, les clips GTA 6 les plus récents d'abord). « Vider la file » retire ceux en attente ; ils restent republiables depuis « Clips ».</p>
+</div>

@@ -62,6 +62,10 @@ Pour 1 h de vidéo : transcription ≈ 15-25 min (`WHISPER_MODEL=small`), IA ≈
 
 ⚠️ Tant que TikTok n'a pas **audité l'app** (quelques jours à quelques semaines), les vidéos ne peuvent être publiées qu'en **privé** (`TIKTOK_PRIVACY=SELF_ONLY`). Après approbation, mets `TIKTOK_PRIVACY=PUBLIC_TO_EVERYONE`. Alternative : `TIKTOK_MODE=draft` envoie les clips en brouillon dans l'appli TikTok, tu n'as plus qu'à appuyer sur « Publier ».
 
+## Mettre une plateforme en pause
+
+Sur le tableau de bord (et la page **Comptes**), un bouton par plateforme met la publication en pause ou la réactive. **TikTok est en pause par défaut** tant que l'app n'est pas validée. En pause, les clips restent en attente pour cette plateforme et partent à la réactivation (en mode GTA 6, les plus récents d'abord) ; « Vider la file » les retire (republiables depuis **Clips**).
+
 ## Apprendre de ce qui marche (page **Stats**)
 
 Toutes les 6 h, Clip relève les vues, likes, commentaires (et la rétention YouTube) de chaque clip publié, puis compare les clips entre eux à 3 jours d'âge. Dès 10 clips mesurés, il ajuste tout seul, doucement :

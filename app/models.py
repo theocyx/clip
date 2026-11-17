@@ -119,3 +119,11 @@ class DiscoverIgnore(SQLModel, table=True):
 
     url: str = Field(primary_key=True)
     created_at: datetime = Field(default_factory=now)
+
+
+class Setting(SQLModel, table=True):
+    """Réglage modifié depuis l'interface (clé → valeur)."""
+
+    key: str = Field(primary_key=True)
+    value: str = ""
+    updated_at: datetime = Field(default_factory=now)
