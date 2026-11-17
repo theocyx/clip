@@ -18,7 +18,7 @@ from sqlmodel import col, select
 from . import db, discovery, gta6, health, learning, maintenance, notify, platforms
 from .config import get_settings
 from .models import Clip, ClipInfo, Post, Source, Video, now
-from .pipeline import process, sources
+from .pipeline import process, sources, sponsor
 from .pipeline import tags as hashtags
 from .publish import creds, tiktok, youtube
 
@@ -582,6 +582,17 @@ def discover_loop():
     discovery.loop(stop)
 
 
+def sponsor_purge():
+    """Une fois au démarrage : retire de la file les clips déjà rendus tombés dans une pub."""
+    stop.wait(30)
+    try:
+        n = sponsor.purge_queue(should_stop=stop.is_set)
+        if n:
+            log.info("%d envoi(s) annulé(s) : passages sponsorisés", n)
+    except Exception:
+        log.exception("Vérification des passages sponsorisés échouée")
+
+
 def reset_interrupted():
     """Remet en file les tâches coupées par un redémarrage."""
     with db.session() as s:
@@ -635,6 +646,7 @@ def main():
                          discover_loop)]
     for t in threads:
         t.start()
+    threading.Thread(target=sponsor_purge, daemon=True, name="sponsor_purge").start()
     # la surveillance démarre après : elle vérifie que les autres tâches tournent toujours
     threading.Thread(target=health.loop, args=("worker", stop, threads), daemon=True, name="health").start()
     log.info("Worker démarré")
