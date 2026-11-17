@@ -6,14 +6,16 @@ import logging
 import subprocess
 import threading
 import re
+import signal
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from sqlmodel import col, select
 
-from . import db, learning, maintenance, notify
+from . import db, gta6, learning, maintenance, notify
 from .config import get_settings
 from .models import Clip, ClipInfo, Post, Source, Video, now
 from .pipeline import process, sources
@@ -23,12 +25,18 @@ from .publish import creds, tiktok, youtube
 log = logging.getLogger("worker")
 stop = threading.Event()
 recorders: dict[int, subprocess.Popen] = {}
+rec_started: dict[int, float] = {}  # video.id → début de l'enregistrement (time.monotonic)
 
 
 # ---------- Surveillance des sources ----------
 
-def check_source(src: Source) -> int:
-    found = sources.discover(src.platform, src.url, src.record_lives, src.include_videos)
+def check_source(src: Source, lives: list[sources.Found] | None = None, videos: bool = True) -> int:
+    """`lives` : lives déjà relevés (mode GTA 6) ; `videos=False` : pas de recherche des vidéos publiées."""
+    if lives is None:
+        found = sources.discover(src.platform, src.url, src.record_lives, src.include_videos and videos)
+    else:
+        found = lives + (sources.discover(src.platform, src.url, False, True) if videos and src.include_videos else [])
+    day_one = gta6.active()
     added = 0
     with db.session() as s:
         for f in found:
@@ -36,10 +44,21 @@ def check_source(src: Source) -> int:
                 continue
             # au premier scan, l'historique existant est ignoré (seuls les lives en cours sont pris)
             status = "new" if (src.initialized or f.is_live) else "skipped"
-            if not sources.matches_keywords(f.title, src.keywords):
+            if not sources.matches_keywords(f.title, src.keywords) and not (day_one and gta6.is_gta6(f.title)):
                 status = "skipped"  # hors sujet (ex. pas de GTA dans le titre)
             s.add(Video(source_id=src.id, key=f.key, url=f.url, title=f.title, is_live=f.is_live, status=status))
             added += status == "new"
+            if day_one and status == "new" and f.is_live and gta6.is_gta6(f.title):
+                n = gta6.viewers.get(src.id)
+                notify.send(f"🔴 GTA 6 en live : {src.name}" + (f" ({n} spectateurs)" if n else "") + f"\n{f.url}")
+        if day_one and src.record_lives:
+            # lives en file dont le streamer a coupé avant qu'une place se libère
+            live_keys = {f.key for f in found if f.is_live}
+            for v in s.exec(select(Video).where(Video.source_id == src.id, Video.is_live == True,  # noqa: E712
+                                                Video.status == "new")).all():
+                if gta6.base_key(v.key) not in live_keys:
+                    v.status, v.error = "skipped", "Live terminé avant d'être enregistré"
+                    s.add(v)
         src = s.get(Source, src.id)
         src.initialized = True
         src.last_checked = now()
@@ -50,43 +69,124 @@ def check_source(src: Source) -> int:
 
 def poll_loop():
     s = get_settings()
+    last_full = 0.0
     while not stop.is_set():
         with db.session() as ss:
             srcs = ss.exec(select(Source).where(Source.enabled == True)).all()  # noqa: E712
-        for src in srcs:
+        day_one = gta6.active()
+        # mode GTA 6 : lives vérifiés souvent (Twitch en une requête), vidéos publiées au rythme normal
+        full = not day_one or time.monotonic() - last_full >= s.poll_interval
+        fast = gta6.fast_lives(srcs) if day_one else {}
+
+        def one(src):
+            if not full and not src.record_lives:
+                return
             try:
-                n = check_source(src)
+                n = check_source(src, fast.get(src.id), videos=full)
                 if n:
                     log.info("%s : %d nouvelle(s) vidéo(s)", src.name, n)
             except Exception:
                 log.exception("Vérification de %s échouée", src.name)
-        stop.wait(s.poll_interval)
+
+        if day_one:
+            with ThreadPoolExecutor(4) as pool:
+                list(pool.map(one, srcs))
+        else:
+            for src in srcs:
+                one(src)
+        if full:
+            last_full = time.monotonic()
+        stop.wait(s.gta6_poll_interval if day_one else s.poll_interval)
 
 
 # ---------- Enregistrement des lives ----------
 
+def start_recording(v: Video) -> None:
+    out = process.video_dir(v.id)
+    out.mkdir(parents=True, exist_ok=True)
+    log.info("Enregistrement du live %s", v.url)
+    recorders[v.id] = subprocess.Popen(sources.download_cmd(v.url, out, live=True),
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    rec_started[v.id] = time.monotonic()
+    process.set_status(v.id, "recording")
+
+
+def stop_recording(p: subprocess.Popen) -> None:
+    """Arrête yt-dlp proprement (Ctrl+C) pour que le fichier reste lisible."""
+    p.send_signal(signal.SIGINT)
+    try:
+        p.wait(30)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.wait()
+
+
+def cut_chunks() -> None:
+    """Mode GTA 6 : un live enregistré depuis GTA6_CHUNK_MINUTES est coupé, le morceau part au traitement
+    et la suite est mise en file (elle reprend aussitôt, sauf si un plus gros streamer attend)."""
+    chunk = get_settings().gta6_chunk_minutes * 60
+    if chunk <= 0:
+        return
+    for vid, p in list(recorders.items()):
+        if p.poll() is not None or time.monotonic() - rec_started.get(vid, time.monotonic()) < chunk:
+            continue
+        with db.session() as s:
+            v = s.get(Video, vid)
+            if not v or not gta6.is_gta6(v.title):
+                continue
+            nxt = Video(source_id=v.source_id, key=gta6.next_part_key(v.key), url=v.url, title=v.title,
+                        is_live=True, status="new")
+            if s.exec(select(Video).where(Video.key == nxt.key)).first():
+                continue
+            s.add(nxt)
+            s.commit()
+        log.info("Live %d : morceau de %d min envoyé au traitement", vid, chunk // 60)
+        stop_recording(p)
+
+
+def lives_to_start(lives: list[Video]) -> list[Video]:
+    """Hors mode GTA 6 : tous. Pendant : les plus prioritaires, dans la limite des places libres."""
+    if not gta6.active():
+        return lives
+    with db.session() as s:
+        srcs = {x.id: x for x in s.exec(select(Source)).all()}
+    lives = sorted(lives, key=lambda v: gta6.live_priority(v, srcs.get(v.source_id)))
+    free = max(0, get_settings().gta6_max_recordings - len(recorders))
+    return lives[:free]
+
+
+def get_video(vid: int) -> Video | None:
+    with db.session() as s:
+        return s.get(Video, vid)
+
+
+def finish_recordings() -> None:
+    for vid, p in list(recorders.items()):
+        if p.poll() is None:
+            continue
+        del recorders[vid]
+        rec_started.pop(vid, None)
+        path = sources.find_output(process.video_dir(vid))
+        if path and path.stat().st_size > 1_000_000:
+            log.info("Live %d terminé", vid)
+            process.set_status(vid, "downloaded", path=str(path))
+        elif "#p" in getattr(get_video(vid), "key", ""):
+            process.set_status(vid, "skipped", error="Live terminé entre deux morceaux")
+        else:
+            process.set_status(vid, "failed", error="Enregistrement du live vide ou échoué")
+            notify.error(f"Enregistrement du live {vid} vide ou échoué")
+
+
 def record_loop():
     while not stop.is_set():
+        if gta6.active():
+            cut_chunks()
+        finish_recordings()
         with db.session() as s:
-            lives = s.exec(select(Video).where(Video.is_live == True, Video.status == "new")).all()  # noqa: E712
-        for v in lives:
-            out = process.video_dir(v.id)
-            out.mkdir(parents=True, exist_ok=True)
-            log.info("Enregistrement du live %s", v.url)
-            recorders[v.id] = subprocess.Popen(sources.download_cmd(v.url, out, live=True),
-                                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            process.set_status(v.id, "recording")
-        for vid, p in list(recorders.items()):
-            if p.poll() is None:
-                continue
-            del recorders[vid]
-            path = sources.find_output(process.video_dir(vid))
-            if path and path.stat().st_size > 1_000_000:
-                log.info("Live %d terminé", vid)
-                process.set_status(vid, "downloaded", path=str(path))
-            else:
-                process.set_status(vid, "failed", error="Enregistrement du live vide ou échoué")
-                notify.error(f"Enregistrement du live {vid} vide ou échoué")
+            lives = s.exec(select(Video).where(Video.is_live == True, Video.status == "new")  # noqa: E712
+                           .order_by(col(Video.id))).all()
+        for v in lives_to_start(lives):
+            start_recording(v)
         stop.wait(15)
 
 
@@ -100,11 +200,15 @@ def is_skipped(video_id: int) -> bool:
 
 def next_video() -> Video | None:
     with db.session() as s:
-        return s.exec(
-            select(Video).where(
-                ((Video.status == "new") & (Video.is_live == False)) | (Video.status == "downloaded")  # noqa: E712
-            ).order_by(col(Video.created_at))
-        ).first()
+        q = select(Video).where(
+            ((Video.status == "new") & (Video.is_live == False)) | (Video.status == "downloaded")  # noqa: E712
+        ).order_by(col(Video.created_at))
+        if not gta6.active():
+            return s.exec(q).first()
+        # mode GTA 6 : les lives GTA 6 des plus gros streamers passent devant
+        todo = s.exec(q).all()
+        srcs = {x.id: x for x in s.exec(select(Source)).all()}
+        return min(todo, key=lambda v: gta6.process_priority(v, srcs.get(v.source_id)), default=None)
 
 
 def process_loop():
@@ -216,22 +320,29 @@ def in_publish_window(at: datetime | None = None) -> bool:
 
 def can_post(s, platform: str) -> bool:
     cfg = get_settings()
-    if not in_publish_window():
+    day_one = gta6.active()  # la hype est courte : on publie plus vite, à toute heure
+    if not (day_one and cfg.gta6_publish_anytime) and not in_publish_window():
         return False
+    gap = cfg.gta6_min_minutes_between_posts if day_one else cfg.min_minutes_between_posts
     last = s.exec(select(Post).where(Post.platform == platform, Post.status == "published")
                   .order_by(col(Post.published_at).desc())).first()
-    if last and last.published_at and now() - last.published_at < timedelta(minutes=cfg.min_minutes_between_posts):
+    if last and last.published_at and now() - last.published_at < timedelta(minutes=gap):
         return False
     day = s.exec(select(Post).where(Post.platform == platform, Post.status == "published",
                                     Post.published_at >= now() - timedelta(days=1))).all()
-    return len(day) < cfg.max_posts_per_day
+    limit = cfg.gta6_max_posts_per_day if day_one and cfg.gta6_max_posts_per_day > 0 else cfg.max_posts_per_day
+    return len(day) < limit
 
 
 def next_post(s, platform: str) -> Post | None:
     """Prochain envoi : les parties suivantes d'un clip passent en priorité, dans l'ordre."""
-    pending = s.exec(select(Post, Clip).join(Clip, Clip.id == Post.clip_id)
-                     .where(Post.platform == platform, Post.status == "pending", Clip.status == "ready")
-                     .order_by(col(Clip.part).desc(), col(Clip.score).desc())).all()
+    rows = s.exec(select(Post, Clip, Video).join(Clip, Clip.id == Post.clip_id).join(Video, Video.id == Clip.video_id)
+                  .where(Post.platform == platform, Post.status == "pending", Clip.status == "ready")
+                  .order_by(col(Clip.part).desc(), col(Clip.score).desc())).all()
+    if gta6.active():
+        # mode GTA 6 : les suites d'abord, puis les clips GTA 6 les plus récents (la hype ne dure pas)
+        rows = sorted(rows, key=lambda r: (r[1].part <= 1, not gta6.is_gta6(r[2].title), -r[2].id))
+    pending = [(post, clip) for post, clip, _ in rows]
     for post, clip in pending:
         if clip.part > 1:
             prev = s.exec(select(Post).join(Clip, Clip.id == Post.clip_id).where(

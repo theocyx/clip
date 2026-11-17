@@ -96,6 +96,15 @@ Puis `docker compose up -d` et, dans **Comptes**, clique sur « Envoyer un messa
 - Hashtags ajoutés selon le titre du live et ce qui est dit dans le clip : `#GTA6`, `#GTARP`, `#GTA5`, et le serveur RP reconnu (`#FlashBack`, `#21JumpClick`, `#FailyV`, `#NoPixel`). Autres serveurs : `RP_SERVERS=Lunar City=#LunarCity` dans `.env`.
 - Quand plusieurs streamers vivent la même scène RP, un seul clip est gardé : les répliques entendues sont comparées avec les clips des 48 dernières heures (et l'heure du live). Le meilleur clip reste, l'autre n'est pas monté ou retiré de la file (« annulé », motif « Doublon »).
 
+## Mode « GTA 6 day one »
+
+Actif automatiquement de la veille au soir du 19/11/2026 pendant 3 jours (ou bouton sur le tableau de bord, ou `GTA6_MODE=on/off`). Pendant le mode :
+- les lives sont vérifiés toutes les 90 s (Twitch en une seule requête, avec la catégorie « Grand Theft Auto VI » et le nombre de spectateurs) ;
+- les lives GTA 6 sont enregistrés en priorité, les plus regardés d'abord (puis l'ordre du catalogue ou `GTA6_PRIORITY`), au plus `GTA6_MAX_RECORDINGS` à la fois ; les autres attendent en file ;
+- chaque live est découpé en morceaux de 20 min traités pendant que le streamer joue encore, les morceaux GTA 6 passent devant le reste ;
+- les clips GTA 6 les plus récents sont publiés d'abord, toutes les 30 min et à toute heure (le quota YouTube reste ~6 envois/jour) ;
+- une notification est envoyée à chaque nouveau live GTA 6.
+
 ## Réglages utiles (`.env`)
 
 | Variable | Rôle | Défaut |

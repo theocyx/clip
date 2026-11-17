@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Red
 from fastapi.templating import Jinja2Templates
 from sqlmodel import col, func, select
 
-from .. import db, learning, notify
+from .. import db, gta6, learning, notify
 from ..config import get_settings
 from ..models import Clip, Post, PostStat, Source, Video
 from ..pipeline import process, sources
@@ -153,9 +153,26 @@ def dashboard(request: Request):
         videos = s.exec(select(Video).where(Video.status != "skipped").order_by(col(Video.created_at).desc()).limit(10)).all()
         n_sources = s.exec(select(func.count()).select_from(Source)).one()
         ctx = progress_context(s, videos)
+        day_one = gta6.status()
+        if day_one["active"]:
+            lives = s.exec(select(Video, Source).join(Source, isouter=True).where(
+                Video.is_live == True, col(Video.status).in_(["recording", "new"]))).all()  # noqa: E712
+            day_one["recording"] = [src.name if src else v.title for v, src in lives if v.status == "recording"]
+            queued = sorted(((v, src) for v, src in lives if v.status == "new"),
+                            key=lambda r: gta6.live_priority(*r))
+            day_one["queued"] = [src.name if src else v.title for v, src in queued]
     return templates.TemplateResponse(request, "dashboard.html", {
         "counts": counts, "posts": posts, "videos": videos, "n_sources": n_sources, "accounts": accounts_status(),
-        **ctx})
+        "gta6": day_one, **ctx})
+
+
+@app.post("/gta6")
+def gta6_mode(mode: str = Form(...)):
+    try:
+        gta6.set_mode(mode)
+    except ValueError:
+        raise HTTPException(400, "Mode inconnu")
+    return back("/")
 
 
 def accounts_status() -> dict:

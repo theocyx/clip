@@ -74,6 +74,20 @@ class Settings(BaseSettings):
     dedupe_hours: float = 48  # comparaison avec les clips des N dernières heures
     dedupe_similarity: float = 0.3  # part de phrases en commun au-delà de laquelle c'est un doublon
 
+    # Mode « GTA 6 day one » : auto (actif à la date de sortie), on, off. Modifiable aussi dans l'interface.
+    gta6_mode: str = "auto"
+    gta6_date: str = "2026-11-19"
+    gta6_days: int = 3  # durée du mode à partir du jour de sortie
+    gta6_hours_before: float = 6  # démarre la veille au soir (lancement à minuit sur certaines plateformes)
+    gta6_keywords: str = "gta 6,gta6,gta vi,gtavi,grand theft auto vi,grand theft auto 6"
+    gta6_poll_interval: int = 90  # vérification des lives (s) pendant le mode
+    gta6_max_recordings: int = 3  # lives enregistrés en même temps, les autres attendent leur tour
+    gta6_chunk_minutes: float = 20  # live découpé en morceaux traités pendant l'enregistrement (0 = non)
+    gta6_priority: str = ""  # streamers à enregistrer en premier (noms ou chaînes, séparés par des virgules)
+    gta6_min_minutes_between_posts: int = 30
+    gta6_publish_anytime: bool = True  # ignore les heures de publication pendant le mode
+    gta6_max_posts_per_day: int = 0  # 0 = comme MAX_POSTS_PER_DAY
+
     # Notifications (laisser vide pour désactiver)
     discord_webhook_url: str = ""
     telegram_bot_token: str = ""
