@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     hook_seconds: float = 0  # durée d'affichage de l'accroche (0 = tout le clip)
     hook_emojis: bool = True  # emojis en lien avec le contenu dans l'accroche
     keep_source_videos: bool = False
+    # Mise en page : auto (split si une facecam est détectée, sinon classique), split, classic
+    layout: str = "auto"
+    split_cam_height: int = 640  # hauteur de la facecam en haut du clip (le jeu prend le reste)
 
     # Publication
     auto_publish: bool = True
@@ -58,6 +61,18 @@ class Settings(BaseSettings):
     publish_hours: str = "12-14,18-22"
     timezone: str = "Europe/Paris"
     credit_streamer: bool = True  # nom + chaîne du streamer dans la description
+    # Hashtags tendance ajoutés selon le titre du live et ce qui est dit dans le clip (#GTA6, #GTARP, serveur RP…)
+    trend_hashtags: bool = True
+    # Règles en plus : « mot1|mot2=#Tag1 #Tag2; autre=#Tag3 » (mots = expressions régulières)
+    trend_rules: str = ""
+    # Serveurs RP reconnus en plus de ceux connus : « Nom du serveur=#HashtagServeur; … »
+    rp_servers: str = ""
+    max_hashtags: int = 10
+
+    # Anti-doublons : pas deux clips de la même scène (plusieurs streamers sur le même serveur RP)
+    dedupe: bool = True
+    dedupe_hours: float = 48  # comparaison avec les clips des N dernières heures
+    dedupe_similarity: float = 0.3  # part de phrases en commun au-delà de laquelle c'est un doublon
 
     # Notifications (laisser vide pour désactiver)
     discord_webhook_url: str = ""

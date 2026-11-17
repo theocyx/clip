@@ -14,7 +14,7 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Sub,{font},86,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,7,3,2,60,60,480,1
 Style: Part,{font},64,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,8,60,60,{part_v},1
-Style: Hook,{font},78,&H00FFFFFF,&H00FFFFFF,&H00000000,&HB4000000,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,170,1
+Style: Hook,{font},78,&H00FFFFFF,&H00FFFFFF,&H00000000,&HB4000000,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,{hook_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -84,11 +84,14 @@ def hook_lines(text: str, per_line: int = 18, max_lines: int = 2) -> list[str]:
 
 
 def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: str = "",
-              hook: str = "", hook_seconds: float = 0, hook_in_ass: bool = True) -> str:
-    """hook_in_ass=False : l'accroche est rendue à part en image (emojis couleur), on garde juste la place."""
+              hook: str = "", hook_seconds: float = 0, hook_in_ass: bool = True, top: int = 0) -> str:
+    """hook_in_ass=False : l'accroche est rendue à part en image (emojis couleur), on garde juste la place.
+
+    top : décalage vers le bas de l'accroche et de « Partie x/y » (format split : sous la facecam)."""
     dur = b - a
     hl = hook_lines(hook) if hook else []
-    lines = [HEADER.format(w=W, h=H, font=font, part_v=170 + 115 * len(hl) + 40 if hl else 180)]
+    part_v = (170 + 115 * len(hl) + 40 if hl else 180) + top
+    lines = [HEADER.format(w=W, h=H, font=font, part_v=part_v, hook_v=170 + top)]
     if hl and hook_in_ass:
         end = min(hook_seconds, dur) if hook_seconds > 0 else dur
         lines.append(f"Dialogue: 2,{ts(0)},{ts(end)},Hook,,0,0,0,,{NL.join(_escape(x) for x in hl)}")
