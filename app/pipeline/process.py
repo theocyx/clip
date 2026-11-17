@@ -16,7 +16,7 @@ from sqlmodel import select
 from .. import db, learning
 from ..config import get_settings
 from ..models import Clip, Post, Video, now
-from . import dedupe, facecam, highlights, hook, llm, media, render, subtitles, transcribe
+from . import dedupe, facecam, highlights, hook, llm, media, render, sponsor, subtitles, transcribe
 
 log = logging.getLogger(__name__)
 # Mis à vrai par le worker quand il s'arrête (mise à jour…) : le traitement s'interrompt proprement
@@ -183,9 +183,12 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
     target = tun["clip_target"] * random.uniform(1 - s.explore, 1 + s.explore)
     target = min(max(target, s.clip_min), s.clip_max)
     guidance = learning.guidance(tun) if use_llm else ""
+    banned = sponsor.excluded(video.key, segments, video_dir(video_id) / "sponsor.json")
+    if banned:
+        log.info("Passages sponsorisés exclus : %s", ", ".join(f"{a:.0f}-{b:.0f} s" for a, b in banned))
     moments = highlights.find_moments(
         loud, segments, count=n, target=target, min_len=s.clip_min, max_len=s.clip_max,
-        pool_factor=3 if use_llm else 1, weights=tun["weights"],
+        pool_factor=3 if use_llm else 2, weights=tun["weights"], exclude=banned,
     )
     if moments:
         hmax = max(m.score for m in moments)
@@ -197,6 +200,10 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
         text = highlights.text_between(segments, m.start, m.end)
         heur = (m.score - hmin) / (hmax - hmin) if hmax > hmin else 0.5
         rated = llm.rate(text, video.title, which, guidance) if use_llm else None
+        if rated and rated[0] <= 0:
+            log.info("L'IA y voit une pub / un passage sponsorisé : ignoré (%.0f-%.0f s)", m.start, m.end)
+            m.score = -1.0
+            continue
         if rated:
             mix = tun["llm_mix"]
             m.score = (1 - mix) * heur + mix * rated[0] / 10
@@ -209,8 +216,15 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
                           dedupe_text=text[:dedupe.TEXT_CHARS],
                           abs_start=dedupe.abs_time(video.created_at, video.is_live, m.start),
                           abs_end=dedupe.abs_time(video.created_at, video.is_live, m.end))
-    moments = sorted(moments, key=lambda m: -m.score)[:n]
-    moments = [m for m in moments if m.score >= s.min_score]
+    kept = []
+    for m in sorted(moments, key=lambda m: -m.score):
+        if len(kept) >= n or m.score < s.min_score:
+            break
+        stop_if_stopping()
+        if sponsor.on_screen(Path(video.path), m.start, m.end):  # « sponsorisé » écrit à l'écran
+            continue
+        kept.append(m)
+    moments = kept
     for m in moments:
         m.features["group"] = uuid.uuid4().hex[:10]
     return moments

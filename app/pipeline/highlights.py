@@ -170,15 +170,24 @@ def text_between(segments: list[dict], a: float, b: float) -> str:
 
 
 def find_moments(loudness: np.ndarray, segments: list[dict], *, count: int, target: float, min_len: float,
-                 max_len: float, pool_factor: int = 1, weights: dict[str, float] | None = None) -> list[Moment]:
+                 max_len: float, pool_factor: int = 1, weights: dict[str, float] | None = None,
+                 exclude: list[tuple[float, float]] | None = None) -> list[Moment]:
+    """exclude : passages interdits (pub, sponsor…) ; aucun clip ne les touche."""
     total = float(len(loudness))
     comps = components(loudness, segments)
     scores = combine(comps, weights) if len(loudness) else loudness
+    exclude = exclude or []
+    if exclude and len(scores):
+        scores = scores.copy()
+        for a, b in exclude:
+            scores[max(0, int(a)):max(0, int(math.ceil(b)))] = -10.0
     wins = candidate_windows(scores, int(target), count * pool_factor)
     moments = []
     for a, sc in wins:
         b, e = snap(a, segments, target, min_len, max_len, total)
         if any(min(e, m.end) - max(b, m.start) > 5 for m in moments):
+            continue
+        if any(min(e, r1) - max(b, r0) > 2 for r0, r1 in exclude):
             continue
         i0, i1 = int(b), max(int(b) + 1, int(e))
         feats = {k: round(float(v[i0:i1].mean()), 3) if len(v[i0:i1]) else 0.0 for k, v in comps.items()}

@@ -75,6 +75,14 @@ class Settings(BaseSettings):
     dedupe_hours: float = 48  # comparaison avec les clips des N dernières heures
     dedupe_similarity: float = 0.3  # part de phrases en commun au-delà de laquelle c'est un doublon
 
+    # Passages sponsorisés (pub, placement de produit, code promo) jamais clippés
+    exclude_sponsored: bool = True
+    sponsorblock: bool = True  # passages signalés sur SponsorBlock (vidéos YouTube)
+    sponsor_pad_before: float = 20  # secondes exclues avant une phrase de pub
+    sponsor_pad_after: float = 60  # et après (la pub continue souvent après « merci à … »)
+    sponsor_ocr: bool = True  # lit le texte à l'écran (« sponsorisé »…) avant de garder un clip
+    sponsor_ocr_every: float = 4  # une image toutes les N secondes
+
     # Mode « GTA 6 day one » : auto (actif à la date de sortie), on, off. Modifiable aussi dans l'interface.
     gta6_mode: str = "auto"
     gta6_date: str = "2026-11-19"

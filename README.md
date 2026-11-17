@@ -99,6 +99,16 @@ Puis `docker compose up -d` et, dans **Comptes**, clique sur « Envoyer un messa
 - Chaque jour, la base est copiée dans `data/backups/` (les 7 dernières sont gardées). Pour restaurer : `docker compose down`, copie la sauvegarde sur `data/clip.db`, supprime `data/clip.db-wal` et `data/clip.db-shm`, puis `docker compose up -d`.
 - Les vidéos sources sont effacées après 3 jours et les fichiers des clips déjà publiés après 14 jours.
 
+## Passages sponsorisés exclus
+
+Aucun clip n'est pris dans une pub, un placement de produit ou un code promo :
+- vidéos YouTube : passages signalés sur SponsorBlock (sponsor, autopromo, « abonnez-vous », intro/outro) ;
+- transcription : « sponsorisé », « partenariat », « code promo », « lien en description », « merci à … pour avoir sponsorisé »… (le passage autour est exclu : 20 s avant, 60 s après) ;
+- l'IA locale signale aussi les extraits qui ressemblent à une pub ;
+- texte à l'écran (« sponsorisé », « partenariat », « publicité »…) lu par OCR local sur une image toutes les 4 s.
+
+Au démarrage, les clips déjà rendus mais pas encore publiés qui tombent dans ces passages sont retirés de la file (« annulé », motif « Retiré : … »). Réglages : `EXCLUDE_SPONSORED`, `SPONSORBLOCK`, `SPONSOR_OCR`.
+
 ## Hashtags tendance et anti-doublons
 
 - Hashtags ajoutés selon le titre du live et ce qui est dit dans le clip : `#GTA6`, `#GTARP`, `#GTA5`, et le serveur RP reconnu (`#FlashBack`, `#21JumpClick`, `#FailyV`, `#NoPixel`). Autres serveurs : `RP_SERVERS=Lunar City=#LunarCity` dans `.env`.
