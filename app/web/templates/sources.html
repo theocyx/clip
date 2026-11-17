@@ -19,7 +19,7 @@
       <td><a href="{{ s.url }}" target="_blank" rel="noopener">{{ s.name }}</a></td>
       <td>{{ s.platform }}</td>
       <td>{% if s.record_lives %}<span class="badge">lives</span>{% endif %} {% if s.include_videos %}<span class="badge">vidéos</span>{% endif %} {% if s.keywords %}<span class="badge">titre : {{ s.keywords }}</span>{% endif %}</td>
-      <td class="mut">{{ s.last_checked.strftime('%d/%m %H:%M') if s.last_checked else 'jamais' }} UTC</td>
+      <td class="mut">{{ s.last_checked|local if s.last_checked else 'jamais' }}</td>
       <td>
         <form class="inline" method="post" action="/sources/{{ s.id }}/toggle"><button class="sec">{{ 'Désactiver' if s.enabled else 'Activer' }}</button></form>
         <form class="inline" method="post" action="/sources/{{ s.id }}/delete"><button class="danger">Supprimer</button></form>
@@ -47,7 +47,7 @@
     <tr>
       <td><a href="{{ s.url }}" target="_blank" rel="noopener">{{ s.name }}</a> <span class="badge">auto</span></td>
       <td>{{ s.platform }}</td>
-      <td class="mut">{{ s.last_seen.strftime('%d/%m %H:%M') if s.last_seen else '—' }} UTC</td>
+      <td class="mut">{{ s.last_seen|local if s.last_seen else '—' }}</td>
       <td>
         <form class="inline" method="post" action="/sources/{{ s.id }}/toggle"><button class="sec">{{ 'Désactiver' if s.enabled else 'Activer' }}</button></form>
         <form class="inline" method="post" action="/sources/{{ s.id }}/delete"><button class="danger">Retirer</button></form>
