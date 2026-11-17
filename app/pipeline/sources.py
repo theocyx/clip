@@ -23,6 +23,15 @@ class Found:
     is_live: bool = False
 
 
+def matches_keywords(title: str, keywords: str) -> bool:
+    """Vrai si `keywords` est vide ou si le titre contient l'un des mots-clés (séparés par des virgules)."""
+    words = [k.strip().lower() for k in (keywords or "").split(",") if k.strip()]
+    if not words:
+        return True
+    t = (title or "").lower()
+    return any(re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z0-9])", t) for w in words)
+
+
 def detect_platform(url: str) -> str:
     if "twitch.tv" in url:
         return "twitch"

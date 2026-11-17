@@ -26,7 +26,16 @@ def get_engine():
         from . import models  # noqa: F401
 
         SQLModel.metadata.create_all(_engine)
+        _migrate(_engine)
     return _engine
+
+
+def _migrate(engine):
+    """Ajoute les colonnes apparues après la création de la base."""
+    with engine.begin() as conn:
+        cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(source)")}
+        if "keywords" not in cols:
+            conn.exec_driver_sql("ALTER TABLE source ADD COLUMN keywords VARCHAR NOT NULL DEFAULT ''")
 
 
 @contextmanager
