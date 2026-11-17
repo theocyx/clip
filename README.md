@@ -77,6 +77,20 @@ Tout reste local. La page **Stats** montre les chiffres, ce qui a été appris e
 - **Vues TikTok** : ajoute le scope `video.list` à l'app TikTok, mets `TIKTOK_STATS=true`, puis reconnecte TikTok.
 - Les clips privés (projet Google ou app TikTok pas encore audités) n'ont pas de vues : rien ne sera appris avant.
 
+## Notifications (Discord ou Telegram)
+
+- **Discord** : sur ton serveur, *Paramètres du salon → Intégrations → Webhooks → Nouveau webhook*, copie l'URL dans `DISCORD_WEBHOOK_URL`.
+- **Telegram** : parle à **@BotFather**, `/newbot`, copie le jeton dans `TELEGRAM_BOT_TOKEN`. Envoie un message à ton bot, puis ouvre `https://api.telegram.org/bot<jeton>/getUpdates` : le nombre après `"chat":{"id":` va dans `TELEGRAM_CHAT_ID`.
+
+Puis `docker compose up -d` et, dans **Comptes**, clique sur « Envoyer un message de test ».
+
+## Horaires, crédit du streamer, sauvegardes
+
+- Les clips ne sont publiés que pendant `PUBLISH_HOURS` (par défaut 12 h-14 h et 18 h-22 h, heure de Paris), espacés de `MIN_MINUTES_BETWEEN_POSTS`.
+- La description cite le streamer, le lien de sa chaîne et un hashtag à son nom (`CREDIT_STREAMER=false` pour l'enlever).
+- Chaque jour, la base est copiée dans `data/backups/` (les 7 dernières sont gardées). Pour restaurer : `docker compose down`, copie la sauvegarde sur `data/clip.db`, supprime `data/clip.db-wal` et `data/clip.db-shm`, puis `docker compose up -d`.
+- Les vidéos sources sont effacées après 3 jours et les fichiers des clips déjà publiés après 14 jours.
+
 ## Réglages utiles (`.env`)
 
 | Variable | Rôle | Défaut |

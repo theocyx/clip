@@ -20,6 +20,7 @@ def test_publication_order_and_limits(monkeypatch):
     monkeypatch.setattr(worker, "connected", lambda p: True)
     monkeypatch.setitem(worker.PUBLISHERS, "tiktok", lambda clip, d, t: sent.append(clip.title) or "id")
     monkeypatch.setattr(worker.get_settings(), "min_minutes_between_posts", 0)
+    monkeypatch.setattr(worker.get_settings(), "publish_hours", "")
 
     for _ in range(4):
         worker.publish_once("tiktok")
