@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 
 from sqlalchemy import event
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, SQLModel, create_engine
 
 from .config import get_settings
@@ -35,7 +36,11 @@ def _migrate(engine):
     with engine.begin() as conn:
         cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(source)")}
         if "keywords" not in cols:
-            conn.exec_driver_sql("ALTER TABLE source ADD COLUMN keywords VARCHAR NOT NULL DEFAULT ''")
+            try:
+                conn.exec_driver_sql("ALTER TABLE source ADD COLUMN keywords VARCHAR NOT NULL DEFAULT ''")
+            except OperationalError as e:  # le worker l'a ajoutée en même temps
+                if "duplicate column" not in str(e):
+                    raise
 
 
 @contextmanager

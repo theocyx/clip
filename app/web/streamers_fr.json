@@ -1,0 +1,307 @@
+[
+ {
+  "name": "Kameto",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/kamet0"
+ },
+ {
+  "name": "ZeratoR",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/zerator"
+ },
+ {
+  "name": "Squeezie",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/squeezie"
+ },
+ {
+  "name": "Gotaga",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/gotaga"
+ },
+ {
+  "name": "AmineMaTue",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/aminematue"
+ },
+ {
+  "name": "Anyme023",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/anyme023"
+ },
+ {
+  "name": "Locklear",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/locklear"
+ },
+ {
+  "name": "Michou",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/michou"
+ },
+ {
+  "name": "Inoxtag",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/inoxtag"
+ },
+ {
+  "name": "Domingo",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/domingo"
+ },
+ {
+  "name": "LeBouseuh",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/lebouseuh"
+ },
+ {
+  "name": "RebeuDeter",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/rebeudeter"
+ },
+ {
+  "name": "Doigby",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/doigby"
+ },
+ {
+  "name": "WankilStudio",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/wankilstudio"
+ },
+ {
+  "name": "Etoiles",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/etoiles"
+ },
+ {
+  "name": "Sardoche",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/sardoche"
+ },
+ {
+  "name": "Maghla",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/maghla"
+ },
+ {
+  "name": "Joueur du Grenier",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/joueur_du_grenier"
+ },
+ {
+  "name": "AntoineDaniel",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/antoinedaniel"
+ },
+ {
+  "name": "Mistermv",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/mistermv"
+ },
+ {
+  "name": "Chowh1",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/chowh1"
+ },
+ {
+  "name": "Ponce",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/ponce"
+ },
+ {
+  "name": "BagheraJones",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/bagherajones"
+ },
+ {
+  "name": "Kaatsup",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/kaatsup"
+ },
+ {
+  "name": "ZackNani",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/zacknani"
+ },
+ {
+  "name": "AlphaCast",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/alphacast"
+ },
+ {
+  "name": "Jirayalecochon",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/jirayalecochon"
+ },
+ {
+  "name": "Tonton",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/tonton"
+ },
+ {
+  "name": "Xari",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/xari"
+ },
+ {
+  "name": "Mynthos",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/mynthos"
+ },
+ {
+  "name": "Ultia",
+  "platform": "twitch",
+  "url": "https://www.twitch.tv/ultia"
+ },
+ {
+  "name": "Tibo InShape",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@TiboInShape"
+ },
+ {
+  "name": "Squeezie",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@Squeezie"
+ },
+ {
+  "name": "Cyprien",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@cyprien"
+ },
+ {
+  "name": "Norman",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@NormanFaitDesVideos"
+ },
+ {
+  "name": "Michou",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@Michou"
+ },
+ {
+  "name": "Furious Jumper",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@FuriousJumper"
+ },
+ {
+  "name": "Inoxtag",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@Inoxtag"
+ },
+ {
+  "name": "Amixem",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@Amixem"
+ },
+ {
+  "name": "Mastu",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@Mastu"
+ },
+ {
+  "name": "Joyca",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@Joyca"
+ },
+ {
+  "name": "LeBouseuh",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@LeBouseuh"
+ },
+ {
+  "name": "Gotaga",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@gotaga"
+ },
+ {
+  "name": "Le Grand JD",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@LeGrandJD"
+ },
+ {
+  "name": "TheKairi78",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@TheKairi78"
+ },
+ {
+  "name": "Joueur du Grenier",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@joueurdugrenier"
+ },
+ {
+  "name": "Pierre Croce",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@Pierrecroce"
+ },
+ {
+  "name": "Lena Situations",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@LenaSituations"
+ },
+ {
+  "name": "Fuze III",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@FuzeIII"
+ },
+ {
+  "name": "AmineMaTue",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@AmineMaTue"
+ },
+ {
+  "name": "Maghla",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@Maghla"
+ },
+ {
+  "name": "Doigby",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@Doigby"
+ },
+ {
+  "name": "RebeuDeter",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@RebeuDeter"
+ },
+ {
+  "name": "ZeratoR",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@ZeratoR"
+ },
+ {
+  "name": "Zack Nani",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@ZackNani"
+ },
+ {
+  "name": "MaxEstLa",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@MaxEstLa"
+ },
+ {
+  "name": "Sylvqin",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@Sylvqin"
+ },
+ {
+  "name": "Kaatsup",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@Kaatsup"
+ },
+ {
+  "name": "Chowh1",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@Chowh1"
+ },
+ {
+  "name": "Sardoche",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@SardocheLoL"
+ },
+ {
+  "name": "Xari",
+  "platform": "youtube",
+  "url": "https://www.youtube.com/@Xari"
+ }
+]

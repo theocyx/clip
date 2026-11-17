@@ -177,9 +177,12 @@ def list_sources(request: Request):
 
 
 def suggested_channels() -> list[dict]:
-    """Catalogue des principaux streamers / youtubeurs français (app/data/streamers_fr.json)."""
-    path = Path(__file__).parent.parent / "data" / "streamers_fr.json"
-    return json.loads(path.read_text(encoding="utf-8"))
+    """Catalogue des principaux streamers / youtubeurs français (streamers_fr.json, à côté de ce fichier)."""
+    try:
+        return json.loads((Path(__file__).parent / "streamers_fr.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:  # la page Sources doit rester accessible
+        log.warning("Catalogue des streamers illisible : %s", e)
+        return []
 
 
 @app.post("/sources")
