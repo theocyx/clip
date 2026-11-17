@@ -18,6 +18,7 @@ class Source(SQLModel, table=True):
     enabled: bool = True
     record_lives: bool = True
     include_videos: bool = True  # vidéos YouTube / VOD Twitch publiées
+    keywords: str = ""  # mots-clés séparés par des virgules (ex. « GTA ») : seuls ces titres sont clippés
     initialized: bool = False  # premier scan fait (l'historique existant est ignoré)
     last_checked: Optional[datetime] = None
     created_at: datetime = Field(default_factory=now)

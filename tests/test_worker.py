@@ -63,3 +63,23 @@ def test_ignored_video_stops_download(monkeypatch, tmp_path):
     with pytest.raises(sources.Cancelled):
         process.stop_if_skipped(vid)
     assert worker.is_skipped(vid)
+
+
+def test_check_source_keyword_filter(monkeypatch):
+    from sqlmodel import select
+
+    from app import db, worker
+    from app.models import Source, Video
+    from app.pipeline import sources
+
+    with db.session() as s:
+        src = Source(name="t", platform="twitch", url="https://www.twitch.tv/t", keywords="GTA", initialized=True)
+        s.add(src)
+        s.commit()
+        s.refresh(src)
+    monkeypatch.setattr(sources, "discover", lambda *a, **k: [
+        sources.Found("twitch:kw1", "u1", "GTA 6 jour 1"), sources.Found("twitch:kw2", "u2", "Minecraft")])
+    assert worker.check_source(src) == 1
+    with db.session() as s:
+        st = {v.key: v.status for v in s.exec(select(Video).where(Video.source_id == src.id))}
+    assert st == {"twitch:kw1": "new", "twitch:kw2": "skipped"}

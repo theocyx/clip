@@ -1,6 +1,7 @@
 """Interface web d'administration."""
 from __future__ import annotations
 
+import json
 import re
 import secrets
 from pathlib import Path
@@ -77,12 +78,20 @@ def accounts_status() -> dict:
 def list_sources(request: Request):
     with db.session() as s:
         items = s.exec(select(Source).order_by(col(Source.created_at))).all()
-    return templates.TemplateResponse(request, "sources.html", {"sources": items})
+    followed = {i.url.lower() for i in items}
+    suggestions = [c for c in suggested_channels() if c["url"].lower() not in followed]
+    return templates.TemplateResponse(request, "sources.html", {"sources": items, "suggestions": suggestions})
+
+
+def suggested_channels() -> list[dict]:
+    """Catalogue des principaux streamers / youtubeurs français (app/data/streamers_fr.json)."""
+    path = Path(__file__).parent.parent / "data" / "streamers_fr.json"
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 @app.post("/sources")
 def add_source(url: str = Form(...), name: str = Form(""), record_lives: bool = Form(False),
-               include_videos: bool = Form(False)):
+               include_videos: bool = Form(False), keywords: str = Form("")):
     try:
         platform = sources.detect_platform(url)
     except ValueError as e:
@@ -90,7 +99,8 @@ def add_source(url: str = Form(...), name: str = Form(""), record_lives: bool = 
     url = sources.normalize_channel_url(url)
     with db.session() as s:
         s.add(Source(name=name or url.rsplit("/", 1)[-1], platform=platform, url=url,
-                     record_lives=record_lives, include_videos=include_videos))
+                     record_lives=record_lives, include_videos=include_videos,
+                     keywords=keywords.strip()))
         s.commit()
     return back("/sources")
 

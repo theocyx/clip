@@ -32,6 +32,8 @@ def check_source(src: Source) -> int:
                 continue
             # au premier scan, l'historique existant est ignoré (seuls les lives en cours sont pris)
             status = "new" if (src.initialized or f.is_live) else "skipped"
+            if not sources.matches_keywords(f.title, src.keywords):
+                status = "skipped"  # hors sujet (ex. pas de GTA dans le titre)
             s.add(Video(source_id=src.id, key=f.key, url=f.url, title=f.title, is_live=f.is_live, status=status))
             added += status == "new"
         src = s.get(Source, src.id)

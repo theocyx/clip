@@ -3,7 +3,8 @@
   <h3>Ajouter une chaîne</h3>
   <form method="post" action="/sources">
     <p><input type="url" name="url" placeholder="https://www.twitch.tv/... ou https://www.youtube.com/@..." required>
-       <input type="text" name="name" placeholder="Nom (facultatif)"></p>
+       <input type="text" name="name" placeholder="Nom (facultatif)">
+       <input type="text" name="keywords" placeholder="Mots-clés du titre, ex. GTA (facultatif)"></p>
     <p><label><input type="checkbox" name="record_lives" value="true" checked> Enregistrer les lives</label>
        &nbsp; <label><input type="checkbox" name="include_videos" value="true" checked> Traiter les nouvelles vidéos / rediffusions</label></p>
     <button>Ajouter</button>
@@ -17,7 +18,7 @@
     <tr>
       <td><a href="{{ s.url }}" target="_blank" rel="noopener">{{ s.name }}</a></td>
       <td>{{ s.platform }}</td>
-      <td>{% if s.record_lives %}<span class="badge">lives</span>{% endif %} {% if s.include_videos %}<span class="badge">vidéos</span>{% endif %}</td>
+      <td>{% if s.record_lives %}<span class="badge">lives</span>{% endif %} {% if s.include_videos %}<span class="badge">vidéos</span>{% endif %} {% if s.keywords %}<span class="badge">titre : {{ s.keywords }}</span>{% endif %}</td>
       <td class="mut">{{ s.last_checked.strftime('%d/%m %H:%M') if s.last_checked else 'jamais' }} UTC</td>
       <td>
         <form class="inline" method="post" action="/sources/{{ s.id }}/toggle"><button class="sec">{{ 'Désactiver' if s.enabled else 'Activer' }}</button></form>
@@ -27,4 +28,23 @@
     {% else %}<tr><td colspan="5" class="mut">Aucune source pour l'instant.</td></tr>{% endfor %}
   </table>
 </div>
+{% if suggestions %}
+<div class="card">
+  <h3>Streamers français suggérés (spécial GTA 6)</h3>
+  <p class="mut">« Suivre » ajoute la chaîne avec le filtre <b>GTA</b> : seuls les lives et vidéos dont le titre parle de GTA sont clippés. Évite d'en suivre trop d'un coup : chaque live enregistré occupe le PC.</p>
+  <table>
+    <tr><th>Nom</th><th>Plateforme</th><th></th></tr>
+    {% for c in suggestions %}
+    <tr>
+      <td><a href="{{ c.url }}" target="_blank" rel="noopener">{{ c.name }}</a></td>
+      <td>{{ c.platform }}</td>
+      <td><form class="inline" method="post" action="/sources">
+        <input type="hidden" name="url" value="{{ c.url }}"><input type="hidden" name="name" value="{{ c.name }}">
+        <input type="hidden" name="record_lives" value="true"><input type="hidden" name="include_videos" value="true"><input type="hidden" name="keywords" value="GTA">
+        <button class="sec">Suivre</button></form></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
 {% endblock %}
