@@ -7,7 +7,7 @@ Crée automatiquement des clips verticaux (9:16, sous-titrés en français) à p
 1. **Surveillance** des chaînes ajoutées (toutes les 10 min) : les lives sont enregistrés, les nouvelles vidéos/rediffusions téléchargées (`yt-dlp`). Tu peux aussi coller un lien à la main.
 2. **Transcription** locale avec Whisper (`faster-whisper`, CPU), mot par mot.
 3. **Détection des moments forts** : pics de son, densité de parole, mots d'excitation (« mdr », « incroyable », « !»…), puis notation et titre par une IA locale (Ollama, `qwen2.5:3b`).
-4. **Montage** : clip d'environ 1 min, prolongé jusqu'à la fin de la phrase (3 min max). Au-delà de 90 s, découpage en « Partie 1/2 », « Partie 2/2 ». Format 1080x1920, fond flouté, sous-titres dynamiques (mot prononcé en jaune).
+4. **Montage** : clip d'environ 1 min, prolongé jusqu'à la fin de la phrase (3 min max). Au-delà de 90 s, découpage en « Partie 1/2 », « Partie 2/2 ». Format 1080x1920 : si une facecam est détectée, le streamer en haut et le jeu en bas (format split), sinon fond flouté. Sous-titres dynamiques (mot prononcé en jaune).
 5. **Publication automatique**, espacée (90 min mini, 6 par jour et par plateforme). Les parties sont publiées dans l'ordre.
 
 Une interface web permet de gérer les chaînes, voir les clips, changer un titre, supprimer ou republier.
@@ -90,6 +90,11 @@ Puis `docker compose up -d` et, dans **Comptes**, clique sur « Envoyer un messa
 - La description cite le streamer, le lien de sa chaîne et un hashtag à son nom (`CREDIT_STREAMER=false` pour l'enlever).
 - Chaque jour, la base est copiée dans `data/backups/` (les 7 dernières sont gardées). Pour restaurer : `docker compose down`, copie la sauvegarde sur `data/clip.db`, supprime `data/clip.db-wal` et `data/clip.db-shm`, puis `docker compose up -d`.
 - Les vidéos sources sont effacées après 3 jours et les fichiers des clips déjà publiés après 14 jours.
+
+## Hashtags tendance et anti-doublons
+
+- Hashtags ajoutés selon le titre du live et ce qui est dit dans le clip : `#GTA6`, `#GTARP`, `#GTA5`, et le serveur RP reconnu (`#FlashBack`, `#21JumpClick`, `#FailyV`, `#NoPixel`). Autres serveurs : `RP_SERVERS=Lunar City=#LunarCity` dans `.env`.
+- Quand plusieurs streamers vivent la même scène RP, un seul clip est gardé : les répliques entendues sont comparées avec les clips des 48 dernières heures (et l'heure du live). Le meilleur clip reste, l'autre n'est pas monté ou retiré de la file (« annulé », motif « Doublon »).
 
 ## Réglages utiles (`.env`)
 

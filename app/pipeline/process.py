@@ -12,7 +12,7 @@ from sqlmodel import select
 from .. import db, learning
 from ..config import get_settings
 from ..models import Clip, Post, Video, now
-from . import highlights, hook, llm, media, render, subtitles, transcribe
+from . import dedupe, facecam, highlights, hook, llm, media, render, subtitles, transcribe
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +62,39 @@ def render_hook_png(text: str, out: Path) -> str:
         return ""
 
 
+def pick_layout(src: Path, start: float, end: float):
+    """Zone de la facecam pour le format split, ou None pour le format classique."""
+    s = get_settings()
+    mode = (s.layout or "auto").lower()
+    if mode in ("classic", "classique", "blur"):
+        return None
+    aspect = 1080 / s.split_cam_height
+    cam = facecam.detect(src, start, end, aspect)
+    if cam is None and mode == "split":
+        log.info("Pas de facecam trouvée : format classique.")
+    return cam
+
+
+def check_duplicate(video: Video, m) -> bool:
+    """Vrai si la scène a déjà un meilleur clip (autre streamer) : on ne crée pas celui-ci.
+
+    Si ce clip est meilleur et que l'autre n'est pas encore publié, l'autre est retiré de la file."""
+    text = m.features.get("dedupe_text", "")
+    dups = dedupe.find(video.id, text, m.features.get("abs_start"), m.features.get("abs_end"))
+    if not dups:
+        return False
+    better = next((d for d in dups if d.posted or d.score >= m.score), None)
+    if better:
+        log.info("Doublon ignoré (%.0f %% en commun avec la vidéo %d) : %s", better.similarity * 100,
+                 better.video_id, m.title)
+        return True
+    for d in dups:
+        n = dedupe.replace(d.group, m.title)
+        log.info("Doublon : « %s » remplace un clip moins bon de la vidéo %d (%d envoi(s) annulé(s))",
+                 m.title, d.video_id, n)
+    return False
+
+
 def process(video_id: int) -> int:
     """Traite une vidéo dont le fichier est présent. Renvoie le nombre de clips créés."""
     s = get_settings()
@@ -107,7 +140,10 @@ def process(video_id: int) -> int:
             m.score = heur
         m.title = m.title or fallback_title(text) or video.title
         m.features.update(heur=round(heur, 3), llm=rated[0] if rated else None, target=round(target, 1),
-                          tuning_id=tun.get("tuning_id"), text=text[:400])
+                          tuning_id=tun.get("tuning_id"), text=text[:400],
+                          dedupe_text=text[:dedupe.TEXT_CHARS],
+                          abs_start=dedupe.abs_time(video.created_at, video.is_live, m.start),
+                          abs_end=dedupe.abs_time(video.created_at, video.is_live, m.end))
     moments = sorted(moments, key=lambda m: -m.score)[:n]
     moments = [m for m in moments if m.score >= s.min_score]
 
@@ -115,8 +151,13 @@ def process(video_id: int) -> int:
     set_status(video_id, "rendering")
     created = 0
     for m in sorted(moments, key=lambda m: m.start):
+        if check_duplicate(video, m):
+            continue
         parts = highlights.split_parts(m.start, m.end, segments, s.part_max)
         group = uuid.uuid4().hex[:10]
+        cam = pick_layout(src, m.start, m.end)
+        m.features["layout"] = "split" if cam else "classic"
+        top = render.split_top(s.split_cam_height) if cam else 0
         for i, (a, b) in enumerate(parts, 1):
             label = f"Partie {i}/{len(parts)}" if len(parts) > 1 else ""
             out = s.clips_dir / str(video_id) / f"{group}_p{i}.mp4"
@@ -129,8 +170,8 @@ def process(video_id: int) -> int:
                 if not png:
                     hook_text = hook.strip_emojis(hook_text)
                 ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook_text, s.hook_seconds,
-                                          hook_in_ass=not png)
-                render.render(src, a, b, ass, out, png, s.hook_seconds)
+                                          hook_in_ass=not png, top=top)
+                render.render(src, a, b, ass, out, png, s.hook_seconds, cam)
             except Exception as e:
                 log.exception("Rendu échoué")
                 status, err = "failed", str(e)

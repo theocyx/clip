@@ -1,6 +1,7 @@
 """Processus de fond : surveille les sources, enregistre les lives, traite les vidéos, publie les clips."""
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import threading
@@ -14,8 +15,9 @@ from sqlmodel import col, select
 
 from . import db, learning, maintenance, notify
 from .config import get_settings
-from .models import Clip, Post, Source, Video, now
+from .models import Clip, ClipInfo, Post, Source, Video, now
 from .pipeline import process, sources
+from .pipeline import tags as hashtags
 from .publish import creds, tiktok, youtube
 
 log = logging.getLogger("worker")
@@ -154,18 +156,33 @@ def credit(video: Video) -> tuple[str, str]:
     return (src.name, src.url) if src else ("", "")
 
 
+def clip_text(clip: Clip) -> str:
+    if clip.id is None:
+        return ""
+    with db.session() as s:
+        info = s.get(ClipInfo, clip.id)
+    try:
+        return json.loads(info.data).get("text", "") if info else ""
+    except ValueError:
+        return ""
+
+
 def description(clip: Clip, video: Video) -> tuple[str, list[str]]:
     s = get_settings()
-    tags = [t.lstrip("#") for t in s.hashtags.split() if t.strip("#")]
     name, channel = credit(video)
     tag = streamer_tag(name)
-    if tag and tag.lower() not in (t.lower() for t in tags):
-        tags.insert(0, tag)
+    keywords = ""
+    if video.source_id:
+        with db.session() as ss:
+            src = ss.get(Source, video.source_id)
+        keywords = src.keywords if src else ""
+    trend = hashtags.trending(video.title, keywords, clip.title, clip_text(clip))
+    tags_ = hashtags.merge([tag] if tag else [], trend, hashtags.split_tags(s.hashtags), limit=s.max_hashtags)
     lines = [clip.title, ""]
     if name:
         lines += [f"🎮 Streamer : {name}", f"👉 Sa chaîne : {channel}", ""]
-    lines += [f"Extrait de : {video.title}", video.url, "", " ".join("#" + t for t in tags)]
-    return "\n".join(lines), tags
+    lines += [f"Extrait de : {video.title}", video.url, "", " ".join("#" + t for t in tags_)]
+    return "\n".join(lines), tags_
 
 
 def tiktok_caption(clip: Clip, desc: str, tags: list[str]) -> str:
