@@ -3,6 +3,8 @@
 Une plateforme coupée ne perd rien : les clips restent en attente pour elle et partent
 quand on la rallume (ou peuvent être retirés de la file d'un clic).
 """
+from datetime import datetime
+
 from sqlmodel import col, func, select
 
 from . import db
@@ -34,6 +36,50 @@ def set_enabled(platform: str, on: bool) -> None:
         row.value, row.updated_at = ("1" if on else "0"), now()
         s.add(row)
         s.commit()
+
+
+def _get(key: str) -> str | None:
+    with db.session() as s:
+        row = s.get(Setting, key)
+    return row.value if row else None
+
+
+def _put(key: str, value: str | None) -> None:
+    with db.session() as s:
+        row = s.get(Setting, key)
+        if value is None:
+            if row:
+                s.delete(row)
+        else:
+            row = row or Setting(key=key)
+            row.value, row.updated_at = value, now()
+            s.add(row)
+        s.commit()
+
+
+def daily_limit(platform: str) -> int | None:
+    """Limite d'envois/jour réglée dans l'interface (0 = aucune), None = celle du .env."""
+    v = _get(f"limit_{platform}")
+    return int(v) if v not in (None, "") and v.isdigit() else None
+
+
+def set_daily_limit(platform: str, value: int | None) -> None:
+    if platform not in PLATFORMS:
+        raise ValueError(platform)
+    _put(f"limit_{platform}", None if value is None else str(max(0, value)))
+
+
+def blocked_until(platform: str) -> datetime | None:
+    """Envois en pause jusqu'à cette date (UTC) après un refus « quota atteint »."""
+    v = _get(f"quota_until_{platform}")
+    if not v:
+        return None
+    until = datetime.fromisoformat(v)
+    return until if until > now() else None
+
+
+def block_until(platform: str, until: datetime | None) -> None:
+    _put(f"quota_until_{platform}", until.isoformat() if until else None)
 
 
 def drop_pending(platform: str) -> int:

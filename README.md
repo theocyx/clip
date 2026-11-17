@@ -68,7 +68,7 @@ Sur le tableau de bord (et la page **Comptes**), un bouton par plateforme met la
 
 ## Quota du jour et envoi manuel (page **Clips**)
 
-Le quota YouTube (~6 envois/jour) est réservé aux clips **les mieux notés** (en mode GTA 6, les plus récents comptent plus). La page **Clips** affiche les envois utilisés et prévus d'ici minuit, et trie les clips en onglets : **À poster à la main** (ceux qui ne passeront pas aujourd'hui), **Prévus aujourd'hui** (avec leur ordre), **Déjà publiés** (auto ou à la main). Pour chaque clip : **Télécharger** le MP4, **Textes à copier** (titre, description, légende TikTok, hashtags), puis **✅ Posté sur YouTube/TikTok** pour qu'il ne parte pas en double.
+Les envois du jour vont aux clips **les mieux notés**. Il n'y a pas de limite par défaut ; tu peux en fixer une par plateforme dans **Clips** (0 = aucune). Si YouTube refuse un envoi pour quota atteint, les envois reprennent tout seuls le lendemain (minuit heure du Pacifique) et tu es notifié. Le quota réel se voit dans la console Google (YouTube Data API v3 › Quotas) (en mode GTA 6, les plus récents comptent plus). La page **Clips** affiche les envois utilisés et prévus d'ici minuit, et trie les clips en onglets : **À poster à la main** (ceux qui ne passeront pas aujourd'hui), **Prévus aujourd'hui** (avec leur ordre), **Déjà publiés** (auto ou à la main). Pour chaque clip : **Télécharger** le MP4, **Textes à copier** (titre, description, légende TikTok, hashtags), puis **✅ Posté sur YouTube/TikTok** pour qu'il ne parte pas en double.
 
 ## Apprendre de ce qui marche (page **Stats**)
 
@@ -129,7 +129,7 @@ Toutes les 30 min (10 min pendant le mode GTA 6), Clip cherche les lives frança
 | `CLIP_TARGET` / `CLIP_MAX` | durée visée / max (s) | 60 / 180 |
 | `PART_MAX` | au-delà, découpage en parties | 90 |
 | `AUTO_PUBLISH` | publier sans validation | true |
-| `MIN_MINUTES_BETWEEN_POSTS` / `MAX_POSTS_PER_DAY` | rythme de publication | 90 / 6 |
+| `MIN_MINUTES_BETWEEN_POSTS` / `MAX_POSTS_PER_DAY` | rythme de publication (0 = pas de limite, réglable aussi dans **Clips**) | 90 / 0 |
 | `HASHTAGS` | hashtags ajoutés | `#shorts #clip #fr` |
 | `HOOK_TITLE` / `HOOK_SECONDS` | accroche en haut de la vidéo / durée (0 = tout le clip) | true / 0 |
 | `KEEP_SOURCE_VIDEOS` | garder les vidéos complètes | false |

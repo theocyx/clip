@@ -9,6 +9,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 from ..config import get_settings
@@ -110,7 +111,30 @@ def stats(video_ids: list[str]) -> dict[str, dict]:
     return out
 
 
+class QuotaExceeded(RuntimeError):
+    """YouTube refuse l'envoi : quota de l'API ou limite d'envois de la chaîne atteint pour la journée."""
+
+
+QUOTA_REASONS = ("quotaExceeded", "uploadLimitExceeded", "dailyLimitExceeded", "rateLimitExceeded")
+
+
+def is_quota_error(e: Exception) -> bool:
+    if not isinstance(e, HttpError) or getattr(e.resp, "status", 0) not in (403, 429):
+        return False
+    text = str(getattr(e, "content", b"") or b"", "utf-8", "ignore") + str(e)
+    return any(r in text for r in QUOTA_REASONS)
+
+
 def upload(path: str, title: str, description: str, tags: list[str]) -> str:
+    try:
+        return _upload(path, title, description, tags)
+    except HttpError as e:
+        if is_quota_error(e):
+            raise QuotaExceeded(str(e)[:500]) from e
+        raise
+
+
+def _upload(path: str, title: str, description: str, tags: list[str]) -> str:
     s = get_settings()
     if "#shorts" not in (title + description).lower():
         description = description + "\n#Shorts"

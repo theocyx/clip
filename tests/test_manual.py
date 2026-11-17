@@ -108,3 +108,69 @@ def test_manual_mark_and_views(monkeypatch):
     assert client.post(f"/clips/{ids[0]}/manual", data={"platform": "x"}).status_code == 400
     assert client.get("/").status_code == 200
     _clear()
+
+
+def test_no_limit_by_default_and_ui_limit(monkeypatch):
+    _clear()
+    monkeypatch.setattr(worker.gta6, "active", lambda: False)
+    monkeypatch.setattr(worker, "in_publish_window", lambda at=None: True)
+    assert worker.get_settings().max_posts_per_day == 0
+    platforms.set_daily_limit("youtube", None)
+    assert worker.post_limit("youtube") == 0
+    with db.session() as s:
+        for i in range(10):
+            s.add(Post(clip_id=1, platform="youtube", status="published",
+                       published_at=worker.now() - worker.timedelta(hours=3 + i)))
+        s.commit()
+        assert worker.can_post(s, "youtube")  # 10 envois sur 24 h, pas de plafond
+        platforms.set_daily_limit("youtube", 5)
+        assert worker.post_limit("youtube") == 5 and not worker.can_post(s, "youtube")
+        assert worker.slots_left(s, "youtube") == 0
+    client = TestClient(main.app)
+    client.cookies.set(mfa.SESSION_COOKIE, mfa.make_token("session", 3600))
+    client.post("/platforms/youtube/limit", data={"limit": ""})
+    assert platforms.daily_limit("youtube") is None
+    client.post("/platforms/youtube/limit", data={"limit": "0"})
+    assert platforms.daily_limit("youtube") == 0
+    platforms.set_daily_limit("youtube", None)
+    _clear()
+
+
+def test_quota_exceeded_pauses_until_tomorrow(monkeypatch):
+    from googleapiclient.errors import HttpError
+    from app.publish import youtube
+
+    _clear()
+    platforms.set_enabled("youtube", True)
+    monkeypatch.setattr(worker, "connected", lambda p: True)
+    monkeypatch.setattr(worker, "in_publish_window", lambda at=None: True)
+    monkeypatch.setattr(worker.gta6, "active", lambda: False)
+    sent = []
+    monkeypatch.setattr(worker.notify, "send", lambda m: sent.append(m))
+
+    class Resp(dict):
+        status = 403
+        reason = "Forbidden"
+    err = HttpError(Resp(), b'{"error": {"errors": [{"reason": "quotaExceeded"}]}}')
+    assert youtube.is_quota_error(err)
+
+    def boom(*a):
+        raise youtube.QuotaExceeded("quota")
+    monkeypatch.setitem(worker.PUBLISHERS, "youtube", boom)
+    ids = _clips("quota", [0.9, 0.8])
+    assert not worker.publish_once("youtube")
+    with db.session() as s:
+        posts = s.exec(worker.select(Post).where(worker.col(Post.clip_id).in_(ids))).all()
+        assert all(p.status == "pending" and p.attempts == 0 for p in posts)
+        assert not worker.can_post(s, "youtube") and worker.slots_left(s, "youtube") == 0
+        pl = worker.plan(s)["youtube"]
+        assert pl["blocked"] and len(pl["manual"]) == 2
+    assert platforms.blocked_until("youtube") > worker.now()
+    assert sent and "Quota" in sent[0]
+
+    client = TestClient(main.app)
+    client.cookies.set(mfa.SESSION_COOKIE, mfa.make_token("session", 3600))
+    assert "reprise le" in client.get("/clips").text
+    client.post("/platforms/youtube/limit", data={"resume": "1"})
+    assert platforms.blocked_until("youtube") is None
+    _clear()

@@ -207,6 +207,19 @@ def platform_drop(platform: str, next: str = Form("/")):
     return back(next if next in ("/", "/accounts") else "/")
 
 
+@app.post("/platforms/{platform}/limit")
+def platform_limit(platform: str, limit: str = Form(""), resume: str = Form("")):
+    """Limite d'envois/jour (vide = celle du .env, 0 = aucune) ; « resume » lève la pause « quota atteint »."""
+    if platform not in platforms.PLATFORMS:
+        raise HTTPException(400, "Plateforme inconnue")
+    if resume:
+        platforms.block_until(platform, None)
+    else:
+        v = limit.strip()
+        platforms.set_daily_limit(platform, int(v) if v.isdigit() else None)
+    return back("/clips")
+
+
 @app.post("/gta6")
 def gta6_mode(mode: str = Form(...)):
     try:

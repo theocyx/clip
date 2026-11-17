@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     publish_youtube: bool = True
     publish_tiktok: bool = True
     min_minutes_between_posts: int = 90
-    max_posts_per_day: int = 6  # par plateforme (quota YouTube : ~6 envois/jour)
+    max_posts_per_day: int = 0  # par plateforme, 0 = pas de limite (réglable aussi dans la page Clips)
     hashtags: str = "#shorts #clip #fr"
     # Heures de publication (heure de Paris), plages séparées par des virgules. Vide = à toute heure.
     publish_hours: str = "12-14,18-22"
