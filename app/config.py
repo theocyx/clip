@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     # Général
     data_dir: Path = Path("/data")
     public_url: str = "http://localhost:8000"  # URL publique (sert aux redirections OAuth)
+    contact_email: str = ""  # affiché sur /privacy et /terms (exigé par Google / TikTok)
     admin_user: str = "admin"
     admin_password: str = "change-moi"
     mfa: bool = True  # code à 6 chiffres (Google Authenticator…) en plus du mot de passe
