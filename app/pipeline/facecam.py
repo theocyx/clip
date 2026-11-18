@@ -162,7 +162,7 @@ def find_cam_box(edges: np.ndarray, face: Box, thr: float = 0.35, min_score: flo
     lefts = _peaks(cols, int(fx - 4 * fw), int(fx - 0.2 * fw), thr)
     rights = _peaks(cols, int(fx + 1.2 * fw), int(fx + 5 * fw) + 1, thr)
     tops = _peaks(rows, int(fy - 3 * fh), int(fy - 0.3 * fh), thr)
-    bottoms = _peaks(rows, int(fy + 1.5 * fh), int(fy + 5 * fh) + 1, thr)
+    bottoms = _peaks(rows, int(fy + 1.05 * fh), int(fy + 5 * fh) + 1, thr)
     best, best_area = None, 0.0
     for left in lefts:
         for right in rights:
