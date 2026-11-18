@@ -51,6 +51,15 @@ def _rolling_median(x: np.ndarray, w: int) -> np.ndarray:
 DEFAULT_WEIGHTS = {"spike": 0.45, "density": 0.25, "excite": 0.30}
 
 
+def chat_component(chat: np.ndarray | None, n: int) -> np.ndarray | None:
+    """Rafales du chat par rapport à son activité habituelle (z-score lissé), None sans chat."""
+    if chat is None or n == 0 or len(chat) == 0:
+        return None
+    c = np.zeros(n)
+    c[:min(n, len(chat))] = chat[:n]
+    return _z(_smooth(c, 7))
+
+
 def components(loudness: np.ndarray, segments: list[dict]) -> dict[str, np.ndarray]:
     """Signaux par seconde : pics de sonie, densité de parole, excitation (mots, ponctuation)."""
     n = len(loudness)
@@ -171,11 +180,17 @@ def text_between(segments: list[dict], a: float, b: float) -> str:
 
 def find_moments(loudness: np.ndarray, segments: list[dict], *, count: int, target: float, min_len: float,
                  max_len: float, pool_factor: int = 1, weights: dict[str, float] | None = None,
-                 exclude: list[tuple[float, float]] | None = None) -> list[Moment]:
-    """exclude : passages interdits (pub, sponsor…) ; aucun clip ne les touche."""
+                 exclude: list[tuple[float, float]] | None = None, chat: np.ndarray | None = None,
+                 chat_weight: float = 0.5) -> list[Moment]:
+    """exclude : passages interdits (pub, sponsor…) ; aucun clip ne les touche.
+    chat : activité du chat Twitch par seconde (lives enregistrés), ajoutée avec le poids `chat_weight`."""
     total = float(len(loudness))
     comps = components(loudness, segments)
     scores = combine(comps, weights) if len(loudness) else loudness
+    cc = chat_component(chat, len(loudness))
+    if cc is not None and chat_weight > 0:
+        scores = scores + chat_weight * cc
+        comps["chat"] = cc
     exclude = exclude or []
     if exclude and len(scores):
         scores = scores.copy()

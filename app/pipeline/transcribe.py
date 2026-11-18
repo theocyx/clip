@@ -120,7 +120,7 @@ def transcribe(wav: Path, out_json: Path, total: float | None = None, on_progres
             end = length if length - pos <= CHUNK + SEARCH else _cut_point(wav, pos, pos + CHUNK)
             segments, _ = _get_model().transcribe(
                 _read(wav, pos, end), language=s.whisper_language or None, word_timestamps=True,
-                vad_filter=True, beam_size=1,
+                vad_filter=True, beam_size=1, initial_prompt=s.whisper_prompt or None,
             )
             for seg in segments:
                 a, b = pos + seg.start, pos + seg.end

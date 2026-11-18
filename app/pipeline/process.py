@@ -16,7 +16,7 @@ from sqlmodel import select
 from .. import db, learning
 from ..config import get_settings
 from ..models import Clip, Post, Video, now
-from . import dedupe, engage, facecam, highlights, hook, llm, media, render, sponsor, subtitles, transcribe
+from . import chat, dedupe, engage, facecam, highlights, hook, llm, media, render, sponsor, subtitles, transcribe
 
 log = logging.getLogger(__name__)
 # Mis à vrai par le worker quand il s'arrête (mise à jour…) : le traitement s'interrompt proprement
@@ -209,9 +209,13 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
     banned = sponsor.excluded(video.key, segments, video_dir(video_id) / "sponsor.json")
     if banned:
         log.info("Passages sponsorisés exclus : %s", ", ".join(f"{a:.0f}-{b:.0f} s" for a, b in banned))
+    talk = chat.activity(video_dir(video_id), len(loud), s.chat_delay) if s.chat_signal else None
+    if talk is not None:
+        log.info("Chat Twitch utilisé pour repérer les moments forts (%d réactions)", int(talk.sum()))
     moments = highlights.find_moments(
         loud, segments, count=n, target=target, min_len=s.clip_min, max_len=s.clip_max,
         pool_factor=3 if use_llm else 2, weights=tun["weights"], exclude=banned,
+        chat=talk, chat_weight=s.chat_weight,
     )
     if moments:
         hmax = max(m.score for m in moments)
