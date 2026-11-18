@@ -132,3 +132,45 @@ def test_render_layouts(tmp_path, cam):
     ass = subtitles.build_ass([], 0, 2, "DejaVu Sans", "", "Test", top=render.split_top(640) if cam else 0)
     render.render(src, 0, 2, ass, out, cam=cam)
     assert facecam.video_size(out) == (1080, 1920)
+
+
+def _edges_with_cam(x0, y0, x1, y1, w=960, h=540):
+    import numpy as np
+    e = np.zeros((h, w), dtype=bool)
+    e[y0, x0:x1 + 1] = e[y1, x0:x1 + 1] = True
+    e[y0:y1 + 1, x0] = e[y0:y1 + 1, x1] = True
+    e[y0 + 60, x0 + 20:x0 + 90] = True  # décor fixe de la webcam (étagère) : ne doit pas tromper
+    e[y0 + 30:y0 + 110, x1 - 40] = True
+    return e
+
+
+def test_find_cam_box_frame():
+    face = Box(100 / 960, 368 / 540, 51 / 960, 51 / 540)
+    b = facecam.find_cam_box(_edges_with_cam(20, 339, 260, 519), face)
+    assert b and abs(b.x * 960 - 22) < 4 and abs((b.x + b.w) * 960 - 259) < 4
+    assert abs(b.y * 540 - 341) < 4 and abs((b.y + b.h) * 540 - 518) < 4
+
+
+def test_find_cam_box_against_image_edge():
+    face = Box(80 / 960, 400 / 540, 51 / 960, 51 / 540)
+    e = _edges_with_cam(0, 360, 240, 539)
+    b = facecam.find_cam_box(e, face)
+    assert b and b.x == 0 and abs((b.y + b.h) - 1) < 0.01 and abs((b.x + b.w) * 960 - 239) < 4
+    # facecam décollée du bord : la bande de jeu entre les deux n'est pas prise
+    b = facecam.find_cam_box(_edges_with_cam(20, 339, 260, 519), Box(100 / 960, 368 / 540, 51 / 960, 51 / 540))
+    assert b.x > 0
+
+
+def test_fit_aspect_keeps_face():
+    box, face = Box(0.02, 0.63, 0.25, 0.33), Box(0.1, 0.68, 0.05, 0.09)
+    r = facecam.fit_aspect(box, face, 1920, 1080, 1080 / 640)
+    assert abs(r.w * 1920 / (r.h * 1080) - 1080 / 640) < 0.01
+    assert r.x >= box.x - 1e-6 and r.x + r.w <= box.x + box.w + 1e-6
+    assert r.y <= face.y and r.y + r.h >= face.y + face.h
+
+
+def test_game_crop_avoids_cam():
+    f = render.layout_filter(Box(0.02, 0.63, 0.25, 0.25), 640)
+    assert "in_w*0.0" in f and "in_w*-" not in f  # facecam à gauche : jeu décalé vers la droite
+    f = render.layout_filter(Box(0.73, 0.04, 0.25, 0.25), 640)
+    assert "in_w*-0.0" in f
