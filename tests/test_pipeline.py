@@ -80,7 +80,7 @@ def test_hook_title_at_top():
     assert hook_line.startswith("Dialogue: 2,0:00:00.00,0:00:04.00,Hook")
     assert hook_line.endswith("…") and r"IL A VRAIMENT FAIT\NÇA" in hook_line
     assert "60,60,440,1" in ass  # « Partie » descend sous l'accroche
-    assert llm.parse('{"score": 8, "title": "Titre", "hook": "Il a osé !"}') == (8.0, "Titre", "Il a osé !")
+    assert llm.parse('{"score": 8, "title": "Titre", "hook": "Il a osé !", "question": "Tu valides ?"}') == (8.0, "Titre", "Il a osé !", "Tu valides ?")
 
 
 def test_hook_emojis(tmp_path):

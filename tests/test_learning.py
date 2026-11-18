@@ -107,7 +107,7 @@ def test_process_uses_tuning_and_saves_info(monkeypatch, tmp_path):
     monkeypatch.setattr(get_settings(), "auto_publish", False)
     seen = {}
     monkeypatch.setattr(llm, "provider", lambda: "ollama")
-    monkeypatch.setattr(llm, "rate", lambda text, title, which, guidance="": seen.setdefault("g", guidance) and (8, "Titre", "Accroche"))
+    monkeypatch.setattr(llm, "rate", lambda text, title, which, guidance="", recent=None: seen.setdefault("g", guidance) and (8, "Titre", "Accroche"))
     assert process.process(v.id) >= 1
     assert "r" in seen["g"]
     with db.session() as s:

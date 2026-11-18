@@ -15,6 +15,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: Sub,{font},86,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,7,3,2,60,60,480,1
 Style: Part,{font},64,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,8,60,60,{part_v},1
 Style: Hook,{font},78,&H00FFFFFF,&H00FFFFFF,&H00000000,&HB4000000,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,{hook_v},1
+Style: Ask,{font},70,&H00000000,&H00000000,&H0000D7FF,&H0000D7FF,-1,0,0,0,100,100,0,0,3,20,0,5,90,90,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -126,11 +127,13 @@ def _word_text(word: str, active: bool) -> str:
 
 def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: str = "",
               hook: str = "", hook_seconds: float = 0, hook_in_ass: bool = True, top: int = 0,
-              pieces: list[tuple[float, float]] | None = None) -> str:
+              pieces: list[tuple[float, float]] | None = None, end_text: str = "",
+              end_seconds: float = 3.5) -> str:
     """hook_in_ass=False : l'accroche est rendue à part en image (emojis couleur), on garde juste la place.
 
     top : décalage vers le bas de l'accroche et de « Partie x/y » (format split : sous la facecam).
-    pieces : morceaux de la source montés bout à bout (extrait d'ouverture + clip) ; par défaut [(a, b)]."""
+    pieces : morceaux de la source montés bout à bout (extrait d'ouverture + clip) ; par défaut [(a, b)].
+    end_text : question / appel à commenter affiché au milieu de l'écran pendant les `end_seconds` dernières s."""
     pieces = pieces or [(a, b)]
     dur = sum(y - x for x, y in pieces)
     hl = hook_lines(hook) if hook else []
@@ -141,6 +144,10 @@ def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: s
         lines.append(f"Dialogue: 2,{ts(0)},{ts(end)},Hook,,0,0,0,,{NL.join(_escape(x) for x in hl)}")
     if part_label:
         lines.append(f"Dialogue: 1,{ts(0)},{ts(dur)},Part,,0,0,0,,{_escape(part_label)}")
+    if end_text and dur > end_seconds + 2:
+        ask = NL.join(_escape(x) for x in hook_lines(end_text, per_line=20, max_lines=3))
+        lines.append(f"Dialogue: 3,{ts(dur - end_seconds)},{ts(dur)},Ask,,0,0,0,,"
+                     rf"{{\fad(150,0)\t(0,180,\fscx108\fscy108)\t(180,320,\fscx100\fscy100)}}{ask}")
     groups = [g for ws in words_in_pieces(segments, pieces) for g in group_words(ws)]
     for gi, g in enumerate(groups):
         g_end = g[-1]["end"]

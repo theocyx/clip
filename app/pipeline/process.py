@@ -16,7 +16,7 @@ from sqlmodel import select
 from .. import db, learning
 from ..config import get_settings
 from ..models import Clip, Post, Video, now
-from . import dedupe, facecam, highlights, hook, llm, media, render, sponsor, subtitles, transcribe
+from . import dedupe, engage, facecam, highlights, hook, llm, media, render, sponsor, subtitles, transcribe
 
 log = logging.getLogger(__name__)
 # Mis à vrai par le worker quand il s'arrête (mise à jour…) : le traitement s'interrompt proprement
@@ -127,6 +127,19 @@ def use_teaser(tun: dict) -> bool:
     return random.random() < keep
 
 
+def punch_windows(peak, body: list[tuple[float, float]], teaser=None) -> list[tuple[float, float]] | None:
+    """Fenêtre de zoom (temps du clip final) sur la réaction au moment fort, None s'il n'est pas dans ce morceau."""
+    if peak is None:
+        return None
+    t = highlights.out_time(body, peak)
+    if t is None:
+        return None
+    total = sum(y - x for x, y in body)
+    off = (teaser[1] - teaser[0]) if teaser else 0.0
+    a, b = max(0.0, t - 0.2), min(total, t + 1.4)
+    return [(round(off + a, 2), round(off + b, 2))] if b - a >= 0.5 else None
+
+
 def check_duplicate(video: Video, m) -> bool:
     """Vrai si la scène a déjà un meilleur clip (autre streamer) : on ne crée pas celui-ci.
 
@@ -204,12 +217,14 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
         hmax = max(m.score for m in moments)
         hmin = min(m.score for m in moments)
     progress(20)
+    recent = engage.recent_titles()  # titres déjà publiés : chaque clip doit avoir le sien
+    ctx_title = engage.clean_video_title(video.title)
     for k, m in enumerate(moments):
         stop_if_stopping()
         progress(20 + 80 * k / len(moments))
         text = highlights.text_between(segments, m.start, m.end)
         heur = (m.score - hmin) / (hmax - hmin) if hmax > hmin else 0.5
-        rated = llm.rate(text, video.title, which, guidance) if use_llm else None
+        rated = llm.rate(text, ctx_title, which, guidance, recent) if use_llm else None
         if rated and rated[0] <= 0:
             log.info("L'IA y voit une pub / un passage sponsorisé : ignoré (%.0f-%.0f s)", m.start, m.end)
             m.score = -1.0
@@ -220,7 +235,10 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
             m.title, m.hook = rated[1], rated[2]
         else:
             m.score = heur
-        m.title = m.title or fallback_title(text) or video.title
+        m.title = engage.fix_title(m.title, video.title, recent, text) or fallback_title(text) or video.title
+        recent.insert(0, m.title)
+        question = engage.clean_question(rated[3]) if rated and len(rated) > 3 else ""
+        m.features["question"] = question or engage.fallback_question(text, m.title)
         m.features.update(heur=round(heur, 3), llm=rated[0] if rated else None, target=round(target, 1),
                           tuning_id=tun.get("tuning_id"), text=text[:400],
                           dedupe_text=text[:dedupe.TEXT_CHARS],
@@ -262,6 +280,8 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
         cam = pick_layout(src, m.start, m.end)
         m.features["layout"] = "split" if cam else "classic"
         top = render.split_top(s.split_cam_height) if cam else 0
+        if not m.features.get("question"):  # analyse faite avant cette version
+            m.features["question"] = engage.fallback_question(m.features.get("text", ""), m.title)
         tease = None
         if use_teaser(tun):
             tease = highlights.teaser(segments, m.features.get("peak"), parts[0][0], m.end, s.teaser_seconds)
@@ -272,7 +292,7 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
             stop_if_stopping()
             label = f"Partie {i}/{len(parts)}" if len(parts) > 1 else ""
             out = s.clips_dir / str(video_id) / f"{group}_p{i}.mp4"
-            t_i = None
+            t_i, body, punch = None, [(a, b)], None
             try:
                 hook_text = (m.hook or m.title) if s.hook_title else ""
                 png = ""
@@ -282,17 +302,25 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                 if not png:
                     hook_text = hook.strip_emojis(hook_text)
                 t_i = tease if i == 1 else None
+                body = (highlights.cut_silences(segments, a, b, s.silence_min) if s.cut_silences else [(a, b)])
+                end_text = engage.end_card(m.features.get("question", ""), i, len(parts)) if s.end_question else ""
+                punch = punch_windows(m.features.get("peak"), body, t_i) if s.punch_zoom else None
                 try:
+                    pieces = ([t_i] if t_i else []) + body
                     ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook_text, s.hook_seconds,
-                                              hook_in_ass=not png, top=top, pieces=[t_i, (a, b)] if t_i else None)
-                    render.render(src, a, b, ass, out, png, s.hook_seconds, cam, t_i)
+                                              hook_in_ass=not png, top=top,
+                                              pieces=pieces if len(pieces) > 1 else None,
+                                              end_text=end_text, end_seconds=s.end_seconds)
+                    render.render(src, a, b, ass, out, png, s.hook_seconds, cam, t_i, body if len(body) > 1 else None,
+                                  punch, s.progress_bar)
                 except RuntimeError as e:
-                    if not t_i:
+                    if not (t_i or len(body) > 1 or punch or s.progress_bar):
                         raise
-                    log.warning("Ouverture choc impossible (%s), rendu sans.", str(e)[-200:])
-                    t_i = None
+                    log.warning("Montage dynamique impossible (%s), rendu simple.", str(e)[-200:])
+                    t_i, body, punch = None, [(a, b)], None
                     ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook_text, s.hook_seconds,
-                                              hook_in_ass=not png, top=top)
+                                              hook_in_ass=not png, top=top, end_text=end_text,
+                                              end_seconds=s.end_seconds)
                     render.render(src, a, b, ass, out, png, s.hook_seconds, cam)
             except Exception as e:
                 log.exception("Rendu échoué")
@@ -308,7 +336,9 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                 ss.commit()
                 learning.save_clip_info(clip.id, {**m.features, "title": m.title, "hook": m.hook,
                                                   "part": i, "part_count": len(parts),
-                                                  "teaser": bool(t_i) if status == "ready" else False})
+                                                  "teaser": bool(t_i) if status == "ready" else False,
+                                                  "cuts": len(body) - 1 if status == "ready" else 0,
+                                                  "punch": bool(punch) if status == "ready" else False})
                 if status == "ready":
                     created += 1
                     if s.auto_publish:
