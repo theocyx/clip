@@ -28,14 +28,22 @@ from .publish import creds, tiktok, youtube
 log = logging.getLogger(__name__)
 
 SIGNALS = {"spike": "les pics de son (cris, rires)", "density": "le débit de parole", "excite": "les mots d'excitation"}
-DURATION_BUCKETS = [(0, 45, 40), (45, 60, 52), (60, 75, 67), (75, 90, 82), (90, 1e9, 100)]  # (de, à, durée visée)
+DURATION_BUCKETS = [(0, 25, 22), (25, 35, 30), (35, 45, 40), (45, 60, 52), (60, 90, 70),
+                    (90, 1e9, 100)]  # (de, à, durée visée)
+DUR_VERSION = 2  # durée apprise avant cette version (clips longs) ignorée : on repart de CLIP_TARGET
 
 
 # ---------- Réglages courants ----------
 
 def defaults() -> dict:
     return {"weights": dict(DEFAULT_WEIGHTS), "llm_mix": 0.6, "clip_target": get_settings().clip_target,
-            "rules": [], "top": [], "flop": [], "insights": [], "teaser": True}
+            "rules": [], "top": [], "flop": [], "insights": [], "teaser": True, "dur_v": DUR_VERSION}
+
+
+def max_len() -> float:
+    """Durée max d'un clip : CLIP_MAX, et jamais plus qu'une partie quand les parties sont désactivées."""
+    cfg = get_settings()
+    return cfg.clip_max if cfg.allow_parts else min(cfg.clip_max, cfg.part_max)
 
 
 def latest() -> Tuning | None:
@@ -48,7 +56,11 @@ def current() -> dict:
     d = defaults()
     t = latest() if get_settings().learning else None
     if t:
-        d.update(json.loads(t.data))
+        data = json.loads(t.data)
+        if data.get("dur_v") != DUR_VERSION:
+            data.pop("clip_target", None)
+            data["dur_v"] = DUR_VERSION
+        d.update(data)
         d["tuning_id"] = t.id
     return d
 
@@ -160,8 +172,9 @@ def performances() -> dict[int, float]:
         eng = np.array([(st.likes + st.comments + st.shares) / max(st.views, 1) for _, st in rows])
         ret = np.array([st.avg_view_pct if st.avg_view_pct is not None else np.nan for _, st in rows])
         score = 0.6 * _z(np.log1p(views)) + 0.25 * _z(eng)
-        if np.isfinite(ret).sum() >= 3:
-            score = score + 0.15 * np.nan_to_num(_z(np.where(np.isfinite(ret), ret, np.nanmean(ret))))
+        if np.isfinite(ret).sum() >= 3:  # la rétention décide de la diffusion des Shorts : elle compte autant
+            score = 0.45 * _z(np.log1p(views)) + 0.2 * _z(eng) + 0.35 * np.nan_to_num(
+                _z(np.where(np.isfinite(ret), ret, np.nanmean(ret))))
         for (cid, _), r in zip(rows, _rank01(score)):
             per_clip.setdefault(cid, []).append(float(r))
     return {cid: sum(v) / len(v) for cid, v in per_clip.items()}
@@ -249,7 +262,7 @@ def learn(force: bool = False) -> dict:
     out["clip_target"] = prev["clip_target"]
     if len(buckets) >= 2:
         score, center, lo, hi, cnt = max(buckets)
-        goal = float(np.clip(center, cfg.clip_min, cfg.part_max))
+        goal = float(np.clip(center, cfg.clip_min, max_len()))
         out["clip_target"] = round(prev["clip_target"] + 0.5 * (goal - prev["clip_target"]), 1)
         span = f"plus de {lo} s" if hi > 1e8 else f"{lo}-{hi} s"
         insights.append(f"Les clips de {span} marchent le mieux ({cnt} clips) : durée visée {out['clip_target']:.0f} s.")

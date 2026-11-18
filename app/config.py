@@ -41,10 +41,12 @@ class Settings(BaseSettings):
     # Clips
     clips_per_video: int = 3  # nombre max de clips par vidéo d'une heure (proportionnel à la durée)
     clips_max_per_video: int = 10
-    clip_target: float = 60.0  # durée visée (s)
-    clip_min: float = 35.0
-    clip_max: float = 180.0  # au-delà, le clip est coupé en parties
+    # Shorts courts : sous 35 s la rétention (et donc la diffusion) est bien meilleure
+    clip_target: float = 32.0  # durée visée (s)
+    clip_min: float = 18.0
+    clip_max: float = 58.0  # au-delà, coupé en parties si ALLOW_PARTS, sinon le clip est limité à cette durée
     part_max: float = 90.0  # durée max d'une partie
+    allow_parts: bool = False  # « partie 1/2, 2/2 » : la partie 2 n'est presque jamais vue en Shorts
     min_score: float = 0.0
 
     # Rendu vidéo
@@ -79,6 +81,14 @@ class Settings(BaseSettings):
     min_minutes_between_posts: int = 90
     max_posts_per_day: int = 100  # par plateforme (YouTube : 100 envois/jour), 0 = pas de limite (réglable aussi dans la page Clips)
     hashtags: str = "#shorts #clip #fr"
+    # Qualité plutôt que quantité : une chaîne qui publie en rafale voit chaque Short beaucoup moins poussé.
+    post_gap_floor: int = 40  # écart minimum imposé entre deux envois, même si l'interface dit moins (0 = non)
+    daily_cap: int = 12  # envois max par 24 h et par plateforme, quels que soient les autres réglages (0 = aucun)
+    spread_posts: bool = True  # répartit les envois restants du jour sur les heures qui restent
+    quiet_hours: str = "1-8"  # jamais d'envoi à ces heures (heure de Paris), même en mode GTA 6. Vide = aucune
+    publish_min_llm: float = 6  # clips notés sous ce score (sur 10) par l'IA : pas publiés automatiquement
+    topic_only: bool = True  # ne publie automatiquement que les clips sur GTA (la chaîne reste dans sa niche)
+    queue_max_hours: float = 36  # clip en attente depuis plus longtemps : retiré de la file (plus d'actualité)
     # Heures de publication (heure de Paris), plages séparées par des virgules. Vide = à toute heure.
     publish_hours: str = "12-14,18-22"
     timezone: str = "Europe/Paris"

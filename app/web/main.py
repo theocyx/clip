@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Red
 from fastapi.templating import Jinja2Templates
 from sqlmodel import col, func, select
 
-from .. import db, discovery, gta6, health, learning, notify, platforms, worker
+from .. import curate, db, discovery, gta6, health, learning, notify, platforms, worker
 from ..config import get_settings
 from ..models import Clip, DiscoverIgnore, Post, PostStat, Source, Video, now
 from ..pipeline import process, sources
@@ -509,7 +509,8 @@ def list_clips(request: Request, vue: str = "manuel", sched: str = ""):
     return templates.TemplateResponse(request, "clips.html", {
         "clips": shown, "posts": by_clip, "state": state, "plan": pl, "vue": vue, "views": VIEWS,
         "counts": counts, "texts": texts, "labels": platforms.LABELS, "gta6": gta6.active(),
-        "publish_hours": platforms.publish_hours(), "gap": worker.post_gap(), "sched": sched,
+        "publish_hours": platforms.publish_hours(), "gap": worker.post_gap(), "gap_floor": get_settings().post_gap_floor,
+        "daily_cap": get_settings().daily_cap, "quiet_hours": get_settings().quiet_hours, "sched": sched,
         "timezone": get_settings().timezone})
 
 
@@ -569,8 +570,9 @@ def clip_publish(cid: int):
     with db.session() as s:
         c = s.get(Clip, cid)
         process.queue_posts(s, c)
-        for p in s.exec(select(Post).where(Post.clip_id == cid, col(Post.status).in_(["failed", "cancelled"]))).all():
-            p.status, p.attempts, p.error = "pending", 0, ""
+        for p in s.exec(select(Post).where(Post.clip_id == cid, col(Post.status).in_(
+                ["failed", "cancelled", "pending"]))).all():
+            p.status, p.attempts, p.error = "pending", 0, curate.FORCED  # choix manuel : le tri ne le retire pas
             s.add(p)
         s.commit()
     return back("/clips")
@@ -610,6 +612,7 @@ def stats_page(request: Request, refreshing: bool = False):
         "rows": rows, "tuning": learning.current(), "tuned_at": t.created_at if t else None,
         "defaults": learning.defaults(), "measured": len(perf), "min_clips": get_settings().learn_min_clips,
         "learning_on": get_settings().learning, "yt_analytics": youtube.has_analytics(),
+        "yt_analytics_error": youtube.analytics_error(),
         "yt_connected": creds.load("youtube") is not None, "tt_stats": get_settings().tiktok_stats,
         "refreshing": refreshing})
 
@@ -628,7 +631,8 @@ def accounts(request: Request, notif: str = "", sched: str = ""):
     return templates.TemplateResponse(request, "accounts.html", {
         "accounts": accounts_status(), "yt_redirect": youtube.redirect_uri(), "tt_redirect": tiktok.redirect_uri(),
         "notify_on": notify.configured(), "notif": notif, "publish_hours": platforms.publish_hours(),
-        "gap": worker.post_gap(), "sched": sched,
+        "gap": worker.post_gap(), "gap_floor": get_settings().post_gap_floor,
+        "daily_cap": get_settings().daily_cap, "quiet_hours": get_settings().quiet_hours, "sched": sched,
         "platforms": platforms.status(),
         "timezone": s.timezone})
 

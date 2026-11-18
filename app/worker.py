@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from sqlmodel import col, select
 
-from . import db, discovery, gta6, health, learning, maintenance, notify, platforms
+from . import curate, db, discovery, gta6, health, learning, maintenance, notify, platforms
 from .config import get_settings
 from .models import Clip, ClipInfo, Post, Source, Video, now
 from .pipeline import chat, engage, process, sources, sponsor
@@ -401,23 +401,47 @@ def parse_hours(spec: str) -> list[tuple[int, int]]:
     return out
 
 
+def _in_ranges(ranges: list[tuple[int, int]], t: datetime) -> bool:
+    m = t.hour * 60 + t.minute
+    return any((a <= m < b) if a <= b else (m >= a or m < b) for a, b in ranges)
+
+
 def in_publish_window(at: datetime | None = None) -> bool:
     cfg = get_settings()
     ranges = parse_hours(platforms.publish_hours())
     if not ranges:
         return True
-    t = at or datetime.now(ZoneInfo(cfg.timezone))
-    m = t.hour * 60 + t.minute
-    return any((a <= m < b) if a <= b else (m >= a or m < b) for a, b in ranges)
+    return _in_ranges(ranges, at or datetime.now(ZoneInfo(cfg.timezone)))
+
+
+def in_quiet_hours(at: datetime | None = None) -> bool:
+    """Heures creuses (QUIET_HOURS, la nuit) : aucun envoi, même en mode GTA 6 (personne pour regarder)."""
+    cfg = get_settings()
+    ranges = parse_hours(cfg.quiet_hours)
+    return bool(ranges) and _in_ranges(ranges, at or datetime.now(ZoneInfo(cfg.timezone)))
+
+
+def open_at(t: datetime) -> bool:
+    """Un envoi est-il permis à cette heure (heures d'envoi ou mode GTA 6, hors heures creuses) ?"""
+    return (anytime() or in_publish_window(t)) and not in_quiet_hours(t)
 
 
 def post_limit(platform: str = "youtube") -> int:
     """Envois max sur 24 h glissantes, 0 = pas de limite. Réglage de l'interface, sinon le .env."""
     cfg = get_settings()
     if gta6.active() and cfg.gta6_max_posts_per_day > 0:
-        return cfg.gta6_max_posts_per_day
+        return _capped(cfg.gta6_max_posts_per_day)
     ui = platforms.daily_limit(platform)
-    return ui if ui is not None else max(0, cfg.max_posts_per_day)
+    limit = ui if ui is not None else max(0, cfg.max_posts_per_day)
+    return _capped(limit)
+
+
+def _capped(limit: int) -> int:
+    """DAILY_CAP l'emporte : au-delà, chaque Short est moins poussé (la chaîne semble spammer)."""
+    cap = max(0, get_settings().daily_cap)
+    if not cap:
+        return limit
+    return min(limit, cap) if limit else cap
 
 
 def quota_reset() -> datetime:
@@ -434,6 +458,41 @@ def post_gap() -> int:
     if ui is not None:
         return ui
     return get_settings().gta6_min_minutes_between_posts if gta6.active() else platforms.min_gap()
+
+
+def base_gap() -> int:
+    """Écart choisi (interface / .env), relevé à POST_GAP_FLOOR : publier toutes les 2 min fait chuter
+    les vues de chaque Short (testés auprès des mêmes abonnés, ils se cannibalisent)."""
+    return max(post_gap(), max(0, get_settings().post_gap_floor))
+
+
+def open_minutes(start: datetime, end: datetime) -> int:
+    """Minutes où l'envoi est permis entre start et end (pas d'une minute, au plus 24 h)."""
+    n, t = 0, start
+    while t < end and n < 1440:
+        if open_at(t):
+            n += 1
+        t += timedelta(minutes=1)
+    return n
+
+
+def effective_gap(s, platform: str) -> int:
+    """Écart réellement appliqué : base_gap, et si SPREAD_POSTS les envois restants du jour sont répartis
+    sur les heures d'envoi qui restent d'ici minuit (au lieu de tout publier d'un coup en début de journée)."""
+    gap = base_gap()
+    if not get_settings().spread_posts:
+        return gap
+    limit = post_limit(platform)
+    if not limit:
+        return gap
+    left = limit - used_today(s, platform)
+    if left <= 0:
+        return gap
+    tz = ZoneInfo(get_settings().timezone)
+    t = datetime.now(tz).replace(second=0, microsecond=0)
+    midnight = (t + timedelta(days=1)).replace(hour=0, minute=0)
+    mins = open_minutes(t, midnight)
+    return max(gap, min(180, mins // left)) if mins else gap
 
 
 def anytime() -> bool:
@@ -454,10 +513,10 @@ def used_today(s, platform: str) -> int:
 def can_post(s, platform: str) -> bool:
     if platforms.blocked_until(platform):
         return False
-    if not anytime() and not in_publish_window():
+    if (not anytime() and not in_publish_window()) or in_quiet_hours():
         return False
     last = last_published(s, platform)
-    if last and now() - last < timedelta(minutes=post_gap()):
+    if last and now() - last < timedelta(minutes=effective_gap(s, platform)):
         return False
     limit = post_limit(platform)
     return not limit or used_today(s, platform) < limit
@@ -476,11 +535,11 @@ def slots_left(s, platform: str) -> int:
     midnight = (t + timedelta(days=1)).replace(hour=0, minute=0)
     last = last_published(s, platform)
     if last:  # published_at est en UTC sans fuseau
-        nxt = last.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz) + timedelta(minutes=post_gap())
+        nxt = last.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz) + timedelta(minutes=base_gap())
         t = max(t, nxt)
-    n, gap = 0, timedelta(minutes=max(1, post_gap()))
+    n, gap = 0, timedelta(minutes=max(1, base_gap()))
     while t < midnight and n < left:
-        if anytime() or in_publish_window(t):
+        if open_at(t):
             n += 1
             t += gap
         else:
@@ -599,7 +658,14 @@ def publish_once(platform: str) -> bool:
 
 
 def publish_loop():
+    last_curate = 0.0
     while not stop.is_set():
+        if time.monotonic() - last_curate >= 600:  # tri de la file : mauvais clips retirés, titres corrigés
+            last_curate = time.monotonic()
+            try:
+                curate.run()
+            except Exception:
+                log.exception("Tri de la file d'envoi échoué")
         for platform in ("youtube", "tiktok"):
             try:
                 publish_once(platform)

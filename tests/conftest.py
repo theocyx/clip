@@ -3,7 +3,11 @@ import tempfile
 
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp())
 os.environ.setdefault("OLLAMA_URL", "")
-os.environ.setdefault("GTA6_MODE", "off")  # sinon le mode s'active selon la vraie date et fausse les tests
+os.environ.setdefault("GTA6_MODE", "off")
+# garde-fous anti-rafale coupés pour les anciens tests (testés à part dans test_quality.py)
+for k, v in {"POST_GAP_FLOOR": "0", "DAILY_CAP": "0", "QUIET_HOURS": "", "SPREAD_POSTS": "false",
+             "TOPIC_ONLY": "false", "PUBLISH_MIN_LLM": "0", "QUEUE_MAX_HOURS": "0"}.items():
+    os.environ.setdefault(k, v)  # sinon le mode s'active selon la vraie date et fausse les tests
 
 import pytest
 

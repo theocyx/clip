@@ -96,19 +96,51 @@ def stats(video_ids: list[str]) -> dict[str, dict]:
                                "comments": int(st.get("commentCount", 0))}
     if has_analytics():
         try:
-            ya = build("youtubeAnalytics", "v2", credentials=c, cache_discovery=False)
-            for i in range(0, len(video_ids), 200):
-                batch = video_ids[i:i + 200]
-                resp = ya.reports().query(
-                    ids="channel==MINE", startDate="2020-01-01", endDate=date.today().isoformat(),
-                    metrics="averageViewDuration,averageViewPercentage,shares", dimensions="video",
-                    filters="video==" + ",".join(batch)).execute()
-                for vid, avd, avp, shares in resp.get("rows", []):
-                    if vid in out:
-                        out[vid].update(avg_view_s=float(avd), avg_view_pct=float(avp), shares=int(shares))
+            retention(c, list(out), out)
+            _analytics_error("")
         except Exception as e:  # API Analytics pas activée dans la console Google, etc.
             logging.getLogger(__name__).warning("Statistiques YouTube Analytics indisponibles : %s", e)
+            _analytics_error(str(e)[:300])
     return out
+
+
+def retention(c, video_ids: list[str], out: dict[str, dict]) -> None:
+    """Rétention (% regardé, durée moyenne) et partages via YouTube Analytics, ajoutés à `out`.
+
+    Le rapport par vidéo exige un tri et maxResults ; les données arrivent avec 1 à 2 jours de retard."""
+    ya = build("youtubeAnalytics", "v2", credentials=c, cache_discovery=False)
+    for i in range(0, len(video_ids), 50):
+        batch = video_ids[i:i + 50]
+        resp = ya.reports().query(
+            ids="channel==MINE", startDate="2020-01-01", endDate=date.today().isoformat(),
+            metrics="views,averageViewDuration,averageViewPercentage,shares", dimensions="video",
+            filters="video==" + ",".join(batch), sort="-views", maxResults=len(batch)).execute()
+        cols = [h.get("name") for h in resp.get("columnHeaders", [])] or [
+            "video", "views", "averageViewDuration", "averageViewPercentage", "shares"]
+        for row in resp.get("rows", []):
+            r = dict(zip(cols, row))
+            vid = r.get("video")
+            if vid in out:
+                out[vid].update(avg_view_s=float(r.get("averageViewDuration") or 0),
+                                avg_view_pct=float(r.get("averageViewPercentage") or 0),
+                                shares=int(r.get("shares") or 0))
+
+
+def _analytics_error(msg: str) -> None:
+    """Dernière erreur YouTube Analytics, affichée dans Statistiques ("" = tout va bien)."""
+    try:
+        from .. import platforms
+        platforms._put("analytics_error", msg or None)
+    except Exception:
+        pass
+
+
+def analytics_error() -> str:
+    try:
+        from .. import platforms
+        return platforms._get("analytics_error") or ""
+    except Exception:
+        return ""
 
 
 class QuotaExceeded(RuntimeError):

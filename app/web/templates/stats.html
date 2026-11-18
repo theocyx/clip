@@ -19,6 +19,7 @@
     <tr><td>Part de l'IA dans la note</td><td>{{ (defaults.llm_mix*100)|round|int }} %</td><td>{{ (tuning.llm_mix*100)|round|int }} %</td></tr>
   </table>
   <form method="post" action="/stats/refresh" style="margin-top:12px"><button>Relever les stats et analyser maintenant</button></form>
+  {% if yt_analytics_error %}<p class="err">Rétention YouTube indisponible : {{ yt_analytics_error }}<br>Vérifie que « YouTube Analytics API » est activée dans la console Google (même projet que l'envoi), puis reconnecte YouTube dans <a href="/accounts">Comptes</a>. Les chiffres arrivent avec 1 à 2 jours de retard.</p>{% endif %}
   {% if yt_connected and not yt_analytics %}<p class="mut">Pour la rétention YouTube (% regardé) : active « YouTube Analytics API » dans la console Google puis reconnecte YouTube dans <a href="/accounts">Comptes</a>.</p>{% endif %}
   {% if not tt_stats %}<p class="mut">Vues TikTok : ajoute le scope <code>video.list</code> à l'app TikTok, mets <code>TIKTOK_STATS=true</code> dans .env puis reconnecte TikTok.</p>{% endif %}
 </div>
