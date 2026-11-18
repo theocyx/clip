@@ -212,3 +212,39 @@ def teaser(segments: list[dict], peak: float | None, begin: float, end: float,
     stop = (max(ends) + 0.15) if ends else start + length
     stop = min(stop, end)
     return (round(start, 2), round(stop, 2)) if stop - start >= 1.0 else None
+
+
+def cut_silences(segments: list[dict], a: float, b: float, min_gap: float = 1.2, keep: float = 0.3,
+                 max_cuts: int = 12) -> list[tuple[float, float]]:
+    """Morceaux de [a, b] à garder, sans les blancs de plus de `min_gap` s entre deux mots (« jump cuts »).
+
+    On garde `keep` s de part et d'autre de chaque mot pour ne pas couper sec ; au plus `max_cuts` blancs,
+    les plus longs. Sans transcription mot à mot, renvoie [(a, b)]."""
+    words = sorted((w["start"], w["end"]) for s in segments for w in s.get("words", [])
+                   if a <= (w["start"] + w["end"]) / 2 <= b)
+    gaps = []
+    for (_, e1), (s2, _) in zip(words, words[1:]):
+        if s2 - e1 >= min_gap:
+            gaps.append((e1 + keep, s2 - keep))
+    if words and words[0][0] - a >= min_gap:  # blanc au tout début
+        gaps.append((a, words[0][0] - keep))
+    gaps = sorted(sorted(gaps, key=lambda g: g[0] - g[1])[:max_cuts])
+    pieces, cur = [], a
+    for g0, g1 in gaps:
+        if g1 - g0 < 0.3:
+            continue
+        if g0 > cur:
+            pieces.append((round(cur, 2), round(g0, 2)))
+        cur = max(cur, g1)
+    pieces.append((round(cur, 2), round(b, 2)))
+    return [p for p in pieces if p[1] - p[0] >= 0.2] or [(a, b)]
+
+
+def out_time(pieces: list[tuple[float, float]], t: float) -> float | None:
+    """Instant `t` de la source, une fois les morceaux montés bout à bout (None s'il a été coupé)."""
+    offset = 0.0
+    for x, y in pieces:
+        if x <= t <= y:
+            return offset + t - x
+        offset += y - x
+    return None

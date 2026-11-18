@@ -18,7 +18,7 @@ from sqlmodel import col, select
 from . import db, discovery, gta6, health, learning, maintenance, notify, platforms
 from .config import get_settings
 from .models import Clip, ClipInfo, Post, Source, Video, now
-from .pipeline import process, sources, sponsor
+from .pipeline import engage, process, sources, sponsor
 from .pipeline import tags as hashtags
 from .publish import creds, tiktok, youtube
 
@@ -307,15 +307,26 @@ def credit(video: Video) -> tuple[str, str]:
     return (src.name, src.url) if src else ("", "")
 
 
-def clip_text(clip: Clip) -> str:
+def clip_data(clip: Clip) -> dict:
     if clip.id is None:
-        return ""
+        return {}
     with db.session() as s:
         info = s.get(ClipInfo, clip.id)
     try:
-        return json.loads(info.data).get("text", "") if info else ""
+        return json.loads(info.data) if info else {}
     except ValueError:
+        return {}
+
+
+def clip_text(clip: Clip) -> str:
+    return clip_data(clip).get("text", "")
+
+
+def clip_question(clip: Clip) -> str:
+    """Question qui lance les commentaires (seulement sur la dernière partie : les autres renvoient à la suite)."""
+    if not get_settings().end_question or clip.part < clip.part_count:
         return ""
+    return engage.caption_question(clip_data(clip).get("question", ""))
 
 
 def description(clip: Clip, video: Video) -> tuple[str, list[str]]:
@@ -330,6 +341,9 @@ def description(clip: Clip, video: Video) -> tuple[str, list[str]]:
     trend = hashtags.trending(video.title, keywords, clip.title, clip_text(clip))
     tags_ = hashtags.merge([tag] if tag else [], trend, hashtags.split_tags(s.hashtags), limit=s.max_hashtags)
     lines = [clip.title, ""]
+    ask = clip_question(clip)
+    if ask:
+        lines += [ask, ""]
     if name:
         lines += [f"🎮 Streamer : {name}", f"👉 Sa chaîne : {channel}", ""]
     lines += [f"Extrait de : {video.title}", video.url, "", " ".join("#" + t for t in tags_)]
@@ -360,6 +374,9 @@ def tiktok_caption(clip: Clip, desc: str, tags: list[str]) -> str:
     if s.tiktok_max_hashtags > 0:
         picked = picked[:s.tiktok_max_hashtags]
     cap = f"{clip.title}" + (f" 🎮 {who}" if who else "") + " " + " ".join("#" + t for t in picked)
+    ask = clip_question(clip)
+    if ask:
+        cap += f"\n\n{ask}"
     if src and src.lower() not in clip.title.lower():
         cap += f"\n\nExtrait de « {src} »" + (f" de {who}" if who else "")
     return cap

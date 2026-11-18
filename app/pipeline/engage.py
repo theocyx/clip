@@ -1,0 +1,182 @@
+"""Engagement : titres variés tirés du contenu du clip, et question finale qui pousse à commenter.
+
+Le petit modèle local a tendance à recopier le titre du live (« #GTAVI Live Stream 137 Heures ») :
+on lui donne un titre de live nettoyé, la liste des titres récents à éviter, et on vérifie après coup.
+"""
+from __future__ import annotations
+
+import difflib
+import random
+import re
+from datetime import timedelta
+
+STOP = {
+    "le", "la", "les", "un", "une", "des", "de", "du", "d", "l", "et", "ou", "a", "à", "au", "aux", "en", "sur",
+    "pour", "par", "avec", "dans", "ce", "ça", "sa", "son", "ses", "il", "elle", "on", "je", "tu", "est", "c",
+    "qui", "que", "qu", "pas", "ne", "n", "y", "se", "s", "mon", "ma", "mes", "the", "of",
+}
+_WORD = re.compile(r"[\wàâäéèêëïîôöùûüç]+", re.I)
+# bruit des titres de live : compteurs, « live », « stream », hashtags, jours…
+_HOURS = re.compile(r"\b\d+\s*(h|heures?|hours?|jours?|days?|j)\b", re.I)
+_NOISE = re.compile(
+    r"\b(live|stream|streaming|en direct|direct|subathon|"
+    r"jour|day|ep|épisode|episode|part|partie)\b\s*\d*|\[[^\]]*\]|\([^)]*\)|[|!•\-–—_]+",
+    re.I,
+)
+
+
+def words(text: str) -> list[str]:
+    return [w.lower() for w in _WORD.findall(text or "") if w.lower() not in STOP]
+
+
+def similarity(a: str, b: str) -> float:
+    wa, wb = words(a), words(b)
+    if not wa or not wb:
+        return 0.0
+    return difflib.SequenceMatcher(None, " ".join(wa), " ".join(wb)).ratio()
+
+
+def clean_video_title(title: str) -> str:
+    """Titre du live sans le bruit (compteurs d'heures, « live stream », hashtags) donné à l'IA comme contexte."""
+    out = _NOISE.sub(" ", _HOURS.sub(" ", re.sub(r"#(\w+)", r"\1", title or "")))
+    out = re.sub(r"\s{2,}", " ", out).strip(" :,.")
+    return out or (title or "").strip()
+
+
+def topic(video_title: str, text: str = "") -> str:
+    """Mot-clé recherché à mettre en tête du titre (GTA 6, GTA RP, serveur…), ou ""."""
+    hay = f"{video_title} {text}".lower()
+    for pattern, name in ((r"flash ?back", "FlashBack"), (r"21 ?jump ?click", "21JumpClick"),
+                          (r"faily ?v\b", "FailyV"), (r"no ?pixel", "NoPixel")):
+        if re.search(pattern, hay):
+            return f"GTA RP {name}"
+    if re.search(r"gta ?(6|vi|six)\b", hay):
+        return "GTA 6"
+    if re.search(r"gta ?rp|\brp\b|role ?play", hay):
+        return "GTA RP"
+    if re.search(r"\bgta\b|grand theft auto", hay):
+        return "GTA"
+    return ""
+
+
+def too_close(title: str, video_title: str, recent: list[str]) -> bool:
+    """Vrai si le titre recopie le titre du live ou ressemble trop à un titre déjà publié."""
+    tw = words(title)
+    if len(tw) < 2:
+        return True
+    vw = set(words(video_title))
+    if vw and sum(w in vw for w in tw) / len(tw) >= 0.7:
+        return True
+    if similarity(title, video_title) >= 0.6:
+        return True
+    return any(similarity(title, r) >= 0.75 for r in recent)
+
+
+def _sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?…])\s+", re.sub(r"\s+", " ", text or "").strip())
+    return [p.strip(" ,;-") for p in parts if len(p.strip()) >= 12]
+
+
+def content_title(text: str, video_title: str = "", recent: list[str] | None = None) -> str:
+    """Titre construit à partir de la phrase la plus forte du clip, mot-clé en tête."""
+    from .subtitles import is_keyword
+
+    recent = recent or []
+    best, best_score = "", -1e9
+    for sent in _sentences(text):
+        n = len(sent)
+        score = sum(is_keyword(w) for w in sent.split()) * 2 + sent.count("!") + sent.count("?") * 1.5
+        score -= abs(n - 45) / 15  # ni trop court ni trop long
+        if any(similarity(sent, r) >= 0.75 for r in recent):
+            score -= 10
+        if score > best_score:
+            best, best_score = sent, score
+    if not best:
+        best = (text or "").strip()
+    if len(best) > 58:
+        best = best[:57].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+    best = best[:1].upper() + best[1:]
+    key = topic(video_title, text)
+    if key and key.lower() not in best.lower():
+        best = f"{key} : {best}"
+    return best.strip()
+
+
+def fix_title(title: str, video_title: str, recent: list[str], text: str) -> str:
+    """Garde le titre de l'IA s'il est original, sinon le reconstruit à partir de ce qui se dit dans le clip."""
+    title = re.sub(r"\s{2,}", " ", (title or "").replace("#", " ")).strip()
+    if title and not too_close(title, video_title, recent):
+        return title
+    alt = content_title(text, video_title, recent)
+    return alt if alt and not too_close(alt, video_title, []) else (title or alt or video_title)
+
+
+# Questions de repli (sans IA) selon le contenu : elles invitent à donner son avis en commentaire
+QUESTIONS: list[tuple[str, list[str]]] = [
+    (r"police|flic|arrêt|prison|course|poursuite|braquage|banque",
+     ["Il aurait dû se rendre ou continuer ?", "T'aurais fait quoi à sa place ?"]),
+    (r"mdr|ptdr|rire|drôle|blague|lol",
+     ["Note ce moment sur 10 😂", "Qui a déjà vécu ça ?"]),
+    (r"argent|€|euros?|dollars?|million|payé|riche",
+     ["Tu aurais accepté ?", "Ça vaut vraiment ce prix ?"]),
+    (r"mort|tué|kill|perdu|rate|raté|fail",
+     ["C'est de sa faute ou pas ?", "T'aurais survécu toi ?"]),
+    (r"gta ?6|gta ?vi|trailer|sortie",
+     ["Tu vas acheter GTA 6 day one ?", "Ton avis sur GTA 6 ?"]),
+]
+GENERIC = ["T'aurais fait quoi à sa place ?", "Tu valides ou pas ?", "Team lui ou team l'autre ?",
+           "Ton avis en commentaire ?"]
+
+
+def fallback_question(text: str, title: str = "") -> str:
+    hay = f"{title} {text}".lower()
+    for pattern, options in QUESTIONS:
+        if re.search(pattern, hay):
+            return random.choice(options)
+    return random.choice(GENERIC)
+
+
+def clean_question(q: str) -> str:
+    from .hook import strip_emojis
+
+    q = re.sub(r"\s{2,}", " ", strip_emojis(q or "").replace("#", " ")).strip(" \"'")
+    if not q or len(q) > 70 or len(words(q)) < 2:
+        return ""
+    return q if q.endswith(("?", "!", "…")) else q + " ?"
+
+
+def end_card(question: str, part: int = 1, part_count: int = 1) -> str:
+    """Texte affiché à la fin : la suite pour les parties, sinon la question qui pousse à commenter."""
+    if part < part_count:
+        return f"La suite en partie {part + 1} : abonne-toi pour ne pas la rater"
+    q = clean_question(question)
+    if not q:
+        return ""
+    return q if "comment" in q.lower() else f"{q} Dis-le en commentaire"
+
+
+def caption_question(question: str) -> str:
+    """Ligne ajoutée en tête de description / légende pour lancer les commentaires."""
+    q = clean_question(question)
+    return f"💬 {q} Réponds en commentaire 👇" if q else ""
+
+
+def recent_titles(days: int = 3, limit: int = 40) -> list[str]:
+    """Titres des clips récents (sans « (partie x/y) »), pour ne pas les répéter."""
+    from sqlmodel import select
+
+    from .. import db
+    from ..models import Clip, now
+
+    try:
+        with db.session() as s:
+            rows = s.exec(select(Clip.title).where(Clip.created_at >= now() - timedelta(days=days))
+                          .order_by(Clip.id.desc()).limit(limit)).all()
+    except Exception:
+        return []
+    out = []
+    for t in rows:
+        t = re.sub(r"\s*\(partie \d+/\d+\)$", "", t or "").strip()
+        if t and t not in out:
+            out.append(t)
+    return out

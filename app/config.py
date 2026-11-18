@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     # Ouverture choc : les ~2,5 s les plus fortes du clip montrées en premier, puis le clip depuis le début
     teaser: bool = True
     teaser_seconds: float = 2.5
+    # Rythme et engagement
+    cut_silences: bool = True  # coupe les blancs de plus de SILENCE_MIN s (« jump cuts »)
+    silence_min: float = 1.2
+    punch_zoom: bool = True  # zoom rapide sur la réaction au moment fort
+    progress_bar: bool = True  # fine barre de progression en haut du clip
+    end_question: bool = True  # question / appel à commenter affiché à la fin et mis en légende
+    end_seconds: float = 3.5
     title_hashtags: int = 2  # hashtags ajoutés à la fin du titre YouTube (s'il reste de la place)
     tiktok_max_hashtags: int = 5  # TikTok conseille 3 à 5 hashtags ciblés
     # Mise en page : auto (split si une facecam est détectée, sinon classique), split, classic

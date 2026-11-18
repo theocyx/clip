@@ -15,7 +15,7 @@ from ..config import get_settings
 log = logging.getLogger(__name__)
 
 PROMPT = """Tu es un monteur expert en clips TikTok / YouTube Shorts francophones.
-Voici la transcription d'un extrait de la vidéo « {video_title} » :
+Voici la transcription d'un extrait d'un live (sujet du live : « {video_title} ») :
 
 \"\"\"{text}\"\"\"
 
@@ -23,11 +23,15 @@ Voici la transcription d'un extrait de la vidéo « {video_title} » :
 Si l'extrait est une publicité, un passage sponsorisé, un placement de produit, un partenariat, un code promo,
 un appel à s'abonner ou à cliquer sur un lien : mets "pub": true et "score": 1.
 Règles pour être vu au maximum sur TikTok et YouTube Shorts :
-- Titre : 40 à 60 caractères, commence par le mot-clé que les gens cherchent (le jeu, le serveur RP ou le
-  streamer s'ils sont connus), crée de la curiosité SANS dévoiler la fin, langage parlé, pas tout en majuscules.
+- Titre : 40 à 60 caractères, raconte CE QUI SE PASSE DANS CET EXTRAIT (action, personnage, réplique forte),
+  commence par le mot-clé que les gens cherchent (le jeu, le serveur RP ou le streamer s'ils sont connus), crée de
+  la curiosité SANS dévoiler la fin, langage parlé, pas tout en majuscules. NE RECOPIE PAS le sujet du live
+  (pas de « live », « stream », nombre d'heures ni de hashtag) : chaque clip doit avoir un titre unique.{recent}
 - Accroche : 3 à 6 mots lisibles en 1 seconde, qui posent une tension ou une question (« Il n'aurait jamais dû… »,
   « Personne ne s'attendait à ça »), jamais un résumé plat.
-Réponds UNIQUEMENT en JSON : {{"pub": <true|false>, "score": <entier 1-10>, "title": "<titre en français, 60 caractères max, sans hashtag>", "hook": "<accroche très courte affichée en haut de la vidéo, 3 à 6 mots, terminée par 1 ou 2 emojis en lien avec le contenu (ex. 😂 🤯 😱 🔥 💀 💰), sans hashtag>"}}"""
+- Question : une question courte (8 mots max) sur CE moment, à laquelle tout le monde a envie de répondre en
+  commentaire (avis, choix, pronostic : « Il aurait dû fuir ou se rendre ? », « Tu lui pardonnes ? »).
+Réponds UNIQUEMENT en JSON : {{"pub": <true|false>, "score": <entier 1-10>, "title": "<titre en français, 60 caractères max, sans hashtag>", "hook": "<accroche très courte affichée en haut de la vidéo, 3 à 6 mots, terminée par 1 ou 2 emojis en lien avec le contenu (ex. 😂 🤯 😱 🔥 💀 💰), sans hashtag>", "question": "<question courte pour les commentaires>"}}"""
 
 
 def _ollama_ok() -> bool:
@@ -55,15 +59,15 @@ def available() -> bool:
     return provider() != "none"
 
 
-def parse(content: str) -> tuple[float, str, str] | None:
-    """(score, titre, accroche). Score 0 si l'IA y voit une pub / un passage sponsorisé."""
+def parse(content: str) -> tuple[float, str, str, str] | None:
+    """(score, titre, accroche, question). Score 0 si l'IA y voit une pub / un passage sponsorisé."""
     m = re.search(r"\{.*\}", content or "", re.S)
     if not m:
         return None
     data = json.loads(m.group(0))
     clean = lambda k, n: str(data.get(k, "")).strip().strip('"')[:n]  # noqa: E731
     pub = data.get("pub") in (True, "true", "oui", 1)
-    return 0.0 if pub else float(data.get("score", 0)), clean("title", 90), clean("hook", 60)
+    return 0.0 if pub else float(data.get("score", 0)), clean("title", 90), clean("hook", 60), clean("question", 90)
 
 
 def _ask_ollama(prompt: str) -> str:
@@ -71,17 +75,24 @@ def _ask_ollama(prompt: str) -> str:
     r = httpx.post(
         f"{s.ollama_url}/api/generate",
         json={"model": s.ollama_model, "format": "json", "stream": False, "prompt": prompt,
-              "options": {"temperature": 0.3, "num_ctx": 4096}},
+              "options": {"temperature": 0.5, "num_ctx": 4096}},
         timeout=600,
     )
     r.raise_for_status()
     return r.json()["response"]
 
 
-def rate(text: str, video_title: str, which: str | None = None, guidance: str = "") -> tuple[float, str, str] | None:
-    """guidance : leçons tirées des clips déjà publiés (voir app/learning.py), ajoutées au prompt."""
+def rate(text: str, video_title: str, which: str | None = None, guidance: str = "",
+         recent: list[str] | None = None) -> tuple[float, str, str, str] | None:
+    """guidance : leçons tirées des clips déjà publiés (voir app/learning.py), ajoutées au prompt.
+
+    recent : titres déjà utilisés, que l'IA ne doit pas reprendre."""
     which = which or provider()
-    prompt = PROMPT.format(video_title=video_title, text=text[:4000])
+    avoid = ""
+    if recent:
+        avoid = "\n  Titres déjà utilisés (interdit de les reprendre ou de les imiter) :\n" + "\n".join(
+            f"  - {t}" for t in recent[:12])
+    prompt = PROMPT.format(video_title=video_title, text=text[:4000], recent=avoid)
     if guidance:
         prompt = guidance.strip() + "\n\n" + prompt
     try:
