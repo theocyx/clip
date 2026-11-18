@@ -33,6 +33,7 @@ def test_window_and_override(monkeypatch):
     gta6.set_mode("auto")
     with pytest.raises(ValueError):
         gta6.set_mode("bidon")
+    (worker.get_settings().data_dir / "gta6_mode").unlink(missing_ok=True)  # ne pas polluer les autres tests
 
 
 def test_detection():
@@ -178,3 +179,12 @@ def test_dashboard_toggle(monkeypatch):
         c.post("/gta6", data={"mode": "auto"})
     finally:
         main.app.dependency_overrides.clear()
+
+
+def test_ui_gap_wins_over_gta6_gap(day_one):
+    from app import platforms
+    platforms.set_schedule(None, None)
+    assert worker.post_gap() == worker.get_settings().gta6_min_minutes_between_posts
+    platforms.set_schedule("7-9", 2)
+    assert worker.post_gap() == 2  # l'écart choisi dans l'interface n'est plus ignoré le jour J
+    platforms.set_schedule(None, None)

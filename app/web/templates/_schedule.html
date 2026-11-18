@@ -6,5 +6,5 @@
   <button>Enregistrer</button>
   <button class="sec" name="reset" value="1">Valeurs du .env</button>
   {% if sched == "ok" %}<span class="ok">Enregistré.</span>{% elif sched == "ko" %}<span class="err">Format invalide : ex. 12-14,18-22:30</span>{% endif %}
-  <div class="mut">Format : plages séparées par des virgules, ex. <code>12-14,18-22:30</code> (heure de {{ timezone }}). Vide = à toute heure.{% if gta6 %} En mode GTA 6, les envois partent à toute heure.{% endif %}</div>
+  <div class="mut">Format : plages séparées par des virgules, ex. <code>12-14,18-22:30</code> (heure de {{ timezone }}). Vide = à toute heure.{% if gta6 %} En mode GTA 6, les envois partent à toute heure (l'écart enregistré ici reste appliqué).{% endif %}</div>
 </form>

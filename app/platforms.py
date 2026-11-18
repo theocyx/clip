@@ -112,6 +112,12 @@ def min_gap() -> int:
     return int(v) if v and v.isdigit() else get_settings().min_minutes_between_posts
 
 
+def ui_gap() -> int | None:
+    """Écart réglé dans l'interface, None s'il n'y en a pas (valeur du .env)."""
+    v = _get("min_gap")
+    return int(v) if v and v.isdigit() else None
+
+
 def set_schedule(hours: str | None, gap: int | None) -> None:
     """None = revenir à la valeur du .env."""
     if hours is not None and not valid_hours(hours):
