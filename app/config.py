@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     min_score: float = 0.0
 
     # Rendu vidéo
-    video_codec: str = "libx264"  # ou h264_vaapi (GPU intégré Intel/AMD)
+    video_codec: str = "auto"  # auto (GPU intégré VAAPI s'il est accessible, sinon CPU), libx264 ou h264_vaapi
     vaapi_device: str = ""  # ex. /dev/dri/renderD128 pour h264_vaapi
     crf: int = 21
     font_name: str = "Montserrat"

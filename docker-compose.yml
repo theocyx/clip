@@ -14,8 +14,9 @@ services:
     restart: unless-stopped
     # laisse le temps au worker de sauvegarder la transcription en cours avant une mise à jour
     stop_grace_period: 2m
-    # Encodage vidéo par le GPU intégré (ex. Radeon Vega du Ryzen 4700U) : décommente et mets VIDEO_CODEC=h264_vaapi dans .env
-    # devices: ["/dev/dri:/dev/dri"]
+    # Encodage vidéo par le GPU intégré (Radeon Vega du Ryzen 4700U) avec VIDEO_CODEC=auto ou h264_vaapi.
+    # Sans GPU sur la machine, supprime ces 2 lignes (le rendu passe alors sur le CPU).
+    devices: ["/dev/dri:/dev/dri"]
 
   ollama:
     image: ollama/ollama:0.5.4
