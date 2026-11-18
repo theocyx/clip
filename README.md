@@ -34,7 +34,7 @@ TikTok exige une adresse en **https**. Le plus simple et gratuit : un sous-domai
 
 ### Accélération par le GPU intégré
 
-La Radeon Vega du Ryzen peut encoder les vidéos : dans `docker-compose.yml` décommente `devices: ["/dev/dri:/dev/dri"]` (service `worker`) et mets `VIDEO_CODEC=h264_vaapi` dans `.env`.
+La Radeon Vega du Ryzen encode les vidéos : `docker-compose.yml` donne `/dev/dri` au `worker` et `VIDEO_CODEC=auto` (défaut) l'utilise s'il est accessible, sinon le rendu reste sur le CPU. Sans GPU, retire la ligne `devices`.
 
 ### Laptop utilisé comme serveur
 

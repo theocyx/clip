@@ -5,7 +5,10 @@ Deux mises en page :
 - split : facecam du streamer en haut, jeu recadré en bas (si une facecam a été détectée)."""
 from __future__ import annotations
 
+import json
 import logging
+import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -73,20 +76,66 @@ BAR_H = 10
 
 
 AUDIO = "loudnorm=I=-14:TP=-1.5:LRA=11"
+_LOUD_KEYS = ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")
+
+
+def resolve_codec(codec: str | None = None) -> str:
+    """VIDEO_CODEC=auto : encodage par le GPU intégré (VAAPI) s'il est accessible, sinon CPU (libx264)."""
+    s = get_settings()
+    codec = (codec or s.video_codec or "auto").strip()
+    if codec.lower() != "auto":
+        return codec
+    dev = s.vaapi_device or "/dev/dri/renderD128"
+    return "h264_vaapi" if os.access(dev, os.R_OK | os.W_OK) else "libx264"
+
+
+def audio_filter(measured: dict | None = None) -> str:
+    """Son à -14 LUFS (niveau des Shorts / TikTok). Avec une mesure préalable (2 passes), le gain est
+    appliqué d'un bloc (linear) : pas d'effet de « pompage » sur les cris et les silences."""
+    if not measured:
+        return AUDIO
+    m = {k: measured[k] for k in _LOUD_KEYS}
+    return (AUDIO + f":measured_I={m['input_i']}:measured_TP={m['input_tp']}:measured_LRA={m['input_lra']}"
+            f":measured_thresh={m['input_thresh']}:offset={m['target_offset']}:linear=true")
+
+
+def measure_loudness(src: Path, pieces: list[tuple[float, float]]) -> dict | None:
+    """1re passe de loudnorm sur l'audio seul des morceaux du clip (rapide). None si impossible."""
+    try:
+        cmd = ["ffmpeg", "-hide_banner", "-nostats"]
+        for a, b in pieces:
+            cmd += ["-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(src)]
+        n = len(pieces)
+        chain = ("".join(f"[{i}:a]" for i in range(n)) + f"concat=n={n}:v=0:a=1," if n > 1 else "[0:a]")
+        cmd += ["-filter_complex", chain + AUDIO + ":print_format=json[a]", "-map", "[a]", "-f", "null", "-"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        found = re.findall(r"\{[^{}]*\}", proc.stderr or "")
+        data = json.loads(found[-1]) if found else {}
+        if not all(k in data for k in _LOUD_KEYS):
+            return None
+        if float(data["input_i"]) < -60:  # quasi silencieux : la normalisation simple suffit
+            return None
+        return data
+    except Exception as e:  # la mesure ne doit jamais empêcher le rendu
+        log.debug("Mesure du volume impossible : %s", e)
+        return None
 
 
 def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, codec: str | None = None,
               overlay: str = "", overlay_seconds: float = 0, cam=None,
               teaser: tuple[float, float] | None = None, cuts: list[tuple[float, float]] | None = None,
-              punch: list[tuple[float, float]] | None = None, bar: bool = False) -> list[str]:
+              punch: list[tuple[float, float]] | None = None, bar: bool = False,
+              loud: dict | None = None) -> list[str]:
     """overlay : image PNG 1080 px de large (accroche avec emojis) posée en haut, sur `overlay_seconds` s (0 = tout).
 
     cam : zone de la facecam (facecam.Box) pour le format split, None = format classique.
     teaser : (début, fin) d'un court extrait montré en ouverture, avant le clip (« cold open »).
     cuts : morceaux du clip gardés (blancs coupés), par défaut [(start, end)].
-    punch : fenêtres de zoom (temps du clip final). bar : barre de progression en haut."""
+    punch : fenêtres de zoom (temps du clip final). bar : barre de progression en haut.
+    loud : mesure du volume (measure_loudness) pour une normalisation en 2 passes."""
     s = get_settings()
-    codec = codec or s.video_codec
+    codec = resolve_codec(codec)
+    afilter = audio_filter(loud)
     body = cuts or [(start, end)]
     pieces = ([teaser] if teaser else []) + list(body)
     total = sum(b - a for a, b in pieces)
@@ -117,7 +166,7 @@ def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, cod
     if overlay:
         cmd += ["-i", overlay]
     if n > 1:
-        cmd += ["-filter_complex", vf + f"[v];[ca]{AUDIO}[a]", "-map", "[v]", "-map", "[a]"]
+        cmd += ["-filter_complex", vf + f"[v];[ca]{afilter}[a]", "-map", "[v]", "-map", "[a]"]
     else:
         cmd += ["-filter_complex", vf + "[v]",
                 "-map", "[v]", "-map", "0:a:0?"]
@@ -125,7 +174,7 @@ def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, cod
         cmd += ["-c:v", codec, "-qp", str(s.crf + 2)]
     else:
         cmd += ["-c:v", codec, "-preset", "veryfast", "-crf", str(s.crf), "-pix_fmt", "yuv420p"]
-    cmd += ["-c:a", "aac", "-b:a", "160k", "-ar", "44100"] + ([] if n > 1 else ["-af", AUDIO])
+    cmd += ["-c:a", "aac", "-b:a", "160k", "-ar", "44100"] + ([] if n > 1 else ["-af", afilter])
     cmd += ["-movflags", "+faststart", str(out)]
     return cmd
 
@@ -137,10 +186,12 @@ def render(src: Path, start: float, end: float, ass_text: str, out: Path, overla
     ass_name = out.stem + ".ass"
     (out.parent / ass_name).write_text(ass_text, encoding="utf-8")
     global _gpu_broken
-    codec = get_settings().video_codec
+    codec = resolve_codec()
     if codec.endswith("_vaapi") and _gpu_broken:
         codec = "libx264"
-    ov = (overlay, overlay_seconds, cam, teaser, cuts, punch, bar)
+    pieces = ([teaser] if teaser else []) + list(cuts or [(start, end)])
+    loud = measure_loudness(src.resolve(), pieces)
+    ov = (overlay, overlay_seconds, cam, teaser, cuts, punch, bar, loud)
     proc = _run(src, start, end, ass_name, out, codec, *ov)
     if proc.returncode != 0 and codec.endswith("_vaapi"):
         log.warning("Encodage GPU impossible, passage au CPU (libx264) : %s", proc.stderr.strip()[-300:])
@@ -152,8 +203,8 @@ def render(src: Path, start: float, end: float, ass_text: str, out: Path, overla
 
 
 def _run(src: Path, start: float, end: float, ass_name: str, out: Path, codec: str, overlay: str = "",
-         overlay_seconds: float = 0, cam=None, teaser=None, cuts=None, punch=None, bar=False):
+         overlay_seconds: float = 0, cam=None, teaser=None, cuts=None, punch=None, bar=False, loud=None):
     cmd = build_cmd(src.resolve(), start, end, ass_name, out.resolve(), codec, overlay, overlay_seconds, cam, teaser,
-                    cuts, punch, bar)
+                    cuts, punch, bar, loud)
     return subprocess.run(cmd, cwd=out.parent,
                           capture_output=True, text=True)
