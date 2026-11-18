@@ -1,7 +1,8 @@
 """Détection de la facecam du streamer (petit cadre avec son visage, en général dans un coin).
 
-Léger pour le CPU : on extrait ~8 images basse définition du passage, on cherche les visages
-(OpenCV, détecteur Haar), et on garde un visage qui revient au même endroit sur la plupart des images.
+Léger pour le CPU : on extrait ~10 images du passage, on cherche les visages (OpenCV, détecteur Haar),
+et on garde un visage qui revient au même endroit sur la plupart des images. On retrouve ensuite le
+vrai cadre de la facecam : ses bords restent au même endroit d'une image à l'autre, contrairement au jeu.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-SAMPLE_W = 640  # largeur des images analysées
+SAMPLE_W = 960  # largeur des images analysées (assez pour un visage de facecam dans un coin)
 
 
 @dataclass
@@ -39,7 +40,7 @@ def video_size(path: Path) -> tuple[int, int]:
     return int(st["width"]), int(st["height"])
 
 
-def grab_frames(path: Path, start: float, end: float, n: int = 8) -> list[np.ndarray]:
+def grab_frames(path: Path, start: float, end: float, n: int = 10) -> list[np.ndarray]:
     """Images en niveaux de gris, SAMPLE_W px de large, réparties sur [start, end]."""
     w, h = video_size(path)
     sh = max(2, round(SAMPLE_W * h / w / 2) * 2)
@@ -68,8 +69,12 @@ def _detector():
 
 def faces_in(frame: np.ndarray) -> list[Box]:
     h, w = frame.shape
-    found = _detector().detectMultiScale(frame, scaleFactor=1.15, minNeighbors=6,
-                                         minSize=(max(16, w // 40), max(16, w // 40)))
+    import cv2
+    size = (max(20, w // 50), max(20, w // 50))
+    found = _detector().detectMultiScale(frame, scaleFactor=1.1, minNeighbors=5, minSize=size)
+    if len(found) == 0:  # webcam sombre : on rehausse le contraste localement et on réessaie
+        boosted = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(frame)
+        found = _detector().detectMultiScale(boosted, scaleFactor=1.1, minNeighbors=5, minSize=size)
     return [Box(x / w, y / h, fw / w, fh / h) for x, y, fw, fh in found]
 
 
@@ -98,10 +103,119 @@ def stable_face(per_frame: list[list[Box]], min_ratio: float = 0.5) -> Box | Non
     return best
 
 
+def persistent_edges(frames: list[np.ndarray], ratio: float = 0.6) -> np.ndarray:
+    """Pixels qui sont un contour sur au moins `ratio` des images (bords fixes : cadre de la facecam)."""
+    import cv2
+    acc = np.zeros(frames[0].shape, dtype=np.float32)
+    for f in frames:
+        acc += cv2.Canny(f, 50, 150) > 0
+    return acc / len(frames) >= ratio
+
+
+def _peaks(strength: np.ndarray, lo: int, hi: int, thr: float, keep: int = 8) -> list[int]:
+    """Positions (lignes ou colonnes) entre lo et hi où un bord fixe est assez continu, les plus nettes d'abord."""
+    lo, hi = max(0, lo), min(len(strength), hi)
+    idx = [i for i in range(lo, hi) if strength[i] >= thr
+           and strength[i] >= strength[max(0, i - 1)] and strength[i] >= strength[min(len(strength) - 1, i + 1)]]
+    idx.sort(key=lambda i: -strength[i])
+    out: list[int] = []
+    for i in idx:  # une seule position par bord épais
+        if all(abs(i - o) > 3 for o in out):
+            out.append(i)
+        if len(out) == keep:
+            break
+    return out
+
+
+def find_cam_box(edges: np.ndarray, face: Box, thr: float = 0.35, min_score: float = 0.75,
+                 min_side: float = 0.6) -> Box | None:
+    """Cadre de la facecam autour du visage, d'après les contours fixes. None si on ne le trouve pas.
+
+    Le décor de la webcam (chambre, fond vert) a aussi des contours fixes : on ne prend donc pas la
+    première ligne venue mais le plus grand rectangle dont les quatre côtés sont des bords continus."""
+    h, w = edges.shape
+    fx, fy, fw, fh = face.x * w, face.y * h, face.w * w, face.h * h
+    cx, cy = fx + fw / 2, fy + fh / 2
+    dil = edges.copy()  # tolérance d'un pixel
+    dil[1:] |= edges[:-1]
+    dil[:-1] |= edges[1:]
+    dil[:, 1:] |= edges[:, :-1]
+    dil[:, :-1] |= edges[:, 1:]
+    d = dil.astype(np.float32)
+    d[0, :] = d[-1, :] = d[:, 0] = d[:, -1] = 1  # le bord de l'image compte comme un bord de cadre
+    col_cum = np.vstack([np.zeros((1, w), np.float32), np.cumsum(d, axis=0)])  # col_cum[y, x]
+    row_cum = np.hstack([np.zeros((h, 1), np.float32), np.cumsum(d, axis=1)])  # row_cum[y, x]
+
+    def vcov(x, t, b):
+        return float(col_cum[b, x] - col_cum[t, x]) / max(1, b - t)
+
+    def hcov(y, l, r):
+        return float(row_cum[y, r] - row_cum[y, l]) / max(1, r - l)
+
+    # repérage grossier des candidats : continuité sur une bande autour du visage
+    r0, r1 = int(max(0, cy - 1.0 * fh)), int(min(h, cy + 1.0 * fh))
+    c0, c1 = int(max(0, cx - 1.0 * fw)), int(min(w, cx + 1.0 * fw))
+    if r1 - r0 < 4 or c1 - c0 < 4:
+        return None
+    cols = d[r0:r1].mean(axis=0)
+    rows = d[:, c0:c1].mean(axis=1)
+    lefts = _peaks(cols, int(fx - 4 * fw), int(fx - 0.2 * fw), thr)
+    rights = _peaks(cols, int(fx + 1.2 * fw), int(fx + 5 * fw) + 1, thr)
+    tops = _peaks(rows, int(fy - 3 * fh), int(fy - 0.3 * fh), thr)
+    bottoms = _peaks(rows, int(fy + 1.5 * fh), int(fy + 5 * fh) + 1, thr)
+    best, best_area = None, 0.0
+    for left in lefts:
+        for right in rights:
+            bw = right - left
+            if bw < 1.8 * fw or bw > 0.6 * w:
+                continue
+            for top in tops:
+                for bottom in bottoms:
+                    bh = bottom - top
+                    if bh < 1.8 * fh or bh > 0.8 * h or bw * bh <= best_area:
+                        continue
+                    sides = (vcov(left, top, bottom + 1), vcov(right, top, bottom + 1),
+                             hcov(top, left, right + 1), hcov(bottom, left, right + 1))
+                    if min(sides) < min_side or sum(sides) / 4 < min_score:
+                        continue
+                    # côté posé sur le bord de l'image : les côtés voisins doivent aller jusqu'au bout,
+                    # sinon la facecam s'arrête avant et on prendrait une bande de jeu
+                    ex, ey = max(3, bw // 20), max(3, bh // 20)
+                    ends = ([hcov(top, 0, ex), hcov(bottom, 0, ex)] if left == 0 else []) \
+                        + ([hcov(top, right + 1 - ex, right + 1), hcov(bottom, right + 1 - ex, right + 1)]
+                           if right == w - 1 else []) \
+                        + ([vcov(left, 0, ey), vcov(right, 0, ey)] if top == 0 else []) \
+                        + ([vcov(left, bottom + 1 - ey, bottom + 1), vcov(right, bottom + 1 - ey, bottom + 1)]
+                           if bottom == h - 1 else [])
+                    if all(c >= 0.7 for c in ends):
+                        best, best_area = (left, top, right, bottom), bw * bh
+    if best is None:
+        return None
+    left, top, right, bottom = best
+    m = 2  # rester à l'intérieur du cadre (bordure décorative)
+    left, top = (left + m if left > 0 else 0), (top + m if top > 0 else 0)
+    right, bottom = (right - m + 1 if right < w - 1 else w), (bottom - m + 1 if bottom < h - 1 else h)
+    return Box(left / w, top / h, (right - left) / w, (bottom - top) / h)
+
+
+def fit_aspect(box: Box, face: Box, frame_w: int, frame_h: int, aspect: float) -> Box:
+    """Plus grand cadre au rapport `aspect` dans `box`, centré au mieux sur le visage (tête non coupée)."""
+    bx, by, bw, bh = box.x * frame_w, box.y * frame_h, box.w * frame_w, box.h * frame_h
+    if bw / bh > aspect:
+        w, h = bh * aspect, bh
+    else:
+        w, h = bw, bw / aspect
+    cx = (face.x + face.w / 2) * frame_w
+    cy = (face.y + face.h / 2) * frame_h + face.h * frame_h * 0.25
+    x = min(max(cx - w / 2, bx), bx + bw - w)
+    y = min(max(cy - h / 2, by), by + bh - h)
+    return Box(x / frame_w, y / frame_h, w / frame_w, h / frame_h)
+
+
 def cam_region(face: Box, frame_w: int, frame_h: int, aspect: float) -> Box:
-    """Cadre autour du visage (épaules comprises) au rapport largeur/hauteur `aspect` (en pixels)."""
+    """Repli sans cadre trouvé : zone autour du visage (épaules comprises) au rapport `aspect` (en pixels)."""
     fw, fh = face.w * frame_w, face.h * frame_h
-    h = min(frame_h, fh * 2.6)
+    h = min(frame_h, fh * 3.2)
     w = h * aspect
     if w > frame_w * 0.6:  # ne pas prendre la moitié du jeu
         w = frame_w * 0.6
@@ -123,7 +237,12 @@ def detect(path: Path, start: float, end: float, aspect: float) -> Box | None:
         if face is None:
             return None
         w, h = video_size(path)
-        return cam_region(face, w, h, aspect)
+        box = find_cam_box(persistent_edges(frames), face)
+        if box is None:
+            log.info("Facecam détectée mais cadre non trouvé : recadrage autour du visage.")
+            return cam_region(face, w, h, aspect)
+        log.info("Facecam détectée : %s", box.as_dict())
+        return fit_aspect(box, face, w, h, aspect)
     except Exception as e:  # OpenCV absent, vidéo illisible… : on garde le rendu classique
         log.warning("Détection de la facecam impossible : %s", e)
         return None

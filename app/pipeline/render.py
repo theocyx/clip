@@ -30,11 +30,20 @@ def layout_filter(cam=None, cam_h: int = 0, src: str = "[0:v]") -> str:
             "[bg][fg]overlay=(W-w)/2:(H-h)/2,fps=30"
         )
     game_h = 1920 - cam_h
+    # le jeu est recadré au centre ; si la facecam déborde dans ce cadre (source 16:9), on le décale
+    half = W / (game_h * 16 / 9) / 2
+    shift = 0.0
+    if cam.x + cam.w / 2 < 0.5:
+        shift = max(0.0, cam.x + cam.w + 0.015 - (0.5 - half))  # + marge pour la bordure du cadre
+    else:
+        shift = -max(0.0, (0.5 + half) - (cam.x - 0.015))
+    shift = max(-0.15, min(0.15, shift))
+    gx = f"max(0\\,min(in_w-out_w\\,(in_w-out_w)/2+in_w*{shift:.4f}))"
     return (
         f"{src}split=2[a][b];"
         f"[a]crop=iw*{cam.w:.4f}:ih*{cam.h:.4f}:iw*{cam.x:.4f}:ih*{cam.y:.4f},"
         f"scale={W}:{cam_h}:force_original_aspect_ratio=increase,crop={W}:{cam_h},setsar=1[top];"
-        f"[b]scale={W}:{game_h}:force_original_aspect_ratio=increase,crop={W}:{game_h},setsar=1[bot];"
+        f"[b]scale={W}:{game_h}:force_original_aspect_ratio=increase,crop={W}:{game_h}:{gx}:0,setsar=1[bot];"
         "[top][bot]vstack=inputs=2,fps=30"
     )
 
