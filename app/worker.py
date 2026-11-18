@@ -405,8 +405,12 @@ def quota_reset() -> datetime:
 
 
 def post_gap() -> int:
-    cfg = get_settings()
-    return cfg.gta6_min_minutes_between_posts if gta6.active() else platforms.min_gap()
+    """Écart entre deux envois : celui réglé dans l'interface prime, sinon GTA6_MIN_MINUTES_BETWEEN_POSTS
+    en mode GTA 6, sinon MIN_MINUTES_BETWEEN_POSTS."""
+    ui = platforms.ui_gap()
+    if ui is not None:
+        return ui
+    return get_settings().gta6_min_minutes_between_posts if gta6.active() else platforms.min_gap()
 
 
 def anytime() -> bool:

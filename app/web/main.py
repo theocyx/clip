@@ -509,7 +509,7 @@ def list_clips(request: Request, vue: str = "manuel", sched: str = ""):
     return templates.TemplateResponse(request, "clips.html", {
         "clips": shown, "posts": by_clip, "state": state, "plan": pl, "vue": vue, "views": VIEWS,
         "counts": counts, "texts": texts, "labels": platforms.LABELS, "gta6": gta6.active(),
-        "publish_hours": platforms.publish_hours(), "gap": platforms.min_gap(), "sched": sched,
+        "publish_hours": platforms.publish_hours(), "gap": worker.post_gap(), "sched": sched,
         "timezone": get_settings().timezone})
 
 
@@ -628,7 +628,7 @@ def accounts(request: Request, notif: str = "", sched: str = ""):
     return templates.TemplateResponse(request, "accounts.html", {
         "accounts": accounts_status(), "yt_redirect": youtube.redirect_uri(), "tt_redirect": tiktok.redirect_uri(),
         "notify_on": notify.configured(), "notif": notif, "publish_hours": platforms.publish_hours(),
-        "gap": platforms.min_gap(), "sched": sched,
+        "gap": worker.post_gap(), "sched": sched,
         "platforms": platforms.status(),
         "timezone": s.timezone})
 
