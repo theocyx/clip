@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     whisper_language: str = "fr"
     whisper_threads: int = 0  # 0 = automatique
 
+    # Vocabulaire donné à Whisper pour bien écrire les noms (GTA, villes, perso…). Vide = aucun.
+    whisper_prompt: str = ("GTA 6, GTA VI, Vice City, Leonida, Lucia, Jason, GTA RP, braquage, poursuite, "
+                           "flics, Twitch, stream, chat, frérot, wesh, mdr.")
+
+    # Chat Twitch enregistré pendant les lives : ses rafales de réactions aident à trouver les moments forts
+    chat_signal: bool = True
+    chat_weight: float = 0.5
+    chat_delay: float = 6  # secondes entre la scène et la réaction du chat
+
     # IA locale (Ollama) pour classer les moments et écrire les titres. Vide = désactivé.
     ollama_url: str = "http://ollama:11434"
     ollama_model: str = "qwen2.5:3b"

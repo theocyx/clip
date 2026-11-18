@@ -18,7 +18,7 @@ from sqlmodel import col, select
 from . import db, discovery, gta6, health, learning, maintenance, notify, platforms
 from .config import get_settings
 from .models import Clip, ClipInfo, Post, Source, Video, now
-from .pipeline import engage, process, sources, sponsor
+from .pipeline import chat, engage, process, sources, sponsor
 from .pipeline import tags as hashtags
 from .publish import creds, tiktok, youtube
 
@@ -112,6 +112,11 @@ def start_recording(v: Video) -> None:
     recorders[v.id] = subprocess.Popen(sources.download_cmd(v.url, out, live=True),
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     rec_started[v.id] = time.monotonic()
+    if get_settings().chat_signal:
+        try:
+            chat.start(v.id, v.url, out)
+        except Exception as e:  # le chat est un bonus : l'enregistrement continue sans
+            log.warning("Chat du live %d non enregistré : %s", v.id, e)
     process.set_status(v.id, "recording")
 
 
@@ -170,6 +175,7 @@ def finish_recordings() -> None:
             continue
         del recorders[vid]
         rec_started.pop(vid, None)
+        chat.stop(vid)
         if stop.is_set():  # arrêt du worker : l'enregistrement reprendra au redémarrage
             continue
         path = finish_recording(vid)
