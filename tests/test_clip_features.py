@@ -161,6 +161,13 @@ def test_find_cam_box_against_image_edge():
     assert b.x > 0
 
 
+def test_find_cam_box_chin_near_bottom():
+    e = _edges_with_cam(761, 62, 959, 174)
+    face = Box(826 / 960, 132 / 540, 32 / 960, 32 / 540)
+    b = facecam.find_cam_box(e, face)
+    assert b and abs((b.y + b.h) * 540 - 173) < 4 and abs(b.y * 540 - 64) < 4
+
+
 def test_fit_aspect_keeps_face():
     box, face = Box(0.02, 0.63, 0.25, 0.33), Box(0.1, 0.68, 0.05, 0.09)
     r = facecam.fit_aspect(box, face, 1920, 1080, 1080 / 640)
