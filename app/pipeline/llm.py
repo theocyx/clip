@@ -20,6 +20,9 @@ Voici la transcription d'un extrait d'un live (sujet du live : « {video_title} 
 \"\"\"{text}\"\"\"
 
 Évalue son potentiel viral (drôle, surprenant, émouvant, instructif, autonome et compréhensible sans contexte).
+Sois exigeant : la plupart des extraits valent 3 à 6. 7 et plus seulement si un inconnu qui ne connaît pas
+le streamer regarderait jusqu'au bout et le partagerait. Bavardage, lecture du chat, attente, menu, chargement :
+3 au maximum. Notre chaîne parle de GTA : un extrait qui ne parle pas du jeu (ou du RP) vaut 4 au maximum.
 Si l'extrait est une publicité, un passage sponsorisé, un placement de produit, un partenariat, un code promo,
 un appel à s'abonner ou à cliquer sur un lien : mets "pub": true et "score": 1.
 Règles pour être vu au maximum sur TikTok et YouTube Shorts :

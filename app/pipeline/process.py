@@ -204,7 +204,8 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
     # réglages appris des clips déjà publiés, avec une petite variation pour continuer à tester
     tun = learning.current()
     target = tun["clip_target"] * random.uniform(1 - s.explore, 1 + s.explore)
-    target = min(max(target, s.clip_min), s.clip_max)
+    max_len = learning.max_len()
+    target = min(max(target, s.clip_min), max_len)
     guidance = learning.guidance(tun) if use_llm else ""
     banned = sponsor.excluded(video.key, segments, video_dir(video_id) / "sponsor.json")
     if banned:
@@ -213,7 +214,7 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
     if talk is not None:
         log.info("Chat Twitch utilisé pour repérer les moments forts (%d réactions)", int(talk.sum()))
     moments = highlights.find_moments(
-        loud, segments, count=n, target=target, min_len=s.clip_min, max_len=s.clip_max,
+        loud, segments, count=n, target=target, min_len=s.clip_min, max_len=max_len,
         pool_factor=3 if use_llm else 2, weights=tun["weights"], exclude=banned,
         chat=talk, chat_weight=s.chat_weight,
     )
@@ -239,7 +240,7 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
             m.title, m.hook = rated[1], rated[2]
         else:
             m.score = heur
-        m.title = engage.fix_title(m.title, video.title, recent, text) or fallback_title(text) or video.title
+        m.title = engage.fix_title(m.title, video.title, recent, text, m.hook) or fallback_title(text) or video.title
         recent.insert(0, m.title)
         question = engage.clean_question(rated[3]) if rated and len(rated) > 3 else ""
         m.features["question"] = question or engage.fallback_question(text, m.title)
@@ -280,7 +281,10 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                                                                      Clip.group == group)).all()}
         if not done_parts and check_duplicate(video, m):
             continue
-        parts = highlights.split_parts(m.start, m.end, segments, s.part_max)
+        if s.allow_parts:
+            parts = highlights.split_parts(m.start, m.end, segments, s.part_max)
+        else:  # un seul Short par moment : la partie 2 n'est presque jamais vue
+            parts = [(m.start, min(m.end, m.start + learning.max_len()))]
         cam = pick_layout(src, m.start, m.end)
         m.features["layout"] = "split" if cam else "classic"
         top = render.split_top(s.split_cam_height) if cam else 0

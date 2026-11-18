@@ -102,13 +102,43 @@ def content_title(text: str, video_title: str = "", recent: list[str] | None = N
     return best.strip()
 
 
-def fix_title(title: str, video_title: str, recent: list[str], text: str) -> str:
-    """Garde le titre de l'IA s'il est original, sinon le reconstruit à partir de ce qui se dit dans le clip."""
-    title = re.sub(r"\s{2,}", " ", (title or "").replace("#", " ")).strip()
+_GTA_NAME = re.compile(r"\b(gta ?vi|gta6|gta ?six)\b", re.I)
+
+
+def tidy_title(title: str) -> str:
+    """Titre propre : sans commandes de chat (!drop), mentions, hashtags ni barres en trop, « GTA 6 » écrit
+    comme on le cherche."""
+    t = (title or "").replace("#", " ")
+    t = re.sub(r"(^|\s)[!@]\w+", " ", t)
+    t = _GTA_NAME.sub("GTA 6", t)
+    t = re.sub(r"\s*\|\s*(\|\s*)*", " | ", t)
+    t = re.sub(r"\s{2,}", " ", t).strip(" |-–—:,")
+    return t
+
+
+def fix_title(title: str, video_title: str, recent: list[str], text: str, hook: str = "") -> str:
+    """Garde le titre de l'IA s'il est original, sinon le reconstruit à partir de ce qui se dit dans le clip.
+
+    Ne renvoie jamais une copie du titre du live (« Live Stream 137 Heures ») : en dernier recours,
+    accroche ou début de la transcription précédés du mot-clé."""
+    title = tidy_title(title)
     if title and not too_close(title, video_title, recent):
         return title
-    alt = content_title(text, video_title, recent)
-    return alt if alt and not too_close(alt, video_title, []) else (title or alt or video_title)
+    key = topic(video_title, text) or "GTA 6"
+    kw = set(words(key))
+    meaningful = lambda t: len([w for w in words(t) if w not in kw]) >= 2  # noqa: E731
+    alt = tidy_title(content_title(text, video_title, recent)) if (text or "").strip() else ""
+    if alt and meaningful(alt) and not too_close(alt, video_title, []):
+        return alt
+    from .hook import strip_emojis
+
+    for cand in (strip_emojis(hook or ""), " ".join((text or "").split()[:9])):
+        cand = tidy_title(cand)
+        if meaningful(cand):
+            cand = cand if key.lower() in cand.lower() else f"{key} : {cand[:1].upper()}{cand[1:]}"
+            if not too_close(cand, video_title, []):
+                return cand[:70]
+    return f"{key} : la scène que personne n'a vu venir"
 
 
 # Questions de repli (sans IA) selon le contenu : elles invitent à donner son avis en commentaire

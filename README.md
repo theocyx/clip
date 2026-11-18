@@ -136,8 +136,11 @@ Toutes les 30 min (10 min pendant le mode GTA 6), Clip cherche les lives frança
 | Variable | Rôle | Défaut |
 |---|---|---|
 | `CLIPS_PER_VIDEO` | clips par heure de vidéo | 3 |
-| `CLIP_TARGET` / `CLIP_MAX` | durée visée / max (s) | 60 / 180 |
-| `PART_MAX` | au-delà, découpage en parties | 90 |
+| `CLIP_TARGET` / `CLIP_MAX` | durée visée / max (s) | 32 / 58 |
+| `ALLOW_PARTS` / `PART_MAX` | découpage en parties au-delà de PART_MAX (déconseillé en Shorts) | false / 90 |
+| `POST_GAP_FLOOR` / `DAILY_CAP` | écart minimum imposé (min) / Shorts max par 24 h, répartis sur la journée | 40 / 12 |
+| `QUIET_HOURS` | aucun envoi à ces heures, même en mode GTA 6 | 1-8 |
+| `PUBLISH_MIN_LLM` / `TOPIC_ONLY` / `QUEUE_MAX_HOURS` | tri de la file : note IA minimum, GTA seulement, fraîcheur max (h) | 6 / true / 36 |
 | `AUTO_PUBLISH` | publier sans validation | true |
 | `MIN_MINUTES_BETWEEN_POSTS` / `MAX_POSTS_PER_DAY` | rythme de publication (0 = pas de limite, réglable aussi dans **Clips**) | 90 / 100 |
 | `HASHTAGS` | hashtags ajoutés | `#shorts #clip #fr` |

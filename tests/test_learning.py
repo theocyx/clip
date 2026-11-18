@@ -95,7 +95,7 @@ def test_process_uses_tuning_and_saves_info(monkeypatch, tmp_path):
     with db.session() as s:
         s.exec(delete(Tuning))
         s.add(Tuning(samples=10, data=json.dumps({"weights": {"spike": 0.6, "density": 0.2, "excite": 0.2},
-                                                  "llm_mix": 0.7, "clip_target": 50, "rules": ["r"]})))
+                                                  "llm_mix": 0.7, "clip_target": 50, "rules": ["r"], "dur_v": 2})))
         v = Video(key="learn:proc", url="u", title="t", status="downloaded", path=str(tmp_path / "source.mp4"))
         s.add(v)
         s.commit()
