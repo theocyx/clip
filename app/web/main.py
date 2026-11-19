@@ -605,8 +605,10 @@ def stats_page(request: Request, refreshing: bool = False):
         for st in s.exec(select(PostStat).where(col(PostStat.post_id).in_([p.id for p in posts]))
                          .order_by(col(PostStat.fetched_at))).all():
             last[st.post_id] = st
-    rows = [{"post": p, "clip": clips.get(p.clip_id), "stat": last.get(p.id), "perf": perf.get(p.clip_id)}
-            for p in posts]
+    revs = learning.reviews()
+    rows = [{"post": p, "clip": clips.get(p.clip_id), "stat": last.get(p.id), "perf": perf.get(p.clip_id),
+             "review": revs.get(p.id)} for p in posts]
+    counts = {k: sum(r["verdict"] == k for r in revs.values()) for k in learning.VERDICTS}
     t = learning.latest()
     return templates.TemplateResponse(request, "stats.html", {
         "rows": rows, "tuning": learning.current(), "tuned_at": t.created_at if t else None,
@@ -614,7 +616,9 @@ def stats_page(request: Request, refreshing: bool = False):
         "learning_on": get_settings().learning, "yt_analytics": youtube.has_analytics(),
         "yt_analytics_error": youtube.analytics_error(),
         "yt_connected": creds.load("youtube") is not None, "tt_stats": get_settings().tiktok_stats,
-        "refreshing": refreshing})
+        "refreshing": refreshing, "counts": counts, "verdicts": learning.VERDICTS,
+        "burst_effect": learning.burst_effect(revs), "bar": curate.score_bar(), "min_llm": curate.min_llm(),
+        "top_pct": get_settings().publish_top_pct})
 
 
 @app.post("/stats/refresh")

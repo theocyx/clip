@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     part_max: float = 90.0  # durée max d'une partie
     allow_parts: bool = False  # « partie 1/2, 2/2 » : la partie 2 n'est presque jamais vue en Shorts
     min_score: float = 0.0
+    # Vidéo source pas bonne = 0 clip : un moment noté sous ce score (sur 10) par l'IA n'est même pas monté
+    clip_min_llm: float = 6
 
     # Rendu vidéo
     video_codec: str = "auto"  # auto (GPU intégré VAAPI s'il est accessible, sinon CPU), libx264 ou h264_vaapi
@@ -83,10 +85,16 @@ class Settings(BaseSettings):
     hashtags: str = "#shorts #clip #fr"
     # Qualité plutôt que quantité : une chaîne qui publie en rafale voit chaque Short beaucoup moins poussé.
     post_gap_floor: int = 40  # écart minimum imposé entre deux envois, même si l'interface dit moins (0 = non)
-    daily_cap: int = 12  # envois max par 24 h et par plateforme, quels que soient les autres réglages (0 = aucun)
+    daily_cap: int = 8  # envois max par 24 h et par plateforme, quels que soient les autres réglages (0 = aucun)
     spread_posts: bool = True  # répartit les envois restants du jour sur les heures qui restent
     quiet_hours: str = "1-8"  # jamais d'envoi à ces heures (heure de Paris), même en mode GTA 6. Vide = aucune
-    publish_min_llm: float = 6  # clips notés sous ce score (sur 10) par l'IA : pas publiés automatiquement
+    publish_min_llm: float = 7  # clips notés sous ce score (sur 10) par l'IA : pas publiés automatiquement
+    # Seuil strict : seuls les clips dans les N % meilleurs scores des QUALITY_DAYS derniers jours partent tout seuls
+    publish_top_pct: float = 20  # 0 = pas de seuil relatif
+    quality_days: float = 7
+    quality_min_ref: int = 12  # clips de référence nécessaires avant d'appliquer le seuil relatif
+    polish: bool = True  # avant l'envoi, l'IA relit le clip avec ce qu'elle a appris : 2e avis, titre et question revus
+    polish_per_run: int = 4  # clips relus par passage du tri (toutes les 10 min)
     topic_only: bool = True  # ne publie automatiquement que les clips sur GTA (la chaîne reste dans sa niche)
     queue_max_hours: float = 36  # clip en attente depuis plus longtemps : retiré de la file (plus d'actualité)
     # Heures de publication (heure de Paris), plages séparées par des virgules. Vide = à toute heure.
@@ -176,10 +184,12 @@ class Settings(BaseSettings):
 
     # Apprentissage : relevé des stats des clips publiés et ajustement automatique du montage
     learning: bool = True
-    stats_interval_hours: float = 6
+    stats_interval_hours: float = 3
     stats_days: int = 30  # suivi des publications pendant N jours
     learn_min_clips: int = 10  # nombre de clips mesurés avant de modifier quoi que ce soit
     learn_age_hours: float = 72  # âge auquel on compare les clips entre eux
+    review_age_hours: float = 24  # chaque Short est analysé (et signalé) une fois cet âge atteint
+    burst_minutes: float = 20  # Short publié moins de N min après le précédent : « rafale », écarté de l'apprentissage
     explore: float = 0.15  # variation aléatoire de la durée visée (±15 %) pour continuer à tester
 
     @property

@@ -24,9 +24,15 @@
   {% if not tt_stats %}<p class="mut">Vues TikTok : ajoute le scope <code>video.list</code> à l'app TikTok, mets <code>TIKTOK_STATS=true</code> dans .env puis reconnecte TikTok.</p>{% endif %}
 </div>
 <div class="card">
+  <h3>Seuil de publication</h3>
+  <p>Ne partent tout seuls que les clips notés au moins <b>{{ min_llm|round|int }}/10</b> par l'IA (avant et après relecture){% if top_pct %} et dans les <b>{{ top_pct|round|int }} % meilleurs</b> de la semaine{% if bar is not none %} (score ≥ {{ '%.2f'|format(bar) }}){% else %} (seuil relatif actif dès qu'il y a assez de clips pour comparer){% endif %}{% endif %}. Les autres restent dans <a href="/clips">Clips</a>, publiables à la main.</p>
+  <p>Bilan de chaque Short après sa publication : {% for k, label in verdicts.items() %}{{ label }} {{ counts[k] }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% if burst_effect %}<p class="mut">{{ burst_effect }}</p>{% endif %}
+</div>
+<div class="card">
   <h3>Clips publiés</h3>
   <table>
-    <tr><th>Clip</th><th>Plateforme</th><th>Vues</th><th>Likes</th><th>Com.</th><th>Regardé</th><th>Perf.</th></tr>
+    <tr><th>Clip</th><th>Plateforme</th><th>Vues</th><th>Likes</th><th>Com.</th><th>Regardé</th><th>Perf.</th><th>Analyse</th></tr>
     {% for r in rows %}
     <tr>
       <td>{{ r.clip.title if r.clip else '?' }}<div class="mut">{{ r.post.published_at|local if r.post.published_at }}</div></td>
@@ -36,8 +42,9 @@
       <td>{{ (r.stat.avg_view_pct|round|int ~ ' %') if r.stat.avg_view_pct is not none else '–' }}</td>
       {% else %}<td colspan="4" class="mut">pas encore relevé</td>{% endif %}
       <td>{{ ((r.perf*100)|round|int ~ '/100') if r.perf is not none else '–' }}</td>
+      <td>{% if r.review %}<b>{{ r.review.label }}</b>{% for x in r.review.reasons %}<div class="mut">{{ x }}</div>{% endfor %}{% else %}–{% endif %}</td>
     </tr>
-    {% else %}<tr><td colspan="7" class="mut">Aucun clip publié pour l'instant.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="8" class="mut">Aucun clip publié pour l'instant.</td></tr>{% endfor %}
   </table>
 </div>
 {% endblock %}

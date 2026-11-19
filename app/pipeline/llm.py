@@ -131,3 +131,41 @@ def analyze(top: list[dict], flop: list[dict]) -> list[str]:
     except Exception as e:
         log.warning("Analyse IA des performances échouée : %s", e)
         return []
+
+
+POLISH = """Tu es le rédacteur en chef d'une chaîne YouTube Shorts / TikTok francophone sur GTA.
+On ne publie que les meilleurs extraits : sois très exigeant. Voici un extrait prêt à partir.
+
+Transcription : \"\"\"{text}\"\"\"
+Titre actuel : « {title} »
+Accroche affichée en haut de la vidéo : « {hook} »
+
+1. Note de 1 à 10 sa chance de faire beaucoup de vues auprès d'inconnus (7+ seulement si on le regarde
+   jusqu'au bout et qu'on a envie de le partager ou de commenter).
+2. Améliore le titre : 40 à 60 caractères, ce qui se passe vraiment, mot-clé en tête, curiosité sans dévoiler
+   la fin, langage parlé, sans hashtag, sans « live » ni « stream ». Garde le titre actuel s'il est déjà excellent.{recent}
+3. Une question courte (8 mots max) sur CE moment, qui donne envie de répondre en commentaire.
+Réponds UNIQUEMENT en JSON : {{"score": <entier 1-10>, "title": "<titre>", "question": "<question>"}}"""
+
+
+def polish(text: str, title: str, hook: str = "", guidance: str = "",
+           recent: list[str] | None = None) -> tuple[float, str, str] | None:
+    """Deuxième lecture avant l'envoi, avec les leçons tirées des stats : (note, titre, question) ou None."""
+    if not text.strip() or provider() != "ollama":
+        return None
+    avoid = ""
+    if recent:
+        avoid = "\n   Titres déjà publiés (interdit de les reprendre) :\n" + "\n".join(f"   - {t}" for t in recent[:12])
+    prompt = POLISH.format(text=text[:4000], title=title, hook=hook, recent=avoid)
+    if guidance:
+        prompt = guidance.strip() + "\n\n" + prompt
+    try:
+        m = re.search(r"\{.*\}", _ask_ollama(prompt) or "", re.S)
+        if not m:
+            return None
+        data = json.loads(m.group(0))
+        return (float(data.get("score", 0)), str(data.get("title", "")).strip().strip('"')[:90],
+                str(data.get("question", "")).strip().strip('"')[:90])
+    except Exception as e:
+        log.warning("Relecture IA échouée : %s", e)
+        return None
