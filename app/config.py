@@ -66,8 +66,11 @@ class Settings(BaseSettings):
     teaser: bool = False
     teaser_seconds: float = 2.5
     # Rythme et engagement
-    cut_silences: bool = True  # coupe les blancs de plus de SILENCE_MIN s (« jump cuts »)
-    silence_min: float = 1.2
+    cut_silences: bool = True  # coupe les longs blancs de plus de SILENCE_MIN s (« jump cuts »)
+    # Sur GTA l'action sans parole est le contenu : seuls les longs blancs sont coupés, et au plus
+    # SILENCE_MAX_PCT % du clip (jamais sous CLIP_MIN)
+    silence_min: float = 3.0
+    silence_max_pct: float = 15
     # Style des TikTok qui marchent : pas d'effet ajouté (zoom, barre), la vidéo se coupe net sans carte de fin
     punch_zoom: bool = False  # zoom rapide sur la réaction au moment fort
     progress_bar: bool = False  # fine barre de progression en haut du clip

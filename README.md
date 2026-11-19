@@ -149,7 +149,7 @@ Toutes les 30 min (10 min pendant le mode GTA 6), Clip cherche les lives frança
 | `HASHTAGS` | hashtags ajoutés | `#shorts #clip #fr` |
 | `HOOK_TITLE` / `HOOK_SECONDS` | accroche en haut de la vidéo / durée (0 = tout le clip) | true / 0 |
 | `TEASER` / `TEASER_SECONDS` | ouverture choc : le passage le plus fort montré en premier, puis le clip depuis le début (gardée ou non selon les stats) | false / 2.5 |
-| `CUT_SILENCES` / `SILENCE_MIN` | coupe les blancs de plus de X s entre deux phrases (rythme plus soutenu) | true / 1.2 |
+| `CUT_SILENCES` / `SILENCE_MIN` / `SILENCE_MAX_PCT` | coupe les longs blancs (plus de X s) entre deux phrases, au plus N % du clip et jamais sous `CLIP_MIN` | true / 3 / 15 |
 | `PUNCH_ZOOM` | zoom rapide sur la réaction (facecam en format split) au moment fort | false |
 | `PROGRESS_BAR` | fine barre de progression en haut du clip | false |
 | `END_QUESTION` / `END_SECONDS` | question qui pousse à commenter, mise en description YouTube | true / 3.5 |
