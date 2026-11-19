@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     part_max: float = 90.0  # durée max d'une partie
     allow_parts: bool = False  # « partie 1/2, 2/2 » : la partie 2 n'est presque jamais vue en Shorts
     min_score: float = 0.0
+    stale_chunk_hours: float = 6  # morceau de live en attente depuis plus de N h : abandonné (0 = jamais)
     # Vidéo source pas bonne = 0 clip : un moment noté sous ce score (sur 10) par l'IA n'est même pas monté
     clip_min_llm: float = 6
 
@@ -129,7 +130,7 @@ class Settings(BaseSettings):
     gta6_hours_before: float = 6  # démarre la veille au soir (lancement à minuit sur certaines plateformes)
     gta6_keywords: str = "gta 6,gta6,gta vi,gtavi,grand theft auto vi,grand theft auto 6"
     gta6_poll_interval: int = 90  # vérification des lives (s) pendant le mode
-    gta6_max_recordings: int = 3  # lives enregistrés en même temps, les autres attendent leur tour
+    gta6_max_recordings: int = 1  # lives enregistrés en même temps, les autres attendent leur tour
     gta6_chunk_minutes: float = 20  # live découpé en morceaux traités pendant l'enregistrement (0 = non)
     gta6_priority: str = ""  # streamers à enregistrer en premier (noms ou chaînes, séparés par des virgules)
     gta6_min_minutes_between_posts: int = 30

@@ -241,17 +241,72 @@ def is_skipped(video_id: int) -> bool:
         return v is None or v.status == "skipped"
 
 
-def next_video() -> Video | None:
+def drop_stale() -> int:
+    """Abandonne les morceaux de live téléchargés qui attendent depuis trop longtemps (plus d'actualité)."""
+    h = get_settings().stale_chunk_hours
+    if h <= 0:
+        return 0
     with db.session() as s:
-        q = select(Video).where(
-            ((Video.status == "new") & (Video.is_live == False)) | (Video.status == "downloaded")  # noqa: E712
-        ).order_by(col(Video.created_at))
+        old = s.exec(select(Video).where(Video.status == "downloaded", Video.is_live == True,  # noqa: E712
+                                         Video.created_at < now() - timedelta(hours=h))).all()
+        for v in old:
+            v.status, v.error = "skipped", f"Morceau en attente depuis plus de {h:g} h : abandonné"
+            s.add(v)
+        s.commit()
+    if old:
+        log.info("%d morceau(x) de live trop ancien(s) abandonné(s)", len(old))
+    return len(old)
+
+
+def next_video() -> Video | None:
+    """Prochaine vidéo téléchargée à traiter : la plus récente d'abord (en mode GTA 6, l'ordre de priorité)."""
+    drop_stale()
+    with db.session() as s:
+        q = select(Video).where(Video.status == "downloaded").order_by(col(Video.created_at).desc())
         if not gta6.active():
             return s.exec(q).first()
         # mode GTA 6 : les lives GTA 6 des plus gros streamers passent devant
         todo = s.exec(q).all()
         srcs = {x.id: x for x in s.exec(select(Source)).all()}
         return min(todo, key=lambda v: gta6.process_priority(v, srcs.get(v.source_id)), default=None)
+
+
+def next_download() -> Video | None:
+    """Prochaine VOD à télécharger (la plus ancienne d'abord)."""
+    with db.session() as s:
+        return s.exec(select(Video).where(Video.status == "new", Video.is_live == False)  # noqa: E712
+                      .order_by(col(Video.created_at))).first()
+
+
+def download_loop():
+    """Téléchargements à part : le montage n'attend plus la fin d'un téléchargement."""
+    while not stop.is_set():
+        if process.stopping.is_set():
+            return
+        v = next_download()
+        if not v:
+            stop.wait(10)
+            continue
+        try:
+            process.set_status(v.id, "downloading")
+            path = sources.download(v.url, process.video_dir(v.id),
+                                    lambda: process.stopping.is_set() or is_skipped(v.id),
+                                    process.Progress(v.id))
+            if is_skipped(v.id):
+                raise sources.Cancelled()
+            process.set_status(v.id, "downloaded", path=str(path))
+        except sources.Cancelled:
+            if process.stopping.is_set() and not is_skipped(v.id):
+                log.info("« %s » : arrêt du worker, le téléchargement reprendra au redémarrage", v.title)
+                return
+            log.info("« %s » ignorée : téléchargement arrêté", v.title)
+            process.delete_video_files(v.id)
+        except Exception as e:
+            if is_skipped(v.id):
+                continue
+            log.exception("Téléchargement de la vidéo %d échoué", v.id)
+            process.set_status(v.id, "failed", error=str(e)[:1000])
+            notify.error(f"Téléchargement échoué : {v.title}", str(e))
 
 
 def process_loop():
@@ -263,14 +318,6 @@ def process_loop():
             stop.wait(10)
             continue
         try:
-            if v.status == "new":
-                process.set_status(v.id, "downloading")
-                path = sources.download(v.url, process.video_dir(v.id),
-                                        lambda: process.stopping.is_set() or is_skipped(v.id),
-                                        process.Progress(v.id))
-                if is_skipped(v.id):
-                    raise sources.Cancelled()
-                process.set_status(v.id, "downloaded", path=str(path))
             log.info("Traitement de « %s »", v.title)
             n = process.process(v.id)
             log.info("« %s » : %d clip(s) créé(s)", v.title, n)
@@ -278,9 +325,6 @@ def process_loop():
             log.info("« %s » : arrêt du worker, le traitement reprendra au redémarrage", v.title)
             return
         except sources.Cancelled:
-            if process.stopping.is_set() and not is_skipped(v.id):
-                log.info("« %s » : arrêt du worker, le téléchargement reprendra au redémarrage", v.title)
-                return
             log.info("« %s » ignorée : traitement arrêté", v.title)
             process.delete_video_files(v.id)
         except Exception as e:
@@ -759,7 +803,7 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
     crashed = health.started("worker")
     threads = [threading.Thread(target=f, daemon=True, name=f.__name__)
-               for f in (poll_loop, record_loop, process_loop, publish_loop, stats_loop, maintenance_loop,
+               for f in (poll_loop, record_loop, download_loop, process_loop, publish_loop, stats_loop, maintenance_loop,
                          discover_loop)]
     for t in threads:
         t.start()
