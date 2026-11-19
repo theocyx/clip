@@ -172,8 +172,8 @@ def live_priority(video, src) -> tuple:
 
 
 def process_priority(video, src) -> tuple:
-    """Ordre de traitement : GTA 6 d'abord, gros streamers d'abord, puis le plus ancien (morceaux dans l'ordre)."""
-    return (not is_gta6(video.title), rank(src), video.id or 0)
+    """Ordre de traitement : GTA 6 d'abord, gros streamers d'abord, puis le plus récent (l'actualité d'abord)."""
+    return (not is_gta6(video.title), rank(src), -(video.id or 0))
 
 
 def base_key(key: str) -> str:

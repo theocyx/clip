@@ -85,3 +85,40 @@ def test_check_source_keyword_filter(monkeypatch):
     with db.session() as s:
         st = {v.key: v.status for v in s.exec(select(Video).where(Video.source_id == src.id))}
     assert st == {"twitch:kw1": "new", "twitch:kw2": "skipped"}
+
+
+def test_next_video_newest_first_and_stale_chunks(monkeypatch):
+    from datetime import timedelta as _td
+
+    from app import worker as w
+    from app.models import Video as V
+
+    monkeypatch.setattr(w.gta6, "active", lambda: False)
+    monkeypatch.setattr(w.get_settings(), "stale_chunk_hours", 6)
+    with w.db.session() as s:
+        for v in s.exec(w.select(V).where(w.col(V.status).in_(["new", "downloaded"]))).all():
+            v.status = "done"
+            s.add(v)
+        old = V(key="stale:old", url="u", title="vieux", is_live=True, status="downloaded",
+                created_at=w.now() - _td(hours=7))
+        mid = V(key="stale:mid", url="u", title="moyen", is_live=True, status="downloaded",
+                created_at=w.now() - _td(hours=2))
+        new = V(key="stale:new", url="u", title="récent", is_live=True, status="downloaded",
+                created_at=w.now() - _td(minutes=5))
+        vod = V(key="stale:vod", url="u", title="vod", is_live=False, status="new")
+        s.add_all([old, mid, new, vod])
+        s.commit()
+        ids = old.id, new.id, vod.id
+    assert w.next_video().id == ids[1]
+    with w.db.session() as s:
+        o = s.get(V, ids[0])
+        assert o.status == "skipped" and "6 h" in o.error
+    assert w.next_download().id == ids[2]
+    monkeypatch.setattr(w.get_settings(), "stale_chunk_hours", 0)
+    assert w.drop_stale() == 0
+    with w.db.session() as s:
+        for k in ("stale:mid", "stale:new", "stale:vod"):
+            v = s.exec(w.select(V).where(V.key == k)).first()
+            v.status = "done"
+            s.add(v)
+        s.commit()
