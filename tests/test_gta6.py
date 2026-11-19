@@ -15,8 +15,10 @@ TZ = ZoneInfo("Europe/Paris")
 def day_one(monkeypatch):
     monkeypatch.setattr(gta6, "mode", lambda: "on")
     gta6.viewers.clear()
+    gta6.games.clear()
     yield
     gta6.viewers.clear()
+    gta6.games.clear()
 
 
 def test_window_and_override(monkeypatch):
@@ -188,3 +190,62 @@ def test_ui_gap_wins_over_gta6_gap(day_one):
     platforms.set_schedule("7-9", 2)
     assert worker.post_gap() == 2  # l'écart choisi dans l'interface n'est plus ignoré le jour J
     platforms.set_schedule(None, None)
+
+
+def test_lives_chosen_by_twitch_category(monkeypatch, day_one):
+    assert not gta6.live_matches("TFT SET 19 PBE | Minuit : GTA VI", "Teamfight Tactics")
+    assert gta6.live_matches("chill", "Grand Theft Auto VI")
+    assert gta6.live_matches("GTA VI day one", "")  # catégorie inconnue : le titre sert de secours
+    monkeypatch.setattr(worker.notify, "send", lambda *a: True)
+    monkeypatch.setattr(worker, "paused_lives", set())
+    with db.session() as s:
+        src = Source(name="Tft", platform="twitch", url="https://www.twitch.tv/tft", initialized=True,
+                     keywords="gta")
+        s.add(src)
+        s.commit()
+    tft = sources.Found("twitch-live:300", "u", "TFT SET 19 PBE | Minuit : GTA VI", True, "Teamfight Tactics")
+    worker.check_source(src, lives=[tft], videos=False)
+    get = lambda k: s.exec(worker.select(Video).where(Video.key == k)).first()  # noqa: E731
+    with db.session() as s:
+        v = get("twitch-live:300")
+        assert v.status == "skipped" and "Teamfight Tactics" in v.error
+    # minuit : il passe sur GTA 6 → le même live est enregistré
+    gta = sources.Found("twitch-live:300", "u", "TFT SET 19 PBE | Minuit : GTA VI", True, "Grand Theft Auto VI")
+    assert worker.check_source(src, lives=[gta], videos=False) == 1
+    with db.session() as s:
+        assert get("twitch-live:300").status == "new"
+
+    # en cours d'enregistrement, il repasse sur un autre jeu : arrêt, ce qui est enregistré part au traitement
+    with db.session() as s:
+        v = get("twitch-live:300")
+        v.status = "recording"
+        s.add(v)
+        s.commit()
+    p = __import__("subprocess").Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    monkeypatch.setattr(worker, "recorders", {v.id: p})
+    monkeypatch.setattr(worker, "rec_started", {v.id: worker.time.monotonic()})
+    out = process.video_dir(v.id)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "source.ts").write_bytes(b"0" * 2_000_000)
+    gta6.games[src.id] = "Teamfight Tactics"
+    assert worker.stop_off_category() == 1
+    worker.finish_recordings()
+    with db.session() as s:
+        assert get("twitch-live:300").status == "downloaded"
+    assert worker.check_source(src, lives=[tft], videos=False) == 0  # toujours sur TFT : rien
+    # retour sur GTA 6 : la suite est enregistrée dans un nouveau morceau
+    gta6.games[src.id] = "Grand Theft Auto VI"
+    assert worker.check_source(src, lives=[gta], videos=False) == 1
+    with db.session() as s:
+        nxt = get("twitch-live:300#p2")
+        assert nxt.status == "new"
+        # un morceau en file alors que le streamer a rechangé de jeu : pas lancé
+        gta6.games[src.id] = "Just Chatting"
+        assert worker.lives_to_start([nxt]) == []
+    with db.session() as s:
+        assert get("twitch-live:300#p2").status == "skipped"
+        for k in ("twitch-live:300", "twitch-live:300#p2"):
+            x = get(k)
+            x.status = "done"
+            s.add(x)
+        s.commit()
