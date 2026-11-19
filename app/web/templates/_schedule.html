@@ -8,5 +8,5 @@
   {% if sched == "ok" %}<span class="ok">Enregistré.</span>{% elif sched == "ko" %}<span class="err">Format invalide : ex. 12-14,18-22:30</span>{% endif %}
   <div class="mut">Format : plages séparées par des virgules, ex. <code>12-14,18-22:30</code> (heure de {{ timezone }}). Vide = à toute heure.{% if gta6 %} En mode GTA 6, les envois partent à toute heure (l'écart enregistré ici reste appliqué).{% endif %}
   {% if gap_floor and gap < gap_floor %}<br>⚠️ Écart relevé à {{ gap_floor }} min minimum (POST_GAP_FLOOR) : publier en rafale fait chuter les vues de chaque Short.{% endif %}
-  {% if daily_cap %}<br>Au plus {{ daily_cap }} Shorts par 24 h (DAILY_CAP), répartis sur la journée, aucun envoi la nuit ({{ quiet_hours or "aucune" }}).{% endif %}</div>
+  {% if daily_cap %}<br>Au plus {{ daily_cap }} Shorts par jour (DAILY_CAP, remis à zéro à minuit), répartis sur la journée, aucun envoi la nuit ({{ quiet_hours or "aucune" }}).{% endif %}</div>
 </form>

@@ -471,7 +471,7 @@ def open_at(t: datetime) -> bool:
 
 
 def post_limit(platform: str = "youtube") -> int:
-    """Envois max sur 24 h glissantes, 0 = pas de limite. Réglage de l'interface, sinon le .env."""
+    """Envois max par jour (depuis minuit), 0 = pas de limite. Réglage de l'interface, sinon le .env."""
     cfg = get_settings()
     if gta6.active() and cfg.gta6_max_posts_per_day > 0:
         return _capped(cfg.gta6_max_posts_per_day)
@@ -548,10 +548,17 @@ def last_published(s, platform: str) -> datetime | None:
                   .order_by(col(Post.published_at).desc())).first()
 
 
+def day_start() -> datetime:
+    """Minuit du jour (heure locale), en UTC sans fuseau comme published_at."""
+    tz = ZoneInfo(get_settings().timezone)
+    local = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    return local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+
+
 def used_today(s, platform: str) -> int:
-    """Envois automatiques des dernières 24 h (c'est ce que compte le quota)."""
+    """Envois automatiques depuis minuit (heure locale) : une rafale de la veille ne bloque plus la journée suivante."""
     return len(s.exec(select(Post.id).where(Post.platform == platform, Post.status == "published",
-                                            Post.published_at >= now() - timedelta(days=1))).all())
+                                            Post.published_at >= day_start())).all())
 
 
 def can_post(s, platform: str) -> bool:

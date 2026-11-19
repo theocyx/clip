@@ -4,7 +4,7 @@
   <div>{{ p.label }} :
     {% if p.on %}<span class="ok">activée</span>{% else %}<span class="err">en pause</span>{% endif %}
     <span class="mut">· {{ p.pending }} clip(s) en attente</span>
-    {% if plan and plan[p.name] %}{% set q = plan[p.name] %}<span class="mut">· {{ q.used }}{% if q.limit %}/{{ q.limit }}{% endif %} envoyés sur 24 h, {{ q.today|length }} prévu(s) d'ici minuit</span>
+    {% if plan and plan[p.name] %}{% set q = plan[p.name] %}<span class="mut">· {{ q.used }}{% if q.limit %}/{{ q.limit }}{% endif %} envoyés aujourd'hui, {{ q.today|length }} prévu(s) d'ici minuit</span>
       {% if q.blocked %}· <span class="err">quota atteint, reprise le {{ q.blocked }}</span>{% endif %}
       {% if q.manual %}· <a href="/clips?vue=manuel" class="err">{{ q.manual|length }} à poster à la main</a>{% endif %}{% endif %}
     <form class="inline" method="post" action="/platforms/{{ p.name }}">
