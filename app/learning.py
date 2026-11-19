@@ -18,7 +18,7 @@ from datetime import timedelta
 import numpy as np
 from sqlmodel import col, select
 
-from . import db
+from . import db, notify
 from .config import get_settings
 from .models import Clip, ClipInfo, Post, PostStat, Source, Tuning, Video, now
 from .pipeline import llm
@@ -37,7 +37,7 @@ DUR_VERSION = 2  # durée apprise avant cette version (clips longs) ignorée : o
 
 def defaults() -> dict:
     return {"weights": dict(DEFAULT_WEIGHTS), "llm_mix": 0.6, "clip_target": get_settings().clip_target,
-            "rules": [], "top": [], "flop": [], "insights": [], "teaser": True, "dur_v": DUR_VERSION}
+            "rules": [], "top": [], "flop": [], "insights": [], "teaser": True, "dur_v": DUR_VERSION, "min_llm": 0}
 
 
 def max_len() -> float:
@@ -149,6 +149,22 @@ def snapshot_at_age(post: Post, stats: list[PostStat], age_h: float) -> PostStat
     return min(ok, key=lambda st: abs((st.fetched_at - post.published_at).total_seconds() / 3600 - age_h))
 
 
+def gaps(posts: list[Post]) -> dict[int, float | None]:
+    """{post_id: minutes depuis la publication précédente sur la même plateforme} (None pour la première)."""
+    out: dict[int, float | None] = {}
+    last: dict[str, object] = {}
+    for p in sorted((p for p in posts if p.published_at), key=lambda p: p.published_at):
+        prev = last.get(p.platform)
+        out[p.id] = (p.published_at - prev).total_seconds() / 60 if prev else None
+        last[p.platform] = p.published_at
+    return out
+
+
+def is_burst(gap: float | None) -> bool:
+    m = get_settings().burst_minutes
+    return m > 0 and gap is not None and gap < m
+
+
 def performances() -> dict[int, float]:
     """{clip_id: performance 0-1}, comparée aux autres clips de la même plateforme."""
     cfg = get_settings()
@@ -158,10 +174,13 @@ def performances() -> dict[int, float]:
     by_post: dict[int, list[PostStat]] = {}
     for st in stats:
         by_post.setdefault(st.post_id, []).append(st)
+    burst = {pid for pid, g in gaps(posts).items() if is_burst(g)}
     per_clip: dict[int, list[float]] = {}
     for platform in FETCHERS:
         rows = []
         for p in posts:
+            if p.id in burst:  # noyé dans une rafale : ses vues ne disent rien du clip lui-même
+                continue
             if p.platform == platform and (snap := snapshot_at_age(p, by_post.get(p.id, []), cfg.learn_age_hours)):
                 rows.append((p.clip_id, snap))
         if len(rows) < 3:
@@ -295,7 +314,24 @@ def learn(force: bool = False) -> dict:
     if len(ranked) >= 2:
         insights.append(f"Meilleure source : {ranked[0][1]} ; la moins bonne : {ranked[-1][1]}.")
 
-    # 7. Exemples + règles écrites par l'IA locale
+    # 7. Note IA minimum pour publier : relevée si les clips mieux notés font nettement mieux
+    out["min_llm"] = prev.get("min_llm", 0)
+    if len(rated) >= cfg.learn_min_clips:
+        for t in (9, 8, 7):
+            hi = [r["perf"] for r in rated if r["llm"] >= t]
+            lo = [r["perf"] for r in rated if r["llm"] < t]
+            if len(hi) >= 3 and len(lo) >= 3 and np.mean(hi) - np.mean(lo) > 0.15:
+                out["min_llm"] = t
+                insights.append(f"Les clips notés {t}/10 ou plus par l'IA font nettement mieux : "
+                                f"seuls ceux-là partent désormais.")
+                break
+
+    # 8. Publications en rafale
+    effect = burst_effect(reviews())
+    if effect:
+        insights.append(effect + " Les rafales sont écartées de l'apprentissage.")
+
+    # 9. Exemples + règles écrites par l'IA locale
     ordered = sorted(rows, key=lambda r: -r["perf"])
     pick = lambda r: {"title": r["title"], "hook": r.get("hook", ""), "text": r.get("text", ""),  # noqa: E731
                       "perf": round(r["perf"], 2)}
@@ -311,6 +347,170 @@ def learn(force: bool = False) -> dict:
     return {"samples": n, "learned": True, "message": f"Réglages mis à jour à partir de {n} clips."}
 
 
+# ---------- Analyse de chaque Short publié ----------
+
+VERDICTS = {"top": "🔥 Top", "ok": "👍 Correct", "flop": "👎 Flop", "early": "⏳ Trop tôt"}
+
+
+def _median(vals: list[float]) -> float | None:
+    vals = [v for v in vals if v is not None]
+    return float(np.median(vals)) if vals else None
+
+
+def reviews() -> dict[int, dict]:
+    """{post_id: analyse} pour chaque publication suivie : verdict par rapport aux autres Shorts de la plateforme
+    (vues, rétention, likes, commentaires) et explications en clair."""
+    cfg = get_settings()
+    since = now() - timedelta(days=cfg.stats_days)
+    with db.session() as s:
+        posts = s.exec(select(Post).where(Post.status == "published", Post.published_at >= since)).all()
+        stats = s.exec(select(PostStat).where(col(PostStat.post_id).in_([p.id for p in posts]))
+                       .order_by(col(PostStat.fetched_at))).all()
+        infos = {i.clip_id: i.data for i in s.exec(select(ClipInfo).where(
+            col(ClipInfo.clip_id).in_([p.clip_id for p in posts]))).all()}
+        clips = {c.id: c for c in s.exec(select(Clip).where(col(Clip.id).in_([p.clip_id for p in posts]))).all()}
+    last: dict[int, PostStat] = {}
+    for st in stats:
+        last[st.post_id] = st
+    gap = gaps(posts)
+    age = lambda p: (now() - p.published_at).total_seconds() / 3600  # noqa: E731
+    mature = [p for p in posts if p.id in last and age(p) >= cfg.review_age_hours]
+    med: dict[str, dict[str, float | None]] = {}
+    for platform in FETCHERS:
+        mine = [last[p.id] for p in mature if p.platform == platform and not is_burst(gap.get(p.id))] or \
+               [last[p.id] for p in mature if p.platform == platform]
+        med[platform] = {
+            "views": _median([st.views for st in mine]),
+            "ret": _median([st.avg_view_pct for st in mine]),
+            "likes": _median([st.likes / st.views for st in mine if st.views]),
+            "comments": _median([st.comments / st.views for st in mine if st.views]),
+        }
+    out = {}
+    for p in posts:
+        st = last.get(p.id)
+        g = gap.get(p.id)
+        try:
+            info = json.loads(infos.get(p.clip_id) or "{}")
+        except ValueError:
+            info = {}
+        clip = clips.get(p.clip_id)
+        reasons = []
+        if is_burst(g):
+            reasons.append(f"Publié {g:.0f} min après le précédent : en rafale, la plateforme le pousse très peu.")
+        if not st or age(p) < cfg.review_age_hours:
+            out[p.id] = {"verdict": "early", "label": VERDICTS["early"], "reasons": reasons, "burst": is_burst(g)}
+            continue
+        m = med[p.platform]
+        mv = m["views"] or 0
+        if st.views >= max(1.5 * mv, 50):
+            verdict = "top"
+        elif st.views < 10 or st.views <= 0.5 * mv:
+            verdict = "flop"
+        else:
+            verdict = "ok"
+        vs = f" (médiane {mv:.0f})" if mv else ""
+        if st.views == 0:
+            reasons.append(f"0 vue après {age(p):.0f} h : pas montré du tout (rafale, doublon, vidéo privée ou bloquée ?).")
+        elif verdict == "top":
+            reasons.append(f"{st.views} vues{vs} : bien au-dessus des autres.")
+        elif verdict == "flop":
+            reasons.append(f"{st.views} vues{vs} : bien en dessous des autres.")
+        if st.avg_view_pct is not None:
+            r, mr = st.avg_view_pct, m["ret"]
+            if r >= 90:
+                reasons.append(f"Regardé à {r:.0f} % : revu en boucle, excellent pour la diffusion.")
+            elif mr and r < 0.8 * mr:
+                reasons.append(f"Rétention {r:.0f} % (médiane {mr:.0f} %) : on décroche tôt, début ou accroche à revoir.")
+            elif mr and r > 1.15 * mr:
+                reasons.append(f"Rétention {r:.0f} % (médiane {mr:.0f} %) : on le regarde jusqu'au bout.")
+        if st.views >= 30:
+            lr, ml = st.likes / st.views, m["likes"]
+            if ml and lr >= 1.5 * ml:
+                reasons.append(f"{lr * 100:.1f} % de likes (médiane {ml * 100:.1f} %) : le moment plaît.")
+            elif ml and lr < 0.5 * ml:
+                reasons.append(f"{lr * 100:.1f} % de likes (médiane {ml * 100:.1f} %) : vu mais peu aimé.")
+            mc = m["comments"]
+            if st.comments >= 2 and (not mc or st.comments / st.views >= 1.5 * mc):
+                reasons.append(f"{st.comments} commentaires : la question fait réagir.")
+            elif st.comments == 0 and st.views >= 200:
+                reasons.append("Aucun commentaire malgré les vues : question de fin à revoir.")
+        if clip:
+            dur = clip.end - clip.start
+            bits = [f"{dur:.0f} s"]
+            if info.get("llm") is not None:
+                bits.append(f"note IA {float(info['llm']):.0f}/10")
+            if info.get("polish_score") is not None:
+                bits.append(f"relecture {float(info['polish_score']):.0f}/10")
+            if info.get("teaser") is not None:
+                bits.append("ouverture choc" if info.get("teaser") else "sans ouverture choc")
+            reasons.append("Clip : " + ", ".join(bits) + ".")
+        out[p.id] = {"verdict": verdict, "label": VERDICTS[verdict], "reasons": reasons, "burst": is_burst(g),
+                     "views": st.views, "title": clip.title if clip else "", "platform": p.platform,
+                     "age_h": round(age(p))}
+    return out
+
+
+def burst_effect(revs: dict[int, dict]) -> str:
+    """Comparaison vues en rafale / vues isolées, quand il y a de quoi comparer."""
+    done = [r for r in revs.values() if r["verdict"] != "early"]
+    b = [r["views"] for r in done if r["burst"]]
+    i = [r["views"] for r in done if not r["burst"]]
+    if len(b) >= 3 and len(i) >= 3:
+        return (f"Shorts publiés en rafale : {np.median(b):.0f} vues en médiane ({len(b)} Shorts), "
+                f"contre {np.median(i):.0f} pour ceux publiés isolément ({len(i)}).")
+    return ""
+
+
+def notify_reviews() -> int:
+    """Un message groupé avec le bilan des Shorts qui viennent d'atteindre l'âge d'analyse (chacun une seule fois).
+    Renvoie le nombre de Shorts signalés."""
+    if not notify.configured():
+        return 0
+    revs = {pid: r for pid, r in reviews().items() if r["verdict"] != "early"}
+    if not revs:
+        return 0
+    with db.session() as s:
+        posts = {p.id: p for p in s.exec(select(Post).where(col(Post.id).in_(list(revs)))).all()}
+        infos = {i.clip_id: i for i in s.exec(select(ClipInfo).where(
+            col(ClipInfo.clip_id).in_([p.clip_id for p in posts.values()]))).all()}
+    new = []
+    for pid, r in revs.items():
+        p = posts.get(pid)
+        if not p:
+            continue
+        ci = infos.get(p.clip_id)
+        try:
+            data = json.loads(ci.data) if ci else {}
+        except ValueError:
+            data = {}
+        if p.platform not in data.get("reviewed", []):
+            new.append((p, r, data))
+    if not new:
+        return 0
+    new.sort(key=lambda x: -x[1]["views"])
+    lines = [f"📊 Bilan de {len(new)} Short(s) publié(s) :"]
+    detailed = len(new) <= 5
+    for p, r, _ in new[:15]:
+        label = "YouTube" if p.platform == "youtube" else "TikTok"
+        lines.append(f"{r['label']} · {label} · {r['views']} vues · « {r['title']} »")
+        if detailed:
+            lines += [f"   • {x}" for x in r["reasons"]]
+    if len(new) > 15:
+        lines.append(f"… et {len(new) - 15} autre(s). Détail dans Stats.")
+    effect = burst_effect(revs)
+    if effect:
+        lines.append(effect)
+    notify.send("\n".join(lines))
+    for p, _, data in new:
+        data["reviewed"] = data.get("reviewed", []) + [p.platform]
+        save_clip_info(p.clip_id, data)
+    return len(new)
+
 def run(force: bool = False) -> dict:
     fetch_stats()
-    return learn(force)
+    res = learn(force)
+    try:
+        notify_reviews()
+    except Exception:
+        log.exception("Bilan des Shorts non envoyé")
+    return res

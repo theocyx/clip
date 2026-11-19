@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from datetime import timedelta
 
@@ -16,7 +17,7 @@ from sqlmodel import col, select
 from . import db
 from .config import get_settings
 from .models import Clip, ClipInfo, Post, Source, Video, now
-from .pipeline import engage
+from .pipeline import engage, llm
 
 log = logging.getLogger(__name__)
 
@@ -24,14 +25,43 @@ FORCED = "Relancé à la main"  # erreur posée par le bouton « Publier » : le
 _PART = re.compile(r"\s*\(partie \d+/\d+\)$", re.I)
 
 
-def reason(clip: Clip, video: Video, info: dict, keywords: str = "") -> str:
+def min_llm() -> float:
+    """Note IA minimum : PUBLISH_MIN_LLM, relevée par l'apprentissage si les stats montrent mieux (0 = pas de minimum)."""
+    from . import learning
+    base = get_settings().publish_min_llm
+    return max(base, float(learning.current().get("min_llm") or 0)) if base > 0 else 0.0
+
+
+def score_bar() -> float | None:
+    """Score à atteindre pour partir tout seul : celui des PUBLISH_TOP_PCT % meilleurs clips des derniers jours.
+    None tant qu'il n'y a pas assez de clips pour comparer (ou seuil coupé)."""
+    cfg = get_settings()
+    if cfg.publish_top_pct <= 0:
+        return None
+    with db.session() as s:
+        scores = s.exec(select(Clip.score).where(Clip.part <= 1, Clip.status != "failed",
+                                                 Clip.created_at >= now() - timedelta(days=cfg.quality_days))).all()
+    if len(scores) < max(1, cfg.quality_min_ref):
+        return None
+    ordered = sorted(scores, reverse=True)
+    return float(ordered[max(0, math.ceil(len(ordered) * min(cfg.publish_top_pct, 100) / 100) - 1)])
+
+
+def reason(clip: Clip, video: Video, info: dict, keywords: str = "", bar: float | None = None,
+           floor: float | None = None) -> str:
     """Pourquoi ce clip ne doit pas partir automatiquement ("" = il peut partir)."""
     cfg = get_settings()
     if not cfg.allow_parts and clip.part_count > 1:
         return "Clip en plusieurs parties (la suite n'est presque jamais vue en Shorts)"
-    llm = info.get("llm")
-    if cfg.publish_min_llm > 0 and llm is not None and float(llm) < cfg.publish_min_llm:
-        return f"Note de l'IA trop basse ({float(llm):.0f}/10, minimum {cfg.publish_min_llm:g})"
+    floor = cfg.publish_min_llm if floor is None else floor
+    note = info.get("llm")
+    if floor > 0 and note is not None and float(note) < floor:
+        return f"Note de l'IA trop basse ({float(note):.0f}/10, minimum {floor:g})"
+    second = info.get("polish_score")
+    if floor > 0 and second is not None and float(second) < floor:
+        return f"Recalé à la relecture par l'IA ({float(second):.0f}/10, minimum {floor:g})"
+    if bar is not None and clip.score < bar:
+        return f"Pas dans les {cfg.publish_top_pct:g} % meilleurs clips de la semaine (seuls ceux-là partent)"
     if cfg.topic_only and not engage.topic(f"{video.title} {keywords}", f"{clip.title} {info.get('text', '')}"):
         return "Hors sujet : pas de GTA (la chaîne reste dans sa niche)"
     if cfg.queue_max_hours > 0 and now() - clip.created_at > timedelta(hours=cfg.queue_max_hours):
@@ -56,10 +86,30 @@ def retitle(clip: Clip, video: Video, info: dict, recent: list[str]) -> str | No
     return None
 
 
+def polish(clip: Clip, info: dict, recent: list[str], guidance: str) -> dict | None:
+    """Relecture par l'IA avant l'envoi : 2e note (avec les leçons des stats), titre et question revus.
+    Renvoie les infos mises à jour, ou None si l'IA n'a pas répondu."""
+    base = _PART.sub("", clip.title or "")
+    if not info.get("text", "").strip():
+        return {**info, "polished": True}  # rien à relire
+    res = llm.polish(info.get("text", ""), base, info.get("hook", ""), guidance, recent)
+    if not res:
+        return None
+    note, title, question = res
+    out = {**info, "polished": True, "polish_score": note, "title_before": base}
+    if title and not engage.too_close(title, "", recent):
+        out["polished_title"] = engage.tidy_title(title)
+    q = engage.clean_question(question) if question else ""
+    if q and not info.get("question"):  # la question déjà incrustée en fin de vidéo reste celle de la légende
+        out["question"] = q
+    return out
+
+
 def run() -> dict:
     """Retire de la file les clips qui feraient baisser la chaîne et corrige les titres recopiés.
-    Renvoie {"cancelled": n, "retitled": n}."""
-    out = {"cancelled": 0, "retitled": 0}
+    Les clips qui passent le seuil sont d'abord relus par l'IA (2e note, meilleur titre).
+    Renvoie {"cancelled": n, "retitled": n, "polished": n}."""
+    out = {"cancelled": 0, "retitled": 0, "polished": 0}
     with db.session() as s:
         rows = s.exec(select(Post, Clip, Video).join(Clip, Clip.id == Post.clip_id)
                       .join(Video, Video.id == Clip.video_id)
@@ -70,6 +120,13 @@ def run() -> dict:
             col(ClipInfo.clip_id).in_([c.id for _, c, _ in rows]))).all()}
         keywords = {x.id: x.keywords or "" for x in s.exec(select(Source)).all()}
     recent = published_titles()
+    cfg = get_settings()
+    bar, floor = score_bar(), min_llm()
+    polish_left = cfg.polish_per_run if cfg.polish else 0
+    guidance = ""
+    if polish_left:
+        from . import learning
+        guidance = learning.guidance(learning.current())
     done_titles: dict[int, str] = {}
     with db.session() as s:
         for post, clip, video in sorted(rows, key=lambda r: -r[1].score):
@@ -77,8 +134,27 @@ def run() -> dict:
                 info = json.loads(infos[clip.id].data) if clip.id in infos else {}
             except ValueError:
                 info = {}
-            if post.error != FORCED:
-                why = reason(clip, video, info, keywords.get(video.source_id, ""))
+            forced = post.error == FORCED
+            kw = keywords.get(video.source_id, "")
+            if not forced and clip.id not in done_titles and reason(clip, video, info, kw, bar, floor) == "" \
+                    and polish_left > 0 and not info.get("polished"):
+                polish_left -= 1
+                better = polish(clip, info, recent, guidance)
+                if better is None:
+                    polish_left = 0  # IA indisponible : on n'insiste pas ce tour-ci
+                else:
+                    info = better
+                    s.merge(ClipInfo(clip_id=clip.id, data=json.dumps(info, ensure_ascii=False)))
+                    c = s.get(Clip, clip.id)
+                    new_title = info.get("polished_title")
+                    if new_title and new_title != _PART.sub("", c.title):
+                        log.info("Titre amélioré : « %s » → « %s »", c.title, new_title)
+                        c.title = (new_title + c.title[len(_PART.sub("", c.title)):])[:100]
+                        s.add(c)
+                    clip = c
+                    out["polished"] += 1
+            if not forced:
+                why = reason(clip, video, info, kw, bar, floor)
                 if why:
                     p = s.get(Post, post.id)
                     p.status, p.error = "cancelled", f"Retiré : {why}"
