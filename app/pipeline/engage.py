@@ -103,16 +103,40 @@ def content_title(text: str, video_title: str = "", recent: list[str] | None = N
 
 
 _GTA_NAME = re.compile(r"\b(gta ?vi|gta6|gta ?six)\b", re.I)
+_JUNK = re.compile(r"[\"“”„`*_~\\<>{}\[\]^]")
+# Vulgarité : un Short au titre grossier est moins recommandé (et donne une mauvaise image de la chaîne)
+_VULGAR = re.compile(
+    r"(?<![\w])(cul|culs|bite|bites|merde|putain|pute|putes|salope|salopes|connard|connasse|encul\w*|nique|niquer|"
+    r"niqu[ée]\w*|fdp|ntm|bordel|chier|chiant\w*|couilles?|branl\w*|porno?|sexe|sexy|nichons?|baiser|baise|"
+    r"teub|zizi|batard|bâtard|pd|tg|fuck\w*|shit|bitch\w*|nudes?)(?![\w])", re.I)
+# Titres trompeurs ou qui ne disent rien du moment (« un streamer », « cette vidéo », promesses fausses)
+_MISLEADING = re.compile(
+    r"\b(un streamer|une vid[ée]o|cette vid[ée]o|la vid[ée]o|gratuit\w*|giveaway|leak\w*|fuite|"
+    r"officiel\w*|annonce officielle|clique|abonne\w*|(?:100|cent) ?% (?:vrai|r[ée]el))\b", re.I)
+
+
+def bad_title(title: str) -> str:
+    """Pourquoi ce titre ne doit pas partir ("" = il est correct)."""
+    if _VULGAR.search(title or ""):
+        return "vulgaire"
+    if _MISLEADING.search(title or ""):
+        return "trompeur ou vide"
+    return ""
 
 
 def tidy_title(title: str) -> str:
-    """Titre propre : sans commandes de chat (!drop), mentions, hashtags ni barres en trop, « GTA 6 » écrit
-    comme on le cherche."""
+    """Titre propre : sans guillemets ni caractères parasites, commandes de chat (!drop), mentions, hashtags ni
+    barres en trop, « GTA 6 » écrit comme on le cherche."""
     t = (title or "").replace("#", " ")
+    t = _JUNK.sub(" ", t)
+    if t.count("«") != t.count("»"):  # guillemet français orphelin
+        t = t.replace("«", " ").replace("»", " ")
     t = re.sub(r"(^|\s)[!@]\w+", " ", t)
     t = _GTA_NAME.sub("GTA 6", t)
     t = re.sub(r"\s*\|\s*(\|\s*)*", " | ", t)
-    t = re.sub(r"\s{2,}", " ", t).strip(" |-–—:,")
+    t = re.sub(r"\s+([,.…])", r"\1", t)
+    t = re.sub(r"\s+:", " :", t)
+    t = re.sub(r"\s{2,}", " ", t).strip(" |-–—:,'’")
     return t
 
 
@@ -122,19 +146,19 @@ def fix_title(title: str, video_title: str, recent: list[str], text: str, hook: 
     Ne renvoie jamais une copie du titre du live (« Live Stream 137 Heures ») : en dernier recours,
     accroche ou début de la transcription précédés du mot-clé."""
     title = tidy_title(title)
-    if title and not too_close(title, video_title, recent):
+    if title and not too_close(title, video_title, recent) and not bad_title(title):
         return title
     key = topic(video_title, text) or "GTA 6"
     kw = set(words(key))
     meaningful = lambda t: len([w for w in words(t) if w not in kw]) >= 2  # noqa: E731
     alt = tidy_title(content_title(text, video_title, recent)) if (text or "").strip() else ""
-    if alt and meaningful(alt) and not too_close(alt, video_title, []):
+    if alt and meaningful(alt) and not too_close(alt, video_title, []) and not bad_title(alt):
         return alt
     from .hook import strip_emojis
 
     for cand in (strip_emojis(hook or ""), " ".join((text or "").split()[:9])):
         cand = tidy_title(cand)
-        if meaningful(cand):
+        if meaningful(cand) and not bad_title(cand):
             cand = cand if key.lower() in cand.lower() else f"{key} : {cand[:1].upper()}{cand[1:]}"
             if not too_close(cand, video_title, []):
                 return cand[:70]

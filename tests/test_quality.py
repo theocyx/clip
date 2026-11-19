@@ -173,3 +173,19 @@ def test_used_today_resets_at_midnight():
             p.status = "cancelled"
             s.add(p)
         s.commit()
+
+
+def test_titles_cleaned_and_vulgar_rejected():
+    bad = "GTA 6\" : Comment un Streamer s'en sort dans une vidéo pleine de cul ?"
+    assert engage.tidy_title(bad) == "GTA 6 : Comment un Streamer s'en sort dans une vidéo pleine de cul ?"
+    assert engage.tidy_title("« GTA 6 : il vole l'avion") == "GTA 6 : il vole l'avion"
+    assert engage.tidy_title("**GTA 6** : `la` fuite") == "GTA 6 : la fuite"
+    assert engage.bad_title(bad) == "vulgaire"
+    assert engage.bad_title("GTA 6 : un streamer découvre la carte") == "trompeur ou vide"
+    assert engage.bad_title("GTA 6 : il braque la banque en hélico") == ""
+    assert engage.bad_title("GTA 6 : il culbute la voiture") == ""
+    t = engage.fix_title(bad, LIVE, [], "Il vole la voiture de police et fonce dans le mur devant tout le monde")
+    assert not engage.bad_title(t) and '"' not in t and "police" in t
+    # même si la transcription est grossière, le titre final reste propre
+    t = engage.fix_title("Putain le cul", LIVE, [], "putain de merde il a niqué la voiture")
+    assert not engage.bad_title(t), t
