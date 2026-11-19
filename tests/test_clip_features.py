@@ -38,7 +38,7 @@ def test_description_has_trend_tags():
     assert "GTARP" in t and "GTA6" in t and "shorts" in t
     assert len(t) <= get_settings().max_hashtags
     assert len({x.lower() for x in t}) == len(t)
-    assert "#21JumpClick" in worker.tiktok_caption(clip, desc, t)
+    assert worker.tiktok_caption(clip, desc, t).endswith("#gta6 #gta\n\nCrédit : Kameto")
 
 
 # ---------- Anti-doublons ----------

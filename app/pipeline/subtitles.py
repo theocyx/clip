@@ -1,4 +1,5 @@
-"""Sous-titres dynamiques (style TikTok) au format ASS : 1 à 3 mots, mot prononcé surligné."""
+"""Sous-titres dynamiques (style TikTok) au format ASS : 1 à 3 mots en majuscules blanches à contour noir,
+vers 70 % de la hauteur (dans le jeu), mot prononcé en jaune."""
 from __future__ import annotations
 
 W, H = 1080, 1920
@@ -12,9 +13,9 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Sub,{font},86,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,7,3,2,60,60,480,1
+Style: Sub,{font},74,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,70,70,540,1
 Style: Part,{font},64,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,8,60,60,{part_v},1
-Style: Hook,{font},78,&H00FFFFFF,&H00FFFFFF,&H00000000,&HB4000000,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,{hook_v},1
+Style: Hook,{font},64,&H00000000,&H00000000,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,{hook_v},1
 Style: Ask,{font},70,&H00000000,&H00000000,&H0000D7FF,&H0000D7FF,-1,0,0,0,100,100,0,0,3,20,0,5,90,90,0,1
 
 [Events]
@@ -117,10 +118,10 @@ def hook_lines(text: str, per_line: int = 18, max_lines: int = 2) -> list[str]:
     return lines
 
 
-def _word_text(word: str, active: bool) -> str:
+def _word_text(word: str, active: bool, keywords: bool = True) -> str:
     if active:
         return HIGHLIGHT + _escape(word) + RESET
-    if is_keyword(word):
+    if keywords and is_keyword(word):
         return KEYWORD + _escape(word) + KEYWORD_RESET
     return _escape(word)
 
@@ -128,12 +129,13 @@ def _word_text(word: str, active: bool) -> str:
 def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: str = "",
               hook: str = "", hook_seconds: float = 0, hook_in_ass: bool = True, top: int = 0,
               pieces: list[tuple[float, float]] | None = None, end_text: str = "",
-              end_seconds: float = 3.5) -> str:
+              end_seconds: float = 3.5, keywords: bool = True) -> str:
     """hook_in_ass=False : l'accroche est rendue à part en image (emojis couleur), on garde juste la place.
 
     top : décalage vers le bas de l'accroche et de « Partie x/y » (format split : sous la facecam).
     pieces : morceaux de la source montés bout à bout (extrait d'ouverture + clip) ; par défaut [(a, b)].
-    end_text : question / appel à commenter affiché au milieu de l'écran pendant les `end_seconds` dernières s."""
+    end_text : question / appel à commenter affiché au milieu de l'écran pendant les `end_seconds` dernières s.
+    keywords : mots forts en vert (sinon seul le mot prononcé change de couleur)."""
     pieces = pieces or [(a, b)]
     dur = sum(y - x for x, y in pieces)
     hl = hook_lines(hook) if hook else []
@@ -158,6 +160,6 @@ def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: s
             end = g[i + 1]["start"] if i + 1 < len(g) else g_end
             if end <= start:
                 end = start + 0.05
-            text = " ".join(_word_text(x["word"], j == i) for j, x in enumerate(g))
+            text = " ".join(_word_text(x["word"], j == i, keywords) for j, x in enumerate(g))
             lines.append(f"Dialogue: 0,{ts(start)},{ts(min(end, dur))},Sub,,0,0,0,,{text}")
     return "\n".join(lines) + "\n"

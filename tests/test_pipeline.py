@@ -85,7 +85,8 @@ def test_hook_title_at_top():
 
 def test_hook_emojis(tmp_path):
     from app.pipeline import hook
-    assert hook.add_emojis("Il a osé 😱🔥💀") == "Il a osé 😱🔥"
+    assert hook.add_emojis("Il a osé 😱🔥💀") == "Il a osé 😱"
+    assert hook.add_emojis("Il a osé 😱🔥💀", max_emojis=2) == "Il a osé 😱🔥"
     assert hook.add_emojis("Il perd tout son argent") == "Il perd tout son argent 💰"
     assert hook.add_emojis("Regardez bien", "un moment calme") == "Regardez bien 👀"
     assert hook.strip_emojis("Trop fort 🔥 non ❤️") == "Trop fort non"
@@ -100,4 +101,4 @@ def test_render_overlay_cmd(tmp_path):
     cmd = render.build_cmd(tmp_path / "s.mp4", 0, 10, "c.ass", tmp_path / "o.mp4", "libx264", "/x/h.png", 4)
     assert cmd[cmd.index("-filter_complex") - 1] == "/x/h.png"
     vf = cmd[cmd.index("-filter_complex") + 1]
-    assert "[1:v]overlay=0:0" in vf and "lte(t,4.00)" in vf and vf.index("overlay=0:0") < vf.index("ass=")
+    assert "[1:v]overlay=0:632-h" in vf and "lte(t,4.00)" in vf and vf.index("overlay=0:") < vf.index("ass=")

@@ -24,6 +24,14 @@ def split_top(cam_h: int) -> int:
     return cam_h - 150
 
 
+def hook_y(cam, cam_h: int) -> str:
+    """Position (expression ffmpeg, h = hauteur de l'image) de l'accroche : à cheval sur la jonction
+    facecam / jeu en format split, juste au-dessus de la vidéo centrée en format classique."""
+    if cam is not None:
+        return f"{cam_h}-h/2"
+    return f"{(1920 - 608) // 2 - 24}-h"
+
+
 def _enable(windows) -> str:
     return "+".join(f"between(t,{a:.2f},{b:.2f})" for a, b in windows)
 
@@ -38,6 +46,8 @@ def _punch(label_in: str, label_out: str, w: int, h: int, windows, zoom: float =
 def layout_filter(cam=None, cam_h: int = 0, src: str = "[0:v]", punch=None) -> str:
     """punch : fenêtres (début, fin) en temps du clip final où l'on zoome sur la réaction
     (sur la facecam en format split, sur toute l'image sinon)."""
+    if cam is not None:
+        cam = _inset(cam)
     if cam is None:
         f = (
             f"{src}split=2[a][b];"
@@ -70,6 +80,19 @@ def layout_filter(cam=None, cam_h: int = 0, src: str = "[0:v]", punch=None) -> s
         f"[b]scale={W}:{game_h}:force_original_aspect_ratio=increase,crop={W}:{game_h}:{gx}:0,setsar=1[bot];"
         "[top][bot]vstack=inputs=2,fps=30"
     )
+
+
+def _inset(cam, margin: float = 0.006):
+    """Facecam rognée de quelques pixels : le cadre / la bordure de couleur de l'overlay du streamer disparaît
+    et la caméra remplit toute la largeur, sans bord."""
+    from dataclasses import replace
+
+    mx = min(margin, cam.w * 0.04)
+    my = min(margin * 16 / 9, cam.h * 0.04)
+    try:
+        return replace(cam, x=cam.x + mx, y=cam.y + my, w=max(0.01, cam.w - 2 * mx), h=max(0.01, cam.h - 2 * my))
+    except TypeError:  # pas une dataclass (tests) : zone gardée telle quelle
+        return cam
 
 
 BAR_H = 10
@@ -151,8 +174,7 @@ def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, cod
         vf += f",drawbox=c=white@0.7:t=fill:enable='between(t,{t0:.2f},{t0 + 0.12:.2f})'"
     if overlay:
         enable = f":enable='lte(t,{overlay_seconds:.2f})'" if overlay_seconds > 0 else ""
-        y = split_top(s.split_cam_height) if cam is not None else 0
-        vf += f"[base];[base][{n}:v]overlay=0:{y}:format=auto{enable}"
+        vf += f"[base];[base][{n}:v]overlay=0:{hook_y(cam, s.split_cam_height)}:format=auto{enable}"
     if bar and total > 0:
         vf += (f"[pb];color=c=0x00E5FF:s={W}x{BAR_H}:r=30[bar];"
                f"[pb][bar]overlay=x='-W+W*t/{total:.2f}':y=0:shortest=1")

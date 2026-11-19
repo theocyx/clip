@@ -136,7 +136,7 @@ Toutes les 30 min (10 min pendant le mode GTA 6), Clip cherche les lives frança
 | Variable | Rôle | Défaut |
 |---|---|---|
 | `CLIPS_PER_VIDEO` | clips par heure de vidéo | 3 |
-| `CLIP_TARGET` / `CLIP_MAX` | durée visée / max (s) | 32 / 58 |
+| `CLIP_TARGET` / `CLIP_MAX` | durée visée / max (s) | 62 / 75 |
 | `ALLOW_PARTS` / `PART_MAX` | découpage en parties au-delà de PART_MAX (déconseillé en Shorts) | false / 90 |
 | `POST_GAP_FLOOR` / `DAILY_CAP` | écart minimum imposé (min) / Shorts max par 24 h, répartis sur la journée | 40 / 8 |
 | `QUIET_HOURS` | aucun envoi à ces heures, même en mode GTA 6 | 1-8 |
@@ -148,12 +148,14 @@ Toutes les 30 min (10 min pendant le mode GTA 6), Clip cherche les lives frança
 | `MIN_MINUTES_BETWEEN_POSTS` / `MAX_POSTS_PER_DAY` | rythme de publication (0 = pas de limite, réglable aussi dans **Clips**) | 90 / 100 |
 | `HASHTAGS` | hashtags ajoutés | `#shorts #clip #fr` |
 | `HOOK_TITLE` / `HOOK_SECONDS` | accroche en haut de la vidéo / durée (0 = tout le clip) | true / 0 |
-| `TEASER` / `TEASER_SECONDS` | ouverture choc : le passage le plus fort montré en premier, puis le clip depuis le début (gardée ou non selon les stats) | true / 2.5 |
+| `TEASER` / `TEASER_SECONDS` | ouverture choc : le passage le plus fort montré en premier, puis le clip depuis le début (gardée ou non selon les stats) | false / 2.5 |
 | `CUT_SILENCES` / `SILENCE_MIN` | coupe les blancs de plus de X s entre deux phrases (rythme plus soutenu) | true / 1.2 |
-| `PUNCH_ZOOM` | zoom rapide sur la réaction (facecam en format split) au moment fort | true |
-| `PROGRESS_BAR` | fine barre de progression en haut du clip | true |
-| `END_QUESTION` / `END_SECONDS` | question qui pousse à commenter, affichée à la fin et mise en description/légende ; « la suite en partie 2 » sur les parties | true / 3.5 |
-| `TITLE_HASHTAGS` / `TIKTOK_MAX_HASHTAGS` | hashtags ciblés en fin de titre YouTube / nombre max de hashtags sur TikTok | 2 / 5 |
+| `PUNCH_ZOOM` | zoom rapide sur la réaction (facecam en format split) au moment fort | false |
+| `PROGRESS_BAR` | fine barre de progression en haut du clip | false |
+| `END_QUESTION` / `END_SECONDS` | question qui pousse à commenter, mise en description YouTube | true / 3.5 |
+| `END_CARD` | question affichée à l'écran à la fin (« la suite en partie 2 » sur les parties) | false |
+| `SUB_KEYWORDS` | mots forts des sous-titres en vert (sinon blanc, mot prononcé en jaune) | false |
+| `TITLE_HASHTAGS` / `TIKTOK_MAX_HASHTAGS` | hashtags ciblés en fin de titre YouTube / nombre max de hashtags sur TikTok | 2 / 2 |
 | `KEEP_SOURCE_VIDEOS` | garder les vidéos complètes | false |
 
 ## Droits

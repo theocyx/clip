@@ -462,21 +462,38 @@ def youtube_title(title: str, tags: list[str]) -> str:
     return out
 
 
+GENERIC_TAGS = {"shorts", "short", "clip", "clips", "fr", "clipsfr", "viral", "fyp", "pourtoi"}
+TIKTOK_FIRST = ["gta6", "gta", "gtarp"]
+
+
+def tiktok_tags(tags: list[str], limit: int) -> list[str]:
+    """Hashtags TikTok en minuscules, #gta6 #gta d'abord (comme les TikTok GTA 6 de la chaîne qui marchent),
+    sans les tags génériques (#shorts, #clip, #fr)."""
+    seen, picked = set(), []
+    for t in tags:
+        low = t.lower().lstrip("#")
+        if low and low not in seen and low not in GENERIC_TAGS:
+            seen.add(low)
+            picked.append(low)
+    picked.sort(key=lambda t: TIKTOK_FIRST.index(t) if t in TIKTOK_FIRST else len(TIKTOK_FIRST))
+    return picked[:limit] if limit > 0 else picked
+
+
 def tiktok_caption(clip: Clip, desc: str, tags: list[str]) -> str:
-    """Légende TikTok : titre + streamer + phrase de mots-clés (la recherche TikTok lit la légende)
-    + quelques hashtags ciblés (TikTok conseille 3 à 5)."""
+    """Légende TikTok courte et orale, comme les TikTok GTA 6 de la chaîne qui font le plus de vues :
+    titre + 1 emoji + #gta6 #gta, puis le crédit du streamer sur une ligne courte."""
+    from .pipeline import hook as hooks
+
     s = get_settings()
     who = next((ln.split(": ", 1)[1] for ln in desc.splitlines() if ln.startswith("🎮 Streamer : ")), "")
-    src = next((ln.split(": ", 1)[1] for ln in desc.splitlines() if ln.startswith("Extrait de : ")), "")
-    picked = [t for t in tags if t.lower() != "shorts"]
-    if s.tiktok_max_hashtags > 0:
-        picked = picked[:s.tiktok_max_hashtags]
-    cap = f"{clip.title}" + (f" 🎮 {who}" if who else "") + " " + " ".join("#" + t for t in picked)
-    ask = clip_question(clip)
-    if ask:
-        cap += f"\n\n{ask}"
-    if src and src.lower() not in clip.title.lower():
-        cap += f"\n\nExtrait de « {src} »" + (f" de {who}" if who else "")
+    title = clip.title.strip()
+    if not hooks.emojis_in(title):
+        emo = hooks.emojis_in(clip_data(clip).get("hook", ""))[:1]
+        title = f"{title} {emo[0]}" if emo else hooks.add_emojis(title)
+    picked = tiktok_tags(tags, s.tiktok_max_hashtags)
+    cap = title + "".join(f" #{t}" for t in picked)
+    if who:
+        cap += f"\n\nCrédit : {who}"
     return cap
 
 

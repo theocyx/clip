@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 SIGNALS = {"spike": "les pics de son (cris, rires)", "density": "le débit de parole", "excite": "les mots d'excitation"}
 DURATION_BUCKETS = [(0, 25, 22), (25, 35, 30), (35, 45, 40), (45, 60, 52), (60, 90, 70),
                     (90, 1e9, 100)]  # (de, à, durée visée)
-DUR_VERSION = 2  # durée apprise avant cette version (clips longs) ignorée : on repart de CLIP_TARGET
+DUR_VERSION = 3  # durée apprise avant cette version (clips courts de 32 s) ignorée : on repart de CLIP_TARGET
 
 
 # ---------- Réglages courants ----------

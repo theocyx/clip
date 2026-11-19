@@ -66,6 +66,7 @@ def test_teaser_cmd_overlay_index(tmp_path):
 
 def test_use_teaser_follows_learning(monkeypatch):
     monkeypatch.setattr(get_settings(), "explore", 0.0)
+    monkeypatch.setattr(get_settings(), "teaser", True)
     assert process.use_teaser({"teaser": True})
     assert not process.use_teaser({"teaser": False})
     monkeypatch.setattr(get_settings(), "teaser", False)
@@ -82,9 +83,46 @@ def test_tiktok_caption_limits_tags():
     clip = Clip(video_id=1, group="g", start=0, end=60, title="Il rate tout")
     desc = "Il rate tout\n\n🎮 Streamer : Bob\n👉 Sa chaîne : u\n\nExtrait de : GTA RP soirée\nurl\n\n#a"
     cap = worker.tiktok_caption(clip, desc, ["Bob", "GTA6", "GTARP", "RP", "GTA", "clip", "fr", "shorts"])
-    assert cap.startswith("Il rate tout 🎮 Bob #Bob #GTA6 #GTARP #RP #GTA\n")
-    assert "#clip" not in cap and "#shorts" not in cap and "Extrait de « GTA RP soirée » de Bob" in cap
+    assert cap == "Il rate tout 👀 #gta6 #gta\n\nCrédit : Bob"
+    assert worker.tiktok_tags(["Bob", "GTARP", "GTA6", "clip", "shorts"], 3) == ["gta6", "gtarp", "bob"]
 
 
 def test_learning_default_keeps_teaser():
     assert learning.defaults()["teaser"] is True
+
+
+# ---------- Style des TikTok GTA 6 qui marchent ----------
+
+def test_hook_white_box_png(tmp_path):
+    from PIL import Image
+
+    from app.pipeline import hook
+    n = hook.render_png("Il refait sa maison pour séduire Lucia dans GTA 6 😭", "Montserrat", tmp_path / "h.png")
+    assert n in (2, 3)
+    img = Image.open(tmp_path / "h.png").convert("RGBA")
+    assert img.width == 1080 and img.height < 400  # image serrée : posée à cheval sur la jonction facecam / jeu
+    assert img.getpixel((540, 8))[:3] == (255, 255, 255)  # boîte blanche
+
+
+def test_hook_position_and_plain_subtitles():
+    from types import SimpleNamespace
+    assert render.hook_y(SimpleNamespace(x=0, y=0, w=0.2, h=0.2), 614) == "614-h/2"
+    segs = [{"start": 0, "end": 2, "text": "incroyable", "words": [
+        {"start": 0, "end": 1, "word": "incroyable"}, {"start": 1, "end": 2, "word": "gta"}]}]
+    ass = subtitles.build_ass(segs, 0, 2, "Montserrat", keywords=False)
+    assert subtitles.KEYWORD not in ass and r"\fscx115" in ass
+
+
+def test_style_defaults():
+    from app.config import Settings
+    d = Settings(_env_file=None)
+    assert not d.teaser and not d.punch_zoom and not d.progress_bar and not d.end_card
+    assert 60 <= d.clip_target <= 68 and d.tiktok_max_hashtags == 2
+
+
+def test_rate_prompt_names_streamer(monkeypatch):
+    from app.pipeline import llm
+    seen = {}
+    monkeypatch.setattr(llm, "_ask_ollama", lambda p: seen.setdefault("p", p) and '{"score": 8, "title": "t", "hook": "h"}')
+    llm.rate("bla", "GTA 6", "ollama", streamer="Squeezie")
+    assert "streamer : Squeezie" in seen["p"] and "7 à 10 mots" in seen["p"]
