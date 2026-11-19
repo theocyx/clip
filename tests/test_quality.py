@@ -123,7 +123,7 @@ def test_old_long_duration_forgotten_and_single_part(monkeypatch):
         s.commit()
     assert learning.current()["clip_target"] == worker.get_settings().clip_target
     monkeypatch.setattr(worker.get_settings(), "allow_parts", False)
-    assert learning.max_len() <= 58
+    assert learning.max_len() <= 75
     with db.session() as s:
         for t in s.exec(worker.select(Tuning)).all():
             s.delete(t)

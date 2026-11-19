@@ -40,7 +40,7 @@ def test_streamer_credit():
     assert "Streamer : Le Bouseuh" in desc and "https://www.twitch.tv/lebouseuh" in desc
     assert tags[0] == "LeBouseuh" and "#LeBouseuh" in desc
     cap = worker.tiktok_caption(clip, desc, tags)
-    assert cap.startswith("Il rate tout 🎮 Le Bouseuh #LeBouseuh")
+    assert cap.startswith("Il rate tout ") and cap.endswith("\n\nCrédit : Le Bouseuh")
 
 
 def test_notify(monkeypatch):

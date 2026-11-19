@@ -15,10 +15,15 @@ from .subtitles import W, hook_lines
 
 log = logging.getLogger(__name__)
 
-TOP = 170  # même position que l'ancien style ASS « Hook »
-LINE_H = 115
-PAD_X = 18
-TEXT_SIZE = 64
+TOP = 170  # position de l'accroche en image dans l'ancien style (gardée pour l'accroche ASS de secours)
+LINE_H = 76  # hauteur d'une ligne dans la boîte blanche
+PAD_X = 30
+PAD_Y = 22
+RADIUS = 26  # coins arrondis
+TEXT_SIZE = 58  # réduit automatiquement si une ligne ne tient pas dans la largeur
+MIN_TEXT_SIZE = 40
+PER_LINE = 22  # caractères par ligne : 7 à 10 mots sur 2 ou 3 lignes
+MAX_LINES = 3
 EMOJI_FONT_SIZE = 109  # Noto Color Emoji n'existe qu'en 109 px, on redimensionne ensuite
 
 # Plages Unicode des emojis (suffisant pour ceux qu'écrit le LLM)
@@ -56,7 +61,7 @@ def strip_emojis(text: str) -> str:
     return re.sub(r"\s{2,}", " ", _JOINERS.sub("", EMOJI_RE.sub("", text or ""))).strip()
 
 
-def add_emojis(hook: str, context: str = "", max_emojis: int = 2) -> str:
+def add_emojis(hook: str, context: str = "", max_emojis: int = 1) -> str:
     """Garde au plus `max_emojis` emojis (ceux de l'IA), sinon en choisit selon le contenu."""
     found = emojis_in(hook)[:max_emojis]
     text = strip_emojis(hook)
@@ -83,11 +88,23 @@ def _font_file(query: str) -> str | None:
         return None
 
 
-def _fonts(font_name: str):
+def _text_font(font_name: str, size: int):
     from PIL import ImageFont
 
-    text_path = _font_file(f"{font_name}:bold") or _font_file("DejaVu Sans:bold")
-    text = ImageFont.truetype(text_path, TEXT_SIZE) if text_path else ImageFont.load_default(TEXT_SIZE)
+    # graisse la plus forte disponible (Montserrat Black), sinon gras
+    path = None
+    for q in (f"{font_name}:black", f"{font_name}:extrabold", f"{font_name}:bold", "DejaVu Sans:bold"):
+        path = _font_file(q)
+        if path and (q.startswith("DejaVu") or font_name.split()[0].lower() in Path(path).name.lower()):
+            break
+        path = None
+    return ImageFont.truetype(path, size) if path else ImageFont.load_default(size)
+
+
+def _fonts(font_name: str, size: int = TEXT_SIZE):
+    from PIL import ImageFont
+
+    text = _text_font(font_name, size)
     emoji_path = _font_file("Noto Color Emoji")
     emoji = None
     if emoji_path:
@@ -124,7 +141,8 @@ def _emoji_img(emoji_font, char: str, size: int):
 
 
 def render_png(hook: str, font_name: str, out: Path) -> int:
-    """Dessine l'accroche (MAJUSCULES, bandeaux noirs) en PNG transparent 1080 px de large.
+    """Dessine l'accroche en PNG transparent 1080 px de large : boîte blanche aux coins arrondis, texte noir
+    en MAJUSCULES très grasses, emoji en couleur à la fin. L'image est posée à la jonction facecam / jeu.
 
     Renvoie le nombre de lignes (0 si rien à afficher)."""
     from PIL import Image, ImageDraw
@@ -132,32 +150,49 @@ def render_png(hook: str, font_name: str, out: Path) -> int:
     text_font, emoji_font = _fonts(font_name)
     if emoji_font is None:
         hook = strip_emojis(hook)
-    lines = hook_lines(hook)
+    lines = hook_lines(hook, per_line=PER_LINE, max_lines=MAX_LINES)
     if not lines:
         return 0
-    asc, desc = text_font.getmetrics()
-    emoji_size = round(asc * 1.05)
-    canvas = Image.new("RGBA", (W, TOP + LINE_H * len(lines) + 40), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(canvas)
-    for i, line in enumerate(lines):
-        pieces = []  # (largeur, objet)
-        for is_emoji, part in _runs(line.upper()):
-            if is_emoji:
-                img = _emoji_img(emoji_font, _JOINERS.sub("", part)[:1] or part, emoji_size)
-                if img:
-                    pieces.append((img.width + 6, img))
-            elif part:
-                pieces.append((round(draw.textlength(part, font=text_font)), part))
+    draw = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+
+    def layout(font):
+        asc, desc = font.getmetrics()
+        emoji_size = round(asc * 1.05)
+        rows = []
+        for line in lines:
+            pieces = []  # (largeur, objet)
+            for is_emoji, part in _runs(line.upper()):
+                if is_emoji:
+                    img = _emoji_img(emoji_font, _JOINERS.sub("", part)[:1] or part, emoji_size)
+                    if img:
+                        pieces.append((img.width + 8, img))
+                elif part:
+                    pieces.append((round(draw.textlength(part, font=font)), part))
+            rows.append(pieces)
+        return rows, asc, desc
+
+    size = TEXT_SIZE
+    rows, asc, desc = layout(text_font)
+    while size > MIN_TEXT_SIZE and max(sum(w for w, _ in r) for r in rows) > W - 2 * PAD_X - 60:
+        size -= 3
+        text_font = _text_font(font_name, size)
+        rows, asc, desc = layout(text_font)
+    line_h = round(LINE_H * size / TEXT_SIZE)
+    box_w = min(W - 20, max(sum(w for w, _ in r) for r in rows) + 2 * PAD_X)
+    box_h = line_h * len(rows) + 2 * PAD_Y
+    canvas = Image.new("RGBA", (W, box_h + 8), (0, 0, 0, 0))
+    cd = ImageDraw.Draw(canvas)
+    bx = (W - box_w) // 2
+    cd.rounded_rectangle((bx, 4, bx + box_w, 4 + box_h), radius=RADIUS, fill=(255, 255, 255, 255))
+    for i, pieces in enumerate(rows):
         width = sum(w for w, _ in pieces)
         x = (W - width) // 2
-        y = TOP + i * LINE_H
-        y0 = y - (LINE_H - asc - desc) // 2  # bandeaux collés d'une ligne à l'autre
-        draw.rectangle((x - PAD_X, y0, x + width + PAD_X, y0 + LINE_H - 1), fill=(0, 0, 0, 255))
+        y = 4 + PAD_Y + i * line_h + (line_h - asc - desc) // 2
         for w, obj in pieces:
             if isinstance(obj, str):
-                draw.text((x, y), obj, font=text_font, fill=(255, 255, 255, 255))
+                cd.text((x, y), obj, font=text_font, fill=(0, 0, 0, 255))
             else:
-                canvas.alpha_composite(obj, (x + 3, y + (asc - obj.height) // 2 + desc // 2))
+                canvas.alpha_composite(obj, (x + 4, y + (asc - obj.height) // 2 + desc // 2))
             x += w
     out.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out)

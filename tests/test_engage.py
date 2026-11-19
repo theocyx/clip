@@ -70,7 +70,7 @@ def test_description_and_caption_have_question():
     learning.save_clip_info(c.id, {"question": "Il aurait dû fuir ?"})
     desc, tags = worker.description(c, v)
     assert "💬 Il aurait dû fuir ? Réponds en commentaire 👇" in desc
-    assert "Il aurait dû fuir ?" in worker.tiktok_caption(c, desc, tags)
+    assert "fuir" not in worker.tiktok_caption(c, desc, tags)  # légende TikTok courte, sans question
     c.part, c.part_count = 1, 2  # partie 1/2 : pas de question, la suite arrive
     assert "fuir" not in worker.description(c, v)[0]
 

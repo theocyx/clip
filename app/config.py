@@ -41,10 +41,10 @@ class Settings(BaseSettings):
     # Clips
     clips_per_video: int = 3  # nombre max de clips par vidéo d'une heure (proportionnel à la durée)
     clips_max_per_video: int = 10
-    # Shorts courts : sous 35 s la rétention (et donc la diffusion) est bien meilleure
-    clip_target: float = 32.0  # durée visée (s)
-    clip_min: float = 18.0
-    clip_max: float = 58.0  # au-delà, coupé en parties si ALLOW_PARTS, sinon le clip est limité à cette durée
+    # Durée calquée sur les TikTok GTA 6 de la chaîne qui marchent le mieux (60 à 68 s, de 40 à 84 s)
+    clip_target: float = 62.0  # durée visée (s)
+    clip_min: float = 35.0
+    clip_max: float = 75.0  # au-delà, coupé en parties si ALLOW_PARTS, sinon le clip est limité à cette durée
     part_max: float = 90.0  # durée max d'une partie
     allow_parts: bool = False  # « partie 1/2, 2/2 » : la partie 2 n'est presque jamais vue en Shorts
     min_score: float = 0.0
@@ -59,23 +59,27 @@ class Settings(BaseSettings):
     font_name: str = "Montserrat"
     hook_title: bool = True  # accroche courte en haut de la vidéo
     hook_seconds: float = 0  # durée d'affichage de l'accroche (0 = tout le clip)
-    hook_emojis: bool = True  # emojis en lien avec le contenu dans l'accroche
+    hook_emojis: bool = True  # emoji en lien avec le contenu à la fin de l'accroche
     keep_source_videos: bool = False
     # Ouverture choc : les ~2,5 s les plus fortes du clip montrées en premier, puis le clip depuis le début
-    teaser: bool = True
+    # Désactivée par défaut : les TikTok qui marchent sont un seul plan continu, sans flash ni retour en arrière
+    teaser: bool = False
     teaser_seconds: float = 2.5
     # Rythme et engagement
     cut_silences: bool = True  # coupe les blancs de plus de SILENCE_MIN s (« jump cuts »)
     silence_min: float = 1.2
-    punch_zoom: bool = True  # zoom rapide sur la réaction au moment fort
-    progress_bar: bool = True  # fine barre de progression en haut du clip
-    end_question: bool = True  # question / appel à commenter affiché à la fin et mis en légende
+    # Style des TikTok qui marchent : pas d'effet ajouté (zoom, barre), la vidéo se coupe net sans carte de fin
+    punch_zoom: bool = False  # zoom rapide sur la réaction au moment fort
+    progress_bar: bool = False  # fine barre de progression en haut du clip
+    end_question: bool = True  # question pour les commentaires dans la description YouTube
+    end_card: bool = False  # question affichée à l'écran à la fin du clip
+    sub_keywords: bool = False  # mots forts des sous-titres en vert (sinon blanc, mot prononcé en jaune)
     end_seconds: float = 3.5
     title_hashtags: int = 2  # hashtags ajoutés à la fin du titre YouTube (s'il reste de la place)
-    tiktok_max_hashtags: int = 5  # TikTok conseille 3 à 5 hashtags ciblés
+    tiktok_max_hashtags: int = 2  # légende courte : #gta6 #gta, comme les TikTok de la chaîne qui marchent
     # Mise en page : auto (split si une facecam est détectée, sinon classique), split, classic
     layout: str = "auto"
-    split_cam_height: int = 640  # hauteur de la facecam en haut du clip (le jeu prend le reste)
+    split_cam_height: int = 614  # hauteur de la facecam en haut du clip (32 %, le jeu prend le reste)
 
     # Publication
     auto_publish: bool = True

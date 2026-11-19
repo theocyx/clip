@@ -15,7 +15,7 @@ from sqlmodel import select
 
 from .. import db, learning
 from ..config import get_settings
-from ..models import Clip, Post, Video, now
+from ..models import Clip, Post, Source, Video, now
 from . import chat, dedupe, engage, facecam, highlights, hook, llm, media, render, sponsor, subtitles, transcribe
 
 log = logging.getLogger(__name__)
@@ -101,6 +101,18 @@ def render_hook_png(text: str, out: Path) -> str:
         return str(png.resolve()) if hook.render_png(text, get_settings().font_name, png) else ""
     except Exception as e:
         log.warning("Accroche en image impossible (%s), repli sans emoji.", e)
+        return ""
+
+
+def streamer_name(video: Video) -> str:
+    """Nom du streamer de la source (cité dans les titres et accroches), "" si inconnu."""
+    if not video.source_id:
+        return ""
+    try:
+        with db.session() as s:
+            src = s.get(Source, video.source_id)
+        return (src.name or "").strip() if src else ""
+    except Exception:
         return ""
 
 
@@ -224,12 +236,13 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
     progress(20)
     recent = engage.recent_titles()  # titres déjà publiés : chaque clip doit avoir le sien
     ctx_title = engage.clean_video_title(video.title)
+    streamer = streamer_name(video)
     for k, m in enumerate(moments):
         stop_if_stopping()
         progress(20 + 80 * k / len(moments))
         text = highlights.text_between(segments, m.start, m.end)
         heur = (m.score - hmin) / (hmax - hmin) if hmax > hmin else 0.5
-        rated = llm.rate(text, ctx_title, which, guidance, recent) if use_llm else None
+        rated = llm.rate(text, ctx_title, which, guidance, recent, streamer=streamer) if use_llm else None
         if rated and rated[0] <= 0:
             log.info("L'IA y voit une pub / un passage sponsorisé : ignoré (%.0f-%.0f s)", m.start, m.end)
             m.score = -1.0
@@ -319,14 +332,16 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                     hook_text = hook.strip_emojis(hook_text)
                 t_i = tease if i == 1 else None
                 body = (highlights.cut_silences(segments, a, b, s.silence_min) if s.cut_silences else [(a, b)])
-                end_text = engage.end_card(m.features.get("question", ""), i, len(parts)) if s.end_question else ""
+                end_text = (engage.end_card(m.features.get("question", ""), i, len(parts))
+                            if s.end_card and s.end_question else "")
                 punch = punch_windows(m.features.get("peak"), body, t_i) if s.punch_zoom else None
                 try:
                     pieces = ([t_i] if t_i else []) + body
                     ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook_text, s.hook_seconds,
                                               hook_in_ass=not png, top=top,
                                               pieces=pieces if len(pieces) > 1 else None,
-                                              end_text=end_text, end_seconds=s.end_seconds)
+                                              end_text=end_text, end_seconds=s.end_seconds,
+                                              keywords=s.sub_keywords)
                     render.render(src, a, b, ass, out, png, s.hook_seconds, cam, t_i, body if len(body) > 1 else None,
                                   punch, s.progress_bar)
                 except RuntimeError as e:
@@ -336,7 +351,7 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                     t_i, body, punch = None, [(a, b)], None
                     ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook_text, s.hook_seconds,
                                               hook_in_ass=not png, top=top, end_text=end_text,
-                                              end_seconds=s.end_seconds)
+                                              end_seconds=s.end_seconds, keywords=s.sub_keywords)
                     render.render(src, a, b, ass, out, png, s.hook_seconds, cam)
             except Exception as e:
                 log.exception("Rendu échoué")
