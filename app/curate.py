@@ -97,8 +97,9 @@ def polish(clip: Clip, info: dict, recent: list[str], guidance: str) -> dict | N
         return None
     note, title, question = res
     out = {**info, "polished": True, "polish_score": note, "title_before": base}
-    if title and not engage.too_close(title, "", recent):
-        out["polished_title"] = engage.tidy_title(title)
+    title = engage.tidy_title(title)
+    if title and not engage.too_close(title, "", recent) and not engage.bad_title(title):
+        out["polished_title"] = title
     q = engage.clean_question(question) if question else ""
     if q and not info.get("question"):  # la question déjà incrustée en fin de vidéo reste celle de la légende
         out["question"] = q

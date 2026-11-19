@@ -28,7 +28,8 @@ un appel à s'abonner ou à cliquer sur un lien : mets "pub": true et "score": 1
 Règles pour être vu au maximum sur TikTok et YouTube Shorts :
 - Titre : 40 à 60 caractères, raconte CE QUI SE PASSE DANS CET EXTRAIT (action, personnage, réplique forte),
   commence par le mot-clé que les gens cherchent (le jeu, le serveur RP ou le streamer s'ils sont connus), crée de
-  la curiosité SANS dévoiler la fin, langage parlé, pas tout en majuscules. NE RECOPIE PAS le sujet du live
+  la curiosité SANS dévoiler la fin, langage parlé, pas tout en majuscules, sans guillemets, jamais vulgaire ni
+  trompeur (rien qui n'est pas dans l'extrait). NE RECOPIE PAS le sujet du live
   (pas de « live », « stream », nombre d'heures ni de hashtag) : chaque clip doit avoir un titre unique.{recent}
 - Accroche : 3 à 6 mots lisibles en 1 seconde, qui posent une tension ou une question (« Il n'aurait jamais dû… »,
   « Personne ne s'attendait à ça »), jamais un résumé plat.
@@ -143,7 +144,8 @@ Accroche affichée en haut de la vidéo : « {hook} »
 1. Note de 1 à 10 sa chance de faire beaucoup de vues auprès d'inconnus (7+ seulement si on le regarde
    jusqu'au bout et qu'on a envie de le partager ou de commenter).
 2. Améliore le titre : 40 à 60 caractères, ce qui se passe vraiment, mot-clé en tête, curiosité sans dévoiler
-   la fin, langage parlé, sans hashtag, sans « live » ni « stream ». Garde le titre actuel s'il est déjà excellent.{recent}
+   la fin, langage parlé, sans hashtag, sans « live » ni « stream », sans guillemets, jamais vulgaire
+   ni trompeur (ne promets rien qui n'est pas dans l'extrait). Garde le titre actuel s'il est déjà excellent.{recent}
 3. Une question courte (8 mots max) sur CE moment, qui donne envie de répondre en commentaire.
 Réponds UNIQUEMENT en JSON : {{"score": <entier 1-10>, "title": "<titre>", "question": "<question>"}}"""
 
