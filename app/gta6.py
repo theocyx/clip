@@ -25,6 +25,7 @@ TWITCH_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
 GAME_RE = re.compile(r"grand theft auto (vi|6)\b|\bgta ?(vi|6)\b", re.I)
 
 viewers: dict[int, int] = {}  # source.id → spectateurs du live en cours (relevé Twitch)
+games: dict[int, str] = {}  # source.id → catégorie Twitch du live en cours ("" = inconnue)
 
 
 # ---------- Activation ----------
@@ -83,6 +84,20 @@ def is_gta6(title: str, game: str = "") -> bool:
     return any(re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z0-9])", t) for w in words)
 
 
+def live_matches(title: str, game: str = "") -> bool:
+    """Un live est GTA 6 d'après sa catégorie Twitch ; le titre ne sert qu'en secours si la catégorie est inconnue
+    (« TFT SET 19 | Minuit : GTA VI » en catégorie TFT n'est pas un live GTA 6)."""
+    if game:
+        return bool(GAME_RE.search(game))
+    return is_gta6(title)
+
+
+def off_category(source_id) -> str:
+    """Catégorie Twitch actuelle de la source si elle est connue et n'est pas GTA 6, sinon ""."""
+    g = games.get(source_id, "")
+    return g if g and not GAME_RE.search(g) else ""
+
+
 def twitch_login(url: str) -> str:
     m = re.search(r"twitch\.tv/([^/?#]+)", url or "")
     return m.group(1).lower() if m else ""
@@ -131,14 +146,16 @@ def fast_lives(srcs) -> dict[int, list[Found]]:
         st = lives.get(login)
         if not st:
             viewers.pop(sid, None)
+            games.pop(sid, None)
             out[sid] = []
             continue
         viewers[sid] = st["viewers"]
+        games[sid] = st["game"]
         # le titre garde la catégorie pour que le filtre de mots-clés et les hashtags la voient
         title = st["title"]
         if is_gta6("", st["game"]) and not is_gta6(title):
             title = f"{title} [GTA 6]".strip()
-        out[sid] = [Found(f"twitch-live:{st['id']}", f"https://www.twitch.tv/{login}", title, True)]
+        out[sid] = [Found(f"twitch-live:{st['id']}", f"https://www.twitch.tv/{login}", title, True, st["game"])]
     return out
 
 

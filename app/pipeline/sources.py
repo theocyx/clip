@@ -22,6 +22,7 @@ class Found:
     url: str
     title: str
     is_live: bool = False
+    game: str = ""  # catégorie Twitch du live ("" = inconnue)
 
 
 def matches_keywords(title: str, keywords: str) -> bool:

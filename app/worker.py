@@ -30,6 +30,10 @@ rec_started: dict[int, float] = {}  # video.id → début de l'enregistrement (t
 
 # ---------- Surveillance des sources ----------
 
+OFF_CATEGORY = "Catégorie Twitch :"
+paused_lives: set[str] = set()  # lives coupés parce que le streamer a changé de jeu (clé de base)
+
+
 def check_source(src: Source, lives: list[sources.Found] | None = None, videos: bool = True) -> int:
     """`lives` : lives déjà relevés (mode GTA 6) ; `videos=False` : pas de recherche des vidéos publiées."""
     if lives is None:
@@ -40,15 +44,34 @@ def check_source(src: Source, lives: list[sources.Found] | None = None, videos: 
     added = 0
     with db.session() as s:
         for f in found:
-            if s.exec(select(Video).where(Video.key == f.key)).first():
+            gta_live = day_one and f.is_live and gta6.live_matches(f.title, f.game)
+            old = s.exec(select(Video).where(Video.key == f.key)).first()
+            if old:
+                if gta_live and old.status == "skipped" and (old.error or "").startswith(OFF_CATEGORY):
+                    old.status, old.error = "new", ""  # le streamer est passé sur GTA 6 : on enregistre
+                    paused_lives.discard(f.key)
+                    s.add(old)
+                    added += 1
+                elif gta_live and f.key in paused_lives:
+                    paused_lives.discard(f.key)  # retour sur GTA 6 après un autre jeu : la suite est enregistrée
+                    n = 2
+                    while s.exec(select(Video).where(Video.key == f"{f.key}#p{n}")).first():
+                        n += 1
+                    s.add(Video(source_id=src.id, key=f"{f.key}#p{n}", url=f.url, title=f.title, is_live=True,
+                                status="new"))
+                    added += 1
                 continue
             # au premier scan, l'historique existant est ignoré (seuls les lives en cours sont pris)
             status = "new" if (src.initialized or f.is_live) else "skipped"
-            if not sources.matches_keywords(f.title, src.keywords) and not (day_one and gta6.is_gta6(f.title)):
+            error = ""
+            if day_one and f.is_live and f.game and not gta_live:
+                status, error = "skipped", f"{OFF_CATEGORY} {f.game} (pas GTA 6)"
+            elif not sources.matches_keywords(f.title, src.keywords) and not gta_live:
                 status = "skipped"  # hors sujet (ex. pas de GTA dans le titre)
-            s.add(Video(source_id=src.id, key=f.key, url=f.url, title=f.title, is_live=f.is_live, status=status))
+            s.add(Video(source_id=src.id, key=f.key, url=f.url, title=f.title, is_live=f.is_live, status=status,
+                        error=error))
             added += status == "new"
-            if day_one and status == "new" and f.is_live and gta6.is_gta6(f.title):
+            if status == "new" and gta_live:
                 n = gta6.viewers.get(src.id)
                 notify.send(f"🔴 GTA 6 en live : {src.name}" + (f" ({n} spectateurs)" if n else "") + f"\n{f.url}")
         if day_one and src.record_lives:
@@ -153,13 +176,37 @@ def cut_chunks() -> None:
         stop_recording(p)
 
 
+def stop_off_category() -> int:
+    """Mode GTA 6 : arrête l'enregistrement d'un live dont la catégorie Twitch passe à un autre jeu.
+    Ce qui est déjà enregistré part au traitement ; si le streamer revient sur GTA 6, la suite est reprise."""
+    n = 0
+    for vid, p in list(recorders.items()):
+        v = get_video(vid)
+        game = gta6.off_category(v.source_id) if v else ""
+        if not game or p.poll() is not None:
+            continue
+        log.info("Live %d : le streamer joue maintenant à %s, enregistrement arrêté", vid, game)
+        paused_lives.add(gta6.base_key(v.key))
+        stop_recording(p)
+        n += 1
+    return n
+
+
 def lives_to_start(lives: list[Video]) -> list[Video]:
     """Hors mode GTA 6 : tous. Pendant : les plus prioritaires, dans la limite des places libres."""
     if not gta6.active():
         return lives
     with db.session() as s:
         srcs = {x.id: x for x in s.exec(select(Source)).all()}
-    lives = sorted(lives, key=lambda v: gta6.live_priority(v, srcs.get(v.source_id)))
+    keep = []
+    for v in lives:
+        game = gta6.off_category(v.source_id)
+        if game:  # en file, mais le streamer joue maintenant à autre chose
+            process.set_status(v.id, "skipped", error=f"{OFF_CATEGORY} {game} (pas GTA 6)")
+            paused_lives.add(gta6.base_key(v.key))
+        else:
+            keep.append(v)
+    lives = sorted(keep, key=lambda v: gta6.live_priority(v, srcs.get(v.source_id)))
     free = max(0, get_settings().gta6_max_recordings - len(recorders))
     return lives[:free]
 
@@ -192,6 +239,7 @@ def finish_recordings() -> None:
 def record_loop():
     while not stop.is_set():
         if gta6.active():
+            stop_off_category()
             cut_chunks()
         finish_recordings()
         with db.session() as s:
