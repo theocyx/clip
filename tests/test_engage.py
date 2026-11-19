@@ -83,14 +83,29 @@ def _w(t, word="mot"):
 
 def test_cut_silences():
     segs = [{"start": 0, "end": 30, "text": "x", "words": [_w(1), _w(1.5), _w(6), _w(6.5), _w(7.2), _w(12)]}]
-    pieces = highlights.cut_silences(segs, 0, 14, min_gap=1.2, keep=0.3)
+    pieces = highlights.cut_silences(segs, 0, 14, min_gap=1.2, keep=0.3, max_frac=1)
     # blancs coupés : 2,2-5,7 et 7,9-11,7 (on garde 0,3 s autour des mots)
     assert pieces == [(0, 2.2), (5.7, 7.9), (11.7, 14)]
     assert highlights.out_time(pieces, 6.0) == pytest.approx(2.2 + 0.3)
     # long blanc au tout début : coupé aussi
-    assert highlights.cut_silences(segs, 0, 14, min_gap=0.5, keep=0.3)[0][0] == 0.7
+    assert highlights.cut_silences(segs, 0, 14, min_gap=0.5, keep=0.3, max_frac=1)[0][0] == 0.7
     assert highlights.out_time(pieces, 4.0) is None
     assert highlights.cut_silences([], 0, 10) == [(0, 10)]
+
+
+def test_cut_silences_keeps_gameplay():
+    # 75 s de jeu avec peu de paroles (VAD) : avant, ~46 s coupées et un clip de 29 s
+    words = [_w(t) for t in (0.5, 1, 9, 9.5, 20, 31, 31.5, 44, 56, 57, 70)]
+    segs = [{"start": 0, "end": 75, "text": "x", "words": words}]
+    kept = lambda p: sum(y - x for x, y in p)  # noqa: E731
+    pieces = highlights.cut_silences(segs, 0, 75)
+    assert kept(pieces) >= 75 * 0.85 - 0.01  # au plus 15 % coupés
+    assert len(pieces) > 1  # les plus longs blancs sont quand même coupés
+    pieces = highlights.cut_silences(segs, 0, 40, max_frac=1, min_len=35)
+    assert kept(pieces) >= 35 - 0.01  # jamais sous CLIP_MIN
+    # blancs de moins de 3 s (défaut) : rien n'est coupé
+    short = [{"start": 0, "end": 10, "text": "x", "words": [_w(t) for t in (0, 2, 4, 6, 8)]}]
+    assert highlights.cut_silences(short, 0, 10) == [(0, 10)]
 
 
 def test_punch_windows():

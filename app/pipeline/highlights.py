@@ -229,12 +229,14 @@ def teaser(segments: list[dict], peak: float | None, begin: float, end: float,
     return (round(start, 2), round(stop, 2)) if stop - start >= 1.0 else None
 
 
-def cut_silences(segments: list[dict], a: float, b: float, min_gap: float = 1.2, keep: float = 0.3,
-                 max_cuts: int = 12) -> list[tuple[float, float]]:
+def cut_silences(segments: list[dict], a: float, b: float, min_gap: float = 3.0, keep: float = 0.3,
+                 max_cuts: int = 12, max_frac: float = 0.15, min_len: float = 0.0) -> list[tuple[float, float]]:
     """Morceaux de [a, b] à garder, sans les blancs de plus de `min_gap` s entre deux mots (« jump cuts »).
 
     On garde `keep` s de part et d'autre de chaque mot pour ne pas couper sec ; au plus `max_cuts` blancs,
-    les plus longs. Sans transcription mot à mot, renvoie [(a, b)]."""
+    les plus longs. Sur un jeu, l'action sans parole EST le contenu (et le filtre VAD de Whisper retire aussi
+    des passages) : on ne coupe jamais plus de `max_frac` de la fenêtre, ni de quoi passer sous `min_len` s.
+    Sans transcription mot à mot, renvoie [(a, b)]."""
     words = sorted((w["start"], w["end"]) for s in segments for w in s.get("words", [])
                    if a <= (w["start"] + w["end"]) / 2 <= b)
     gaps = []
@@ -243,7 +245,20 @@ def cut_silences(segments: list[dict], a: float, b: float, min_gap: float = 1.2,
             gaps.append((e1 + keep, s2 - keep))
     if words and words[0][0] - a >= min_gap:  # blanc au tout début
         gaps.append((a, words[0][0] - keep))
-    gaps = sorted(sorted(gaps, key=lambda g: g[0] - g[1])[:max_cuts])
+    budget = (b - a) * max(0.0, max_frac)
+    if min_len > 0:
+        budget = min(budget, max(0.0, (b - a) - min_len))
+    picked = []
+    for g0, g1 in sorted(gaps, key=lambda g: g[0] - g[1])[:max_cuts]:  # les plus longs d'abord
+        if budget < 0.3:
+            break
+        if g1 - g0 > budget:  # blanc raccourci (centré) pour rester dans le budget
+            mid = (g0 + g1) / 2
+            g0, g1 = mid - budget / 2, mid + budget / 2
+        if g1 - g0 >= 0.3:
+            picked.append((g0, g1))
+            budget -= g1 - g0
+    gaps = sorted(picked)
     pieces, cur = [], a
     for g0, g1 in gaps:
         if g1 - g0 < 0.3:

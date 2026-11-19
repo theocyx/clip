@@ -331,7 +331,8 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                 if not png:
                     hook_text = hook.strip_emojis(hook_text)
                 t_i = tease if i == 1 else None
-                body = (highlights.cut_silences(segments, a, b, s.silence_min) if s.cut_silences else [(a, b)])
+                body = (highlights.cut_silences(segments, a, b, s.silence_min, max_frac=s.silence_max_pct / 100,
+                                                  min_len=s.clip_min) if s.cut_silences else [(a, b)])
                 end_text = (engage.end_card(m.features.get("question", ""), i, len(parts))
                             if s.end_card and s.end_question else "")
                 punch = punch_windows(m.features.get("peak"), body, t_i) if s.punch_zoom else None
