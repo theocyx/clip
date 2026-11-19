@@ -153,3 +153,23 @@ def test_retention_parsed_from_analytics(monkeypatch):
     out = {"a": {"views": 10}, "b": {"views": 0}}
     youtube.retention(None, ["a", "b"], out)
     assert out["a"]["avg_view_pct"] == 74.2 and out["a"]["shares"] == 3 and "avg_view_pct" not in out["b"]
+
+
+def test_used_today_resets_at_midnight():
+    start = worker.day_start()
+    with db.session() as s:
+        before = worker.used_today(s, "youtube")
+        v = Video(key="q:midnight", url="u", title="t", status="done")
+        s.add(v)
+        s.commit()
+        c = Clip(video_id=v.id, group="mid", start=0, end=30, title="GTA 6 : minuit", path=__file__)
+        s.add(c)
+        s.commit()
+        for delta in (timedelta(minutes=-30), timedelta(hours=-3), timedelta(minutes=5)):
+            s.add(Post(clip_id=c.id, platform="youtube", status="published", published_at=start + delta))
+        s.commit()
+        assert worker.used_today(s, "youtube") == before + 1
+        for p in s.exec(worker.select(Post).where(Post.clip_id == c.id)).all():
+            p.status = "cancelled"
+            s.add(p)
+        s.commit()

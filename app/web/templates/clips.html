@@ -5,7 +5,7 @@
   <div style="margin:4px 0">{{ labels[name] }} :
     {% if p.blocked %}<span class="err">quota YouTube atteint, reprise le {{ p.blocked }}</span>
       <form class="inline" method="post" action="/platforms/{{ name }}/limit"><input type="hidden" name="resume" value="1"><button class="sec">Reprendre maintenant</button></form>
-    {% elif p.on %}<b>{{ p.used }}{% if p.limit %}/{{ p.limit }}{% endif %}</b> envois sur 24 h · <span class="ok">{{ p.today|length }} prévu(s) d'ici minuit</span>
+    {% elif p.on %}<b>{{ p.used }}{% if p.limit %}/{{ p.limit }}{% endif %}</b> envois aujourd'hui · <span class="ok">{{ p.today|length }} prévu(s) d'ici minuit</span>
     {% else %}<span class="err">publication auto en pause ou compte non connecté</span>{% endif %}
     · <span class="{{ 'err' if p.manual else 'mut' }}">{{ p.manual|length }} à poster à la main</span>
     <form class="inline" method="post" action="/platforms/{{ name }}/limit">
