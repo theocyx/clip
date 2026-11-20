@@ -170,6 +170,8 @@ class Settings(BaseSettings):
     news_badge: str = "ACTU"  # pastille rouge au-dessus du titre (vide = aucune)
     news_accent: str = "#FFD400"  # couleur des cartes générées quand aucune image libre ne convient
     pexels_api_key: str = ""  # clé gratuite pexels.com/api : vidéos et photos libres de droits (recommandé)
+    pixabay_api_key: str = ""  # clé gratuite sur pixabay.com/api/docs (photos + vidéos libres)
+    news_openverse: bool = True  # images libres via Openverse (sans clé)
     news_wikimedia: bool = True  # images sous licence libre de Wikimedia Commons (auteur crédité en description)
     news_motion: bool = True  # habillage animé (cartes 3D, mots animés, chiffres, transitions, whoosh)
     news_map: bool = True  # survol « vu d'en haut » du lieu de l'actu en ouverture
