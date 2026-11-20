@@ -12,5 +12,6 @@
   {% endfor %}
   <p>{% if news.on %}<form class="inline" method="post" action="/news"><input type="hidden" name="action" value="off"><input type="hidden" name="next" value="{{ request.url.path }}"><button class="sec">Couper</button></form>
     {% else %}<form class="inline" method="post" action="/news"><input type="hidden" name="action" value="on"><input type="hidden" name="next" value="{{ request.url.path }}"><button>Activer</button></form>{% endif %}
-    <form class="inline" method="post" action="/news"><input type="hidden" name="action" value="now"><input type="hidden" name="next" value="{{ request.url.path }}"><button class="sec">Générer une actu maintenant</button></form></p>
+    <form class="inline" method="post" action="/news"><input type="hidden" name="action" value="now"><input type="hidden" name="next" value="{{ request.url.path }}"><button class="sec">Générer une actu maintenant</button></form>
+    <a href="/style">Vidéos modèles analysées</a></p>
 </div>

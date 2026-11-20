@@ -397,3 +397,25 @@ def test_pick_shots_map_counter_and_photos(monkeypatch, tmp_path):
     assert kinds[2:] == ["image"] * 4
     monkeypatch.setattr(cfg, "news_map", False)
     assert generate.pick_shots(sc, cuts, tmp_path)[0][0].kind != "map"
+
+
+def test_style_page(tmp_path):
+    from fastapi.testclient import TestClient
+    from PIL import Image
+
+    from app.web import main as web
+    d = get_settings().data_dir / "style"
+    d.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (40, 40)).save(d / "123_planche.jpg")
+    (d / "123.json").write_text(json.dumps({"url": "https://x/123", "duree_s": 64.6, "plans": 5,
+                                            "duree_moyenne_plan_s": 12.9}))
+    web.app.dependency_overrides[web.auth] = lambda: None
+    try:
+        c = TestClient(web.app)
+        r = c.get("/style")
+        assert "123_planche" in r.text and "64.6 s, 5 plans" in r.text
+        assert c.get("/style/file/123_planche.jpg").status_code == 200
+        assert c.get("/style/file/..%2Fclip.db").status_code == 404
+        assert c.get("/style/file/clip.db").status_code == 404
+    finally:
+        web.app.dependency_overrides.clear()
