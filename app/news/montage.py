@@ -121,10 +121,15 @@ def ass_text(spoken: list[Spoken], total: float, source: str) -> str:
     return ass
 
 
-def pick_music() -> Path | None:
-    d = get_settings().data_dir / "music"
-    tracks = sorted(p for p in d.glob("*") if p.suffix.lower() in (".mp3", ".m4a", ".wav", ".ogg", ".flac"))
-    return random.choice(tracks) if tracks else None
+def pick_music(story: bool = False) -> Path | None:
+    """Musique de fond au hasard dans data/music (histoires : data/music/story s'il contient des morceaux)."""
+    base = get_settings().data_dir / "music"
+
+    def tracks(d: Path) -> list[Path]:
+        return sorted(p for p in d.glob("*") if p.suffix.lower() in (".mp3", ".m4a", ".wav", ".ogg", ".flac"))
+
+    found = (tracks(base / "story") if story else []) or tracks(base)
+    return random.choice(found) if found else None
 
 
 TRANSITION = 0.28  # durée d'une transition (s)
@@ -245,7 +250,7 @@ def render_shot(shot, dur: float, seg: Path, idx: int, work: Path, fx: bool) -> 
     elif shot.kind == "quiz":
         gen = anim.quiz(shot.text, shot.meta.get("answers") or [], frames, accent)
     elif shot.kind == "counter":
-        gen = anim.counter(shot.text, shot.meta.get("unit", ""), frames, idx, accent)
+        gen = anim.counter(shot.text, shot.meta.get("unit", ""), frames, idx, accent, year=shot.meta.get("year", False))
     elif shot.kind == "map":
         from . import geo
         gen = anim.map_fly(shot.meta["lon"], shot.meta["lat"], shot.text, frames, shot.meta["fetch"], accent,
@@ -281,7 +286,10 @@ def make_overlay(spoken: list[Spoken], hook: str, look: dict | None):
                  topic=look.get("topic") or "", date=ov.date_fr(), tabs=tabs,
                  sources=look.get("sources") or "")
     words = [w for sp in spoken for w in sp.words]
-    return ov.Overlay(hud, [(sp.start, sp.end) for sp in spoken], titles, chapter_of, words)
+    sentences = [(sp.start, sp.end) for sp in spoken]
+    total = spoken[-1].end + TAIL if spoken else 0.0
+    return ov.Overlay(hud, sentences, titles, chapter_of, words,
+                      cta=ov.cta_windows(sentences, total) if s.news_cta else [])
 
 
 def overlay_pass(video: Path, overlay, total: float, out: Path) -> Path:
@@ -371,7 +379,7 @@ def build(shots: list, spoken: list[Spoken], voice: Path, hook: str, source: str
         header, _ = header_png(hook, s.news_badge, work / "header.png")
         ass_name = out.stem + ".ass"
         (out.parent / ass_name).write_text(ass_text(spoken, total, source), encoding="utf-8")
-    music = pick_music()
+    music = pick_music(bool((look or {}).get("story")))
     codec = render.resolve_codec()
     args = (video.resolve(), voice.resolve(), str(Path(header).resolve()) if header else "", ass_name,
             out.resolve(), total)

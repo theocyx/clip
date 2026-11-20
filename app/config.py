@@ -162,15 +162,28 @@ class Settings(BaseSettings):
     news_max_age_hours: float = 24  # article plus vieux : ignoré
     news_min_score: float = 6  # note IA (sur 10) minimum du sujet pour en faire une vidéo
     news_publish: bool = True  # envoie les vidéos d'actu dans la file de publication (sinon : seulement dans Clips)
-    news_target_seconds: float = 35  # durée visée de la voix off (le petit modèle local écrit court)
+    news_target_seconds: float = 60  # durée visée de la voix off d'une actu (secondes)
     news_llm_timeout: float = 1200  # s : l'IA est partagée avec l'analyse des clips, la réponse peut attendre
     news_voice: str = "fr_FR-tom-medium"  # voix Piper (fr_FR-siwis-medium, fr_FR-upmc-medium, fr_FR-gilles-low…)
     news_voice_speed: float = 1.12  # débit de la voix (1 = normal) : un peu rapide, comme les comptes d'actu
+    # Histoires vraies envoûtantes (voir app/news/stories.py) : faits tirés de Wikipédia, même chaîne de montage
+    stories: bool = True  # réglable aussi depuis le tableau de bord
+    story_per_day: int = 1  # histoires par jour (en plus des actus)
+    story_target_seconds: float = 80  # durée visée de la voix off d'une histoire
+    story_voice_speed: float = 1.0  # voix plus posée que pour l'actu
+    story_topics: str = ""  # tes sujets, séparés par des virgules (aussi : fichier data/stories.txt, un par ligne)
+    story_builtin: bool = True  # piocher aussi dans la liste intégrée (Room 641A, col Dyatlov, Mary Celeste…)
+    news_cta: bool = True  # rappel animé « LIKE · COMMENTE · ABONNE-TOI » (vers 40 % et à la fin)
     news_brand: str = "ACTU EN BREF"  # nom de marque dans le bandeau du haut (le tien, jamais celui d'un autre compte)
     news_badge: str = "ACTU"  # pastille rouge au-dessus du titre (vide = aucune)
     news_accent: str = "#FFD400"  # couleur des cartes générées quand aucune image libre ne convient
     pexels_api_key: str = ""  # clé gratuite pexels.com/api : vidéos et photos libres de droits (recommandé)
     pixabay_api_key: str = ""  # clé gratuite sur pixabay.com/api/docs (photos + vidéos libres)
+    # Images générées par IA quand les banques d'images n'ont rien de pertinent (et une sur deux pour les histoires) :
+    # pollinations (gratuit, sans clé), huggingface (HF_TOKEN gratuit, FLUX.1-schnell), off
+    news_ai_images: str = "pollinations"
+    news_ai_style: str = "cinematic documentary photo, dramatic lighting, highly detailed, realistic, no text"
+    hf_token: str = ""
     news_openverse: bool = True  # images libres via Openverse (sans clé)
     news_wikimedia: bool = True  # images sous licence libre de Wikimedia Commons (auteur crédité en description)
     news_motion: bool = True  # habillage animé (cartes 3D, mots animés, chiffres, transitions, whoosh)

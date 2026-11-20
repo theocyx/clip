@@ -432,16 +432,24 @@ def fmt_number(v: float, dec: int) -> str:
     return s
 
 
-def counter(value_text: str, unit: str, n: int, idx: int, accent: tuple[int, int, int]) -> Callable[[int], np.ndarray]:
-    """Chiffre clé dans le panneau : il défile de 0 à sa valeur, une barre rouge se remplit, l'unité arrive."""
+def counter(value_text: str, unit: str, n: int, idx: int, accent: tuple[int, int, int],
+            year: bool = False) -> Callable[[int], np.ndarray]:
+    """Chiffre clé dans le panneau : il défile de 0 à sa valeur, une barre rouge se remplit, l'unité arrive.
+    year : une date (« 1959 ») qui remonte le temps depuis quelques décennies plus tard, sans espace des milliers."""
     import cv2
 
     parsed = parse_number(value_text)
     val, dec = (parsed[0], parsed[1]) if parsed else (0.0, 0)
+    if year:  # p de 0 à 1 : de « val + 60 » à val
+        def show(p: float) -> str:
+            return str(int(round(val + 60 * (1 - p))))
+    else:
+        def show(p: float) -> str:
+            return fmt_number(val * p, dec)
     x0, y0, x1, y1 = PANEL
     cx, cy = W // 2, y0 + int((y1 - y0) * 0.4)
     unit_sp = text_sprite(unit.upper()[:24], 44, (230, 230, 236), stroke=0) if unit else None
-    final = fmt_number(val, dec)
+    final = show(1.0)
     size = 170
     while size > 80 and text_sprite(final, size, stroke=0).shape[1] > x1 - x0 - 120:
         size -= 10
@@ -452,7 +460,7 @@ def counter(value_text: str, unit: str, n: int, idx: int, accent: tuple[int, int
         t = i / FPS
         f, e = panel_frame(t)
         p = ease_out_cubic((t - 0.15) / 0.9)
-        txt = fmt_number(val * p, dec) if p < 1 else final
+        txt = show(p) if p < 1 else final
         sp = cache.get(txt)
         if sp is None:
             sp = cache[txt] = text_sprite(txt, size, (255, 255, 255), stroke=0)

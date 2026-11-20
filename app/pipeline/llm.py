@@ -77,9 +77,9 @@ def parse(content: str) -> tuple[float, str, str, str] | None:
     return 0.0 if pub else float(data.get("score", 0)), clean("title", 90), clean("hook", 60), clean("question", 90)
 
 
-def _ask_ollama(prompt: str, timeout: float = 600, max_tokens: int | None = None) -> str:
+def _ask_ollama(prompt: str, timeout: float = 600, max_tokens: int | None = None, num_ctx: int = 4096) -> str:
     s = get_settings()
-    options = {"temperature": 0.5, "num_ctx": 4096}
+    options = {"temperature": 0.5, "num_ctx": num_ctx}
     if max_tokens:
         options["num_predict"] = max_tokens
     r = httpx.post(

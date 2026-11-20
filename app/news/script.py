@@ -48,6 +48,38 @@ Règles :
 - "hashtags" : 3 à 5 hashtags en minuscules sans espace, du plus précis au plus large.
 Réponds UNIQUEMENT en JSON : {{"score": <1-10>, "title": "...", "hook": "...", "sentences": [{{"text": "...", "visual": "...", "title": "...", "chapter": "...", "place": ""}}], "question": "...", "answers": ["...", "..."], "topic": "...", "place": "...", "hashtags": ["..."]}}"""
 
+STORY_PROMPT = """Tu écris le script d'une vidéo TikTok / YouTube Shorts d'environ {seconds} secondes qui raconte
+une HISTOIRE VRAIE envoûtante (secret, mystère, affaire étrange), en français. Style conteur qui captive :
+tension, suspense, révélations au fil du récit, mots simples et imagés, phrases courtes, ton posé et intrigant.
+Aucune intro du genre « salut » ou « aujourd'hui je vais vous raconter ».
+
+Sujet : « {title} » ({source})
+Faits disponibles :
+\"\"\"{facts}\"\"\"
+
+Règles :
+- Phrase 1 = accroche qui intrigue tout de suite (le détail le plus troublant, ou une scène : « En 2003, un
+  technicien découvre une pièce où personne n'a le droit d'entrer. »).
+- Puis raconte dans l'ordre, une idée par phrase (8 à 20 mots), avec des relances de suspense
+  (« Mais ce qu'il trouve à l'intérieur… », « Et c'est là que tout bascule. »).
+- Fin : la révélation, ou ce qui reste inexpliqué aujourd'hui, puis une question au spectateur.
+- {n_min} à {n_max} phrases, {w_min} à {w_max} mots au total (environ {seconds} secondes lues).
+- UNIQUEMENT des faits présents ci-dessus. N'invente aucun chiffre, date, nom, lieu ni citation. Une théorie
+  ou une rumeur est présentée comme telle (« certains pensent que… ») ; jamais comme un fait. Reformule avec
+  tes mots, ne recopie pas le texte. Les nombres en chiffres (« 1959 », « 9 randonneurs »).
+- Respect des victimes : pas de détails macabres gratuits, aucun humour sur un drame.
+- Pour chaque phrase : "visual" = 2 à 4 mots-clés EN ANGLAIS pour une image d'illustration générique libre
+  (ex. "dark corridor", "old telephone exchange", "snowy mountain night") ; jamais une personne célèbre,
+  un logo ou une œuvre protégée ; "title" = 2 à 4 mots-clés affichés en gros (« PIÈCE SECRÈTE ») ;
+  "chapter" = 1 ou 2 mots pour l'étape du récit (« LA DÉCOUVERTE », « LE SECRET », « L'ENQUÊTE »,
+  « LE MYSTÈRE ») ; "place" = le lieu précis de la phrase s'il y en a un (« San Francisco, USA »), sinon "".
+- "title" : titre de 40 à 70 caractères, intrigant, jamais trompeur, sans hashtag.
+- "hook" : 4 à 8 mots affichés en haut de la vidéo, terminés par 1 emoji (🕵️, 😨, 🤫, 👁️…).
+- "score" : 1 à 10, à quel point l'histoire va captiver le grand public.
+- "place" : lieu principal de l'histoire ; "topic" : 1 à 3 mots (« ROOM 641A ») ;
+  "answers" : 2 réponses courtes possibles à la question finale ; "hashtags" : 3 à 5, du plus précis au plus large.
+Réponds UNIQUEMENT en JSON : {{"score": <1-10>, "title": "...", "hook": "...", "sentences": [{{"text": "...", "visual": "...", "title": "...", "chapter": "...", "place": ""}}], "question": "...", "answers": ["...", "..."], "topic": "...", "place": "...", "hashtags": ["..."]}}"""
+
 _NUM = re.compile(r"\d+(?:[.,]\d+)?")
 
 
@@ -163,12 +195,19 @@ def sanitize(sc: Script, facts: str, fallback_title: str = "") -> list[str]:
     return removed
 
 
-def problems(sc: Script, facts: str) -> list[str]:
-    """Pourquoi ce script n'est pas publiable (liste vide = OK). Appelé après sanitize()."""
+def target_words(kind: str = "news") -> float:
+    """Mots à écrire pour la durée visée (~2,6 mots/s à vitesse normale)."""
     s = get_settings()
+    if kind == "story":
+        return s.story_target_seconds * 2.6 * s.story_voice_speed
+    return s.news_target_seconds * 2.6 * s.news_voice_speed
+
+
+def problems(sc: Script, facts: str, kind: str = "news") -> list[str]:
+    """Pourquoi ce script n'est pas publiable (liste vide = OK). Appelé après sanitize()."""
     out = []
     n_words = len(sc.text.split())
-    target = s.news_target_seconds * 2.6 * s.news_voice_speed  # ~2,6 mots/s à vitesse normale
+    target = target_words(kind)
     if n_words < max(35, target * 0.4):
         out.append(f"script trop court ({n_words} mots)")
     if n_words > target * 1.9:
@@ -182,24 +221,28 @@ def problems(sc: Script, facts: str) -> list[str]:
     return out
 
 
-def write(title: str, facts: str, source: str) -> Script | None:
-    """Script vérifié, ou None (IA indisponible, ou deux essais ratés).
+def write(title: str, facts: str, source: str, kind: str = "news") -> Script | None:
+    """Script vérifié, ou None (IA indisponible, ou deux essais ratés). kind : news (actu) ou story (histoire).
     Un 2e essai n'est demandé que si le 1er est inutilisable (pas du JSON, ou trop court une fois nettoyé)."""
     s = get_settings()
     if llm.provider() != "ollama":
         log.info("Actu : IA locale indisponible, pas de script.")
         return None
-    words = s.news_target_seconds * 2.6 * s.news_voice_speed
-    prompt = PROMPT.format(topic=s.news_topic, source=source or "média", title=title, facts=facts[:2500],
-                           n_min=5, n_max=8, w_min=int(words * 0.85), w_max=int(words * 1.2),
-                           seconds=int(s.news_target_seconds))
+    words = target_words(kind)
+    story = kind == "story"
+    seconds = s.story_target_seconds if story else s.news_target_seconds
+    n_min, n_max = max(5, int(words / 18)), max(8, int(words / 10))
+    prompt = (STORY_PROMPT if story else PROMPT).format(
+        topic=s.news_topic, source=source or "média", title=title, facts=facts[:5000 if story else 3000],
+        n_min=n_min, n_max=n_max, w_min=int(words * 0.85), w_max=int(words * 1.2), seconds=int(seconds))
+    max_tokens = 600 + n_max * 110
     facts_all = facts + " " + title
     last: list[str] = []
     for attempt in range(2):
         try:
             sc = parse(llm._ask_ollama(prompt if not last else prompt + "\n\nATTENTION, essai précédent refusé : "
                                        + "; ".join(last) + ". Corrige ça.", timeout=s.news_llm_timeout,
-                                       max_tokens=1300))
+                                       max_tokens=max_tokens, num_ctx=8192))
         except Exception as e:
             log.warning("Script d'actu : IA en erreur (%s)", e)
             return None
@@ -209,7 +252,7 @@ def write(title: str, facts: str, source: str) -> Script | None:
         removed = sanitize(sc, facts_all, title)
         if removed:
             log.info("Script d'actu : retiré (chiffre absent de l'article) : %s", ", ".join(removed))
-        last = problems(sc, facts_all)
+        last = problems(sc, facts_all, kind)
         if not last:
             if not sc.question:
                 sc.question = engage.clean_question(sc.sentences[-1]) if sc.sentences[-1].endswith("?") else ""
