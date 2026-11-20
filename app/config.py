@@ -170,6 +170,10 @@ class Settings(BaseSettings):
     news_accent: str = "#FFD400"  # couleur des cartes générées quand aucune image libre ne convient
     pexels_api_key: str = ""  # clé gratuite pexels.com/api : vidéos et photos libres de droits (recommandé)
     news_wikimedia: bool = True  # images sous licence libre de Wikimedia Commons (auteur crédité en description)
+    news_motion: bool = True  # habillage animé (cartes 3D, mots animés, chiffres, transitions, whoosh)
+    news_map: bool = True  # survol « vu d'en haut » du lieu de l'actu en ouverture
+    news_map_tiles: str = ("https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg")
+    news_sfx_volume: float = 0.35  # volume des « whoosh » des transitions (0 = aucun)
     news_music_volume: float = 0.14  # volume de la musique de fond (fichiers mp3 libres de droits dans data/music)
 
     # Notifications (laisser vide pour désactiver)

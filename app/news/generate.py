@@ -158,6 +158,55 @@ def header_text(hook: str, title: str, text: str, emojis: bool = True) -> str:
     return hooks.add_emojis(base, text)
 
 
+def map_shot(place: str):
+    """Survol « vu d'en haut » du lieu de l'actu, si on le trouve et que les tuiles satellite répondent."""
+    from . import geo, motion
+
+    s = get_settings()
+    if not (s.news_map and s.news_motion and place):
+        return None
+    found = geo.geocode(place)
+    if not found:
+        return None
+    lon, lat, name, kind = found
+    zoom = geo.zoom_for(kind)
+    tiles = geo.Tiles()
+    need = motion.map_tiles_needed(lon, lat, 120, zoom)
+    missing = tiles.prefetch(need)
+    if missing > len(need) * 0.2:
+        log.info("Actu : survol de « %s » abandonné (%d/%d tuiles satellite manquantes)", name, missing, len(need))
+        return None
+    return visuals.Shot(None, "map", credit=geo.CREDIT, text=name,
+                        meta={"lon": lon, "lat": lat, "zoom": zoom, "fetch": tiles.get})
+
+
+def pick_shots(sc, cuts, work: Path) -> tuple[list, list]:
+    """Une illustration par plan : survol du lieu en ouverture, chiffres clés animés (2 max), sinon vidéo /
+    photo libre de droits (carte 3D), sinon mots forts animés."""
+    s = get_settings()
+    used: set[str] = set()
+    shots, counters, seen_sentence = [], 0, set()
+    for j, (i, _, _) in enumerate(cuts):
+        shot = None
+        if j == 0:
+            try:
+                shot = map_shot(sc.place)
+            except Exception as e:
+                log.info("Actu : survol impossible : %s", e)
+        first_of_sentence = i not in seen_sentence
+        seen_sentence.add(i)
+        # pas de compteur qui défile sur un bilan de victimes
+        if shot is None and s.news_motion and counters < 2 and first_of_sentence and j > 0 \
+                and not _GRAVE.search(sc.sentences[i]):
+            shot = visuals.number_shot(sc.sentences[i])
+            counters += shot is not None
+        if shot is None:
+            query = sc.visuals[i] if i < len(sc.visuals) else ""
+            shot = visuals.find(query, sc.sentences[i], work / "media", used, j, prefer_video=j % 2 == 0)
+        shots.append(shot)
+    return shots, []
+
+
 def make(video_id: int, item: feeds.Item) -> int | None:
     """Fabrique la vidéo d'un sujet. Renvoie l'id du clip, ou None si le sujet est écarté."""
     s = get_settings()
@@ -180,12 +229,8 @@ def make(video_id: int, item: feeds.Item) -> int | None:
     spoken = tts.speak(sc.sentences, work / "voice.wav")
     total = round(spoken[-1].end + montage.TAIL, 3)
     cuts = montage.plan(spoken, total)
-    used: set[str] = set()
-    shots, credits = [], []
-    for j, (i, _, _) in enumerate(cuts):
-        query = sc.visuals[i] if i < len(sc.visuals) else ""
-        shot = visuals.find(query, sc.sentences[i], work / "media", used, j, prefer_video=j % 2 == 0)
-        shots.append(shot)
+    shots, credits = pick_shots(sc, cuts, work)
+    for shot in shots:
         if shot.credit and shot.credit not in credits:
             credits.append(shot.credit)
     _set(video_id, progress=35)

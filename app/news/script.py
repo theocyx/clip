@@ -38,8 +38,10 @@ Règles :
 - "hook" : 4 à 8 mots affichés en gros en haut de la vidéo, terminés par 1 emoji.
 - "score" : note de 1 à 10 de l'intérêt du sujet pour le grand public de la chaîne (7+ seulement si les gens
   vont le partager ou en débattre ; promo, bon plan, test produit ou sujet trop pointu : 3 maximum).
+- "place" : le lieu principal de l'actu s'il y en a un clairement (« Marseille, France », « Ukraine »),
+  sinon "".
 - "hashtags" : 3 à 5 hashtags en minuscules sans espace, du plus précis au plus large.
-Réponds UNIQUEMENT en JSON : {{"score": <1-10>, "title": "...", "hook": "...", "sentences": [{{"text": "...", "visual": "..."}}], "question": "...", "hashtags": ["..."]}}"""
+Réponds UNIQUEMENT en JSON : {{"score": <1-10>, "title": "...", "hook": "...", "sentences": [{{"text": "...", "visual": "..."}}], "question": "...", "place": "...", "hashtags": ["..."]}}"""
 
 _NUM = re.compile(r"\d+(?:[.,]\d+)?")
 
@@ -53,6 +55,7 @@ class Script:
     question: str = ""
     hashtags: list[str] = field(default_factory=list)
     score: float = 0.0
+    place: str = ""
 
     @property
     def text(self) -> str:
@@ -102,7 +105,8 @@ def parse(content: str) -> Script | None:
     return Script(title=engage.tidy_title(str(data.get("title", "")).strip().strip('"'))[:90],
                   hook=str(data.get("hook", "")).strip().strip('"')[:70], sentences=sentences, visuals=visuals,
                   question=engage.clean_question(str(data.get("question", ""))) if data.get("question") else "",
-                  hashtags=list(dict.fromkeys(tags))[:5], score=score)
+                  hashtags=list(dict.fromkeys(tags))[:5], score=score,
+                  place=hooks.strip_emojis(str(data.get("place") or "")).strip(' ."')[:80])
 
 
 def _bad(text: str, facts: str) -> bool:

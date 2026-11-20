@@ -125,35 +125,56 @@ def pick_music() -> Path | None:
     return random.choice(tracks) if tracks else None
 
 
+TRANSITION = 0.28  # durée d'une transition (s)
+TRANSITIONS = ["zoomin", "smoothup", "slideleft", "circleopen", "hblur", "smoothleft", "slideup", "radial"]
+HEADER_IN = 0.45  # le titre glisse depuis le haut pendant ces secondes
+
+
 def final_cmd(video: Path, voice: Path, header: str, ass_name: str, out: Path, total: float, codec: str,
-              music: Path | None = None) -> list[str]:
+              music: Path | None = None, sfx: Path | None = None, fx: bool = True) -> list[str]:
+    """fx : grain léger + vignette, et titre qui glisse depuis le haut au début."""
     s = get_settings()
     cmd = ["ffmpeg", "-y", "-v", "error"]
     if codec.endswith("_vaapi"):
         cmd += ["-vaapi_device", s.vaapi_device or "/dev/dri/renderD128"]
     cmd += ["-i", str(video), "-i", str(voice)]
     n = 2
-    vf = "[0:v]"
+    vf = "[0:v]" + ("vignette=angle=PI/5,noise=alls=5:allf=t," if fx else "")
     if header:
-        cmd += ["-i", header]
-        vf += f"[{n}:v]overlay=(W-w)/2:{HEADER_Y}:format=auto,"
+        cmd += ["-loop", "1", "-i", header]
+        y = (f"if(lt(t\\,{HEADER_IN})\\,-h+({HEADER_Y}+h)*(1-pow(1-t/{HEADER_IN}\\,3))\\,{HEADER_Y})"
+             if fx else str(HEADER_Y))
+        vf += f"null[base];[base][{n}:v]overlay=x=(W-w)/2:y='{y}':shortest=1:format=auto,"
         n += 1
     vf += f"ass={ass_name}"
     if codec.endswith("_vaapi"):
         vf += ",format=nv12,hwupload"
     vf += "[v]"
     af = f"[1:a]aresample=44100,aformat=channel_layouts=stereo,apad=whole_dur={total:.2f}"
+    extra = []
     if music:
         cmd += ["-stream_loop", "-1", "-i", str(music)]
         fade = max(0.0, total - 1.5)
         af += ",asplit=2[vo][sc];"
         af += (f"[{n}:a]aresample=44100,aformat=channel_layouts=stereo,volume={s.news_music_volume:.3f},"
                f"atrim=0:{total:.2f},afade=t=out:st={fade:.2f}:d=1.5[mu];"
-               "[mu][sc]sidechaincompress=threshold=0.02:ratio=6:attack=15:release=350[md];"
-               "[vo][md]amix=inputs=2:duration=first:normalize=0,")
+               "[mu][sc]sidechaincompress=threshold=0.02:ratio=6:attack=15:release=350[md];")
+        extra.append("[md]")
         n += 1
+        voice_label = "[vo]"
     else:
-        af += ","
+        af += "[vo];"
+        voice_label = "[vo]"
+    if sfx and s.news_sfx_volume > 0:
+        cmd += ["-i", str(sfx)]
+        af += (f"[{n}:a]aresample=44100,aformat=channel_layouts=stereo,volume={s.news_sfx_volume:.3f},"
+               f"apad=whole_dur={total:.2f}[fx];")
+        extra.append("[fx]")
+        n += 1
+    if extra:
+        af += voice_label + "".join(extra) + f"amix=inputs={1 + len(extra)}:duration=first:normalize=0,"
+    else:
+        af += voice_label + "anull,"
     af += render.AUDIO + "[a]"
     cmd += ["-filter_complex", vf + ";" + af, "-map", "[v]", "-map", "[a]", "-t", f"{total:.2f}"]
     if codec.endswith("_vaapi"):
@@ -164,32 +185,107 @@ def final_cmd(video: Path, voice: Path, header: str, ass_name: str, out: Path, t
     return cmd
 
 
+def join_cmd(parts: list[Path], durs: list[float], out: Path, transitions: bool = True) -> list[str]:
+    """Plans bout à bout. Avec transitions, chaque plan (sauf le dernier) dure TRANSITION de plus et se fond
+    dans le suivant (zoom, glissement, flou…) au moment exact du changement de phrase."""
+    cmd = ["ffmpeg", "-y", "-v", "error"]
+    for p in parts:
+        cmd += ["-i", str(p)]
+    n = len(parts)
+    if n == 1:
+        return cmd + ["-c", "copy", str(out)]
+    if transitions:
+        f, prev, offset = "", "[0:v]", 0.0
+        for k in range(1, n):
+            offset += durs[k - 1]
+            lab = f"[x{k}]"
+            f += (f"{prev}[{k}:v]xfade=transition={TRANSITIONS[(k - 1) % len(TRANSITIONS)]}:"
+                  f"duration={TRANSITION}:offset={offset:.3f}{lab};")
+            prev = lab
+        f = f.rstrip(";")
+        last = prev
+    else:
+        f = "".join(f"[{k}:v]trim=0:{durs[k]:.3f},setpts=PTS-STARTPTS[t{k}];" for k in range(n))
+        f += "".join(f"[t{k}]" for k in range(n)) + f"concat=n={n}:v=1:a=0[j]"
+        last = "[j]"
+    return cmd + ["-filter_complex", f, "-map", last, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                  "-pix_fmt", "yuv420p", "-r", str(FPS), str(out)]
+
+
 def _run(cmd: list[str], cwd: Path | None = None) -> None:
     proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg : {proc.stderr.strip()[-600:]}")
 
 
+def render_shot(shot, dur: float, seg: Path, idx: int, work: Path, fx: bool) -> Path:
+    """Un plan en MP4 : vidéo libre de droits recadrée, ou animation calculée image par image."""
+    from . import motion as anim, visuals
+
+    s = get_settings()
+    accent = anim.rgb(s.news_accent)
+    frames = max(1, round(dur * FPS))
+    if shot.kind == "video":
+        _run(shot_cmd(shot.path, "video", dur, seg, idx, offset=0.3))
+        return seg
+    if not fx:  # habillage animé coupé : image fixe avec mouvement de caméra simple
+        if shot.kind == "image":
+            path = visuals.frame_image(shot.path, work / f"frame_{idx}.jpg")
+        else:
+            path = visuals.card(shot.text or "INFO", work / f"card_{idx}.jpg").path
+        _run(shot_cmd(path, "image", dur, seg, idx))
+        return seg
+    if shot.kind == "image":
+        gen = anim.parallax(shot.path, frames, idx)
+    elif shot.kind == "counter":
+        gen = anim.counter(shot.text, shot.meta.get("unit", ""), frames, idx, accent)
+    elif shot.kind == "map":
+        from . import geo
+        gen = anim.map_fly(shot.meta["lon"], shot.meta["lat"], shot.text, frames, shot.meta["fetch"], accent,
+                           z1=shot.meta.get("zoom", 12.5), attribution=geo.ATTRIBUTION)
+    else:
+        gen = anim.kinetic(shot.text or "INFO", frames, idx, accent)
+    return anim.write_frames(gen, frames, seg)
+
+
 def build(shots: list, spoken: list[Spoken], voice: Path, hook: str, source: str, out: Path, work: Path,
           on_progress=None) -> float:
     """shots : une illustration (visuals.Shot) par plan de `plan()`. Renvoie la durée de la vidéo."""
+    from . import motion as anim
+
     s = get_settings()
+    fx = s.news_motion
     total = round(spoken[-1].end + TAIL, 3)
     cuts = plan(spoken, total)
     if len(shots) != len(cuts):
         raise ValueError("un plan = une illustration")
-    parts = []
+    parts, durs = [], []
     for j, ((_, a, b), shot) in enumerate(zip(cuts, shots)):
+        dur = b - a
+        extra = TRANSITION if fx and j + 1 < len(cuts) else 0.0
         seg = work / f"shot_{j:02d}.mp4"
-        _run(shot_cmd(shot.path, shot.kind, b - a, seg, j, offset=0.3 if shot.kind == "video" else 0))
+        try:
+            render_shot(shot, dur + extra, seg, j, work, fx)
+        except Exception as e:  # un plan raté ne doit pas faire échouer la vidéo : mots animés à la place
+            log.warning("Plan %d (%s) raté, remplacé : %s", j, shot.kind, str(e)[-200:])
+            from .visuals import Shot
+            render_shot(Shot(None, "kinetic", text=shot.text or "INFO"), dur + extra, seg, j, work, fx)
         parts.append(seg)
+        durs.append(dur)
         if on_progress:
             on_progress(80 * (j + 1) / len(cuts))
-    listing = work / "shots.txt"
-    listing.write_text("".join(f"file '{p.name}'\n" for p in parts))
     video = work / "shots.mp4"
-    _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", listing.name, "-c", "copy",
-          video.name], cwd=work)
+    try:
+        _run(join_cmd(parts, durs, video, transitions=fx))
+    except RuntimeError as e:
+        if not fx:
+            raise
+        log.warning("Transitions impossibles, plans collés simplement : %s", str(e)[-200:])
+        _run(join_cmd(parts, durs, video, transitions=False))
+    sfx = None
+    if fx and s.news_sfx_volume > 0 and len(cuts) > 1:
+        cut_times = [c[1] + TRANSITION / 2 for c in cuts[1:]]
+        sfx = anim.whoosh_track(cut_times, total, work / "whoosh.wav")
     header, _ = header_png(hook, s.news_badge, work / "header.png")
     out.parent.mkdir(parents=True, exist_ok=True)
     ass_name = out.stem + ".ass"
@@ -199,12 +295,12 @@ def build(shots: list, spoken: list[Spoken], voice: Path, hook: str, source: str
     args = (video.resolve(), voice.resolve(), str(Path(header).resolve()) if header else "", ass_name,
             out.resolve(), total)
     try:
-        _run(final_cmd(*args, codec=codec, music=music), cwd=out.parent)
+        _run(final_cmd(*args, codec=codec, music=music, sfx=sfx, fx=fx), cwd=out.parent)
     except RuntimeError as e:
         if not codec.endswith("_vaapi"):
             raise
         log.warning("Encodage GPU impossible pour l'actu, passage au CPU : %s", str(e)[-200:])
-        _run(final_cmd(*args, codec="libx264", music=music), cwd=out.parent)
+        _run(final_cmd(*args, codec="libx264", music=music, sfx=sfx, fx=fx), cwd=out.parent)
     if on_progress:
         on_progress(100)
     return total
