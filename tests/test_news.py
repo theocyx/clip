@@ -463,3 +463,34 @@ def test_overlay_titles_chapters_and_script_fields():
     sc.sentences[1] = "Il y a 999 trains supprimés."
     script.sanitize(sc, "Grève à Lyon.")
     assert sc.sentences == ["Grève à Lyon."] and sc.places == ["Lyon, France"] and sc.titles == ["GRÈVE"]
+
+
+def test_openverse_and_pixabay_sources(tmp_path, monkeypatch):
+    res = [{"id": "a", "url": "https://x/a.jpg", "license": "by-nc", "width": 2000},
+           {"id": "b", "url": "https://x/b.jpg", "license": "by-nd", "width": 2000},
+           {"id": "c", "url": "https://x/c.jpg", "license": "by", "width": 500},
+           {"id": "d", "url": "https://x/d.jpg", "license": "by-sa", "license_version": "4.0", "width": 1600,
+            "creator": "Jean", "foreign_landing_url": "https://flickr.com/d"},
+           {"id": "e", "url": "https://x/e.jpg", "license": "cc0", "width": 1600}]
+    pick = visuals.openverse_pick(res, set())
+    assert pick["id"] == "openverse-d" and pick["license"] == "CC BY-SA 4.0" and pick["artist"] == "Jean"
+    assert visuals.openverse_pick(res, {"openverse-d"})["license"] == "CC0"
+    assert visuals.pixabay_video_file({"large": {"url": "l", "width": 3840}, "medium": {"url": "m", "width": 1920},
+                                       "small": {"url": "s", "width": 1280}})["url"] == "s"
+    calls = []
+    monkeypatch.setattr(visuals, "pexels", lambda q, w, u, v=True: calls.append(("pexels", q)))
+    monkeypatch.setattr(visuals, "pixabay", lambda q, w, u, v=True: calls.append(("pixabay", q)))
+    monkeypatch.setattr(visuals, "commons", lambda q, w, u: calls.append(("commons", q)))
+    from PIL import Image
+    Image.new("RGB", (900, 900), (10, 20, 30)).save(tmp_path / "o.jpg")
+
+    def fake_openverse(q, w, u):
+        calls.append(("openverse", q))
+        return visuals.Shot(tmp_path / "o.jpg", "image", "Image : Jean (CC0), via Openverse", "openverse-x") \
+            if q == "train station" else None
+
+    monkeypatch.setattr(visuals, "openverse", fake_openverse)
+    shot = visuals.find("train station night", "Grève à la gare.", tmp_path, set(), 0)
+    assert shot.ident == "openverse-x" and shot.credit.startswith("Image : Jean")
+    assert [c[0] for c in calls[:4]] == ["pexels", "pixabay", "openverse", "commons"]
+    assert ("openverse", "train station") in calls and ("openverse", "train") not in calls[:4]

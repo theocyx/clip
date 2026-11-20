@@ -99,6 +99,91 @@ def pexels(query: str, work: Path, used: set[str], want_video: bool = True) -> S
     return None
 
 
+# ---------- Pixabay (clé gratuite, photos et vidéos libres, sans attribution obligatoire) ----------
+
+def pixabay_video_file(videos: dict) -> dict | None:
+    """Version de la vidéo la plus proche de 1080 px de large sans dépasser ~2K."""
+    ok = [v for v in (videos or {}).values() if isinstance(v, dict) and v.get("url") and v.get("width")
+          and v["width"] <= 2600]
+    return min(ok, key=lambda v: abs(v["width"] - 1080)) if ok else None
+
+
+def pixabay(query: str, work: Path, used: set[str], want_video: bool = True) -> Shot | None:
+    key = get_settings().pixabay_api_key
+    if not key or not query:
+        return None
+    base = {"key": key, "q": query[:100], "safesearch": "true", "per_page": 20}
+    try:
+        if want_video:
+            r = httpx.get("https://pixabay.com/api/videos/", timeout=20, params=base)
+            r.raise_for_status()
+            for v in r.json().get("hits", []):
+                ident = f"pixabay-v{v.get('id')}"
+                f = pixabay_video_file(v.get("videos") or {})
+                if ident in used or not f or (v.get("duration") or 0) < 3:
+                    continue
+                p = _download(f["url"], work / f"{ident}.mp4")
+                if p:
+                    used.add(ident)
+                    return Shot(p, "video", "", ident)
+        r = httpx.get("https://pixabay.com/api/", timeout=20, params={**base, "image_type": "photo"})
+        r.raise_for_status()
+        for ph in r.json().get("hits", []):
+            ident = f"pixabay-p{ph.get('id')}"
+            url = ph.get("largeImageURL") or ph.get("webformatURL")
+            if ident in used or not url:
+                continue
+            p = _download(url, work / f"{ident}.jpg")
+            if p:
+                used.add(ident)
+                return Shot(p, "image", "", ident)
+    except Exception as e:
+        log.info("Pixabay indisponible pour « %s » : %s", query, e)
+    return None
+
+
+# ---------- Openverse (sans clé : images sous licence libre de Flickr, Wikimedia, musées…) ----------
+
+def openverse_pick(results: list[dict], used: set[str]) -> dict | None:
+    """Première image libre pour un usage commercial et modifiable (CC0, domaine public, BY, BY-SA)."""
+    for res in results:
+        lic = str(res.get("license") or "").lower()
+        ident = f"openverse-{res.get('id')}"
+        if ident in used or lic not in ("cc0", "pdm", "by", "by-sa") or not res.get("url"):
+            continue
+        if (res.get("width") or 0) and res["width"] < 800:
+            continue
+        if str(res.get("filetype") or "").lower() in ("svg", "gif"):
+            continue
+        label = {"cc0": "CC0", "pdm": "domaine public"}.get(lic, f"CC {lic.upper()} {res.get('license_version') or ''}")
+        return {"id": ident, "url": res["url"], "license": label.strip(),
+                "artist": strip_html(str(res.get("creator") or ""))[:80] or "auteur inconnu",
+                "page": res.get("foreign_landing_url") or ""}
+    return None
+
+
+def openverse(query: str, work: Path, used: set[str]) -> Shot | None:
+    if not get_settings().news_openverse or not query:
+        return None
+    try:
+        r = httpx.get("https://api.openverse.org/v1/images/", headers={"User-Agent": UA}, timeout=20, params={
+            "q": query, "license_type": "commercial,modification", "page_size": 20, "mature": "false"})
+        r.raise_for_status()
+        pick = openverse_pick(r.json().get("results") or [], used)
+    except Exception as e:
+        log.info("Openverse indisponible pour « %s » : %s", query, e)
+        return None
+    if not pick:
+        return None
+    ext = Path(pick["url"].split("?")[0]).suffix.lower()
+    p = _download(pick["url"], work / f"{pick['id']}{ext if ext in ('.jpg', '.jpeg', '.png', '.webp') else '.jpg'}")
+    if not p:
+        return None
+    used.add(pick["id"])
+    return Shot(p, "image", f"Image : {pick['artist']} ({pick['license']}), via Openverse — {pick['page']}",
+                pick["id"])
+
+
 # ---------- Wikimedia Commons ----------
 
 def commons_pick(pages: dict, used: set[str]) -> dict | None:
@@ -231,10 +316,15 @@ def frame_image(src: Path, out: Path) -> Path:
 
 
 def find(query: str, sentence: str, work: Path, used: set[str], idx: int, prefer_video: bool = True) -> Shot:
-    """Illustration d'une phrase : Pexels, puis Wikimedia Commons, puis carte générée (jamais d'échec)."""
-    shot = pexels(query, work, used, prefer_video) or commons(query, work, used)
-    if shot is None and query and len(query.split()) > 1:  # requête plus large : premier mot-clé seul
-        shot = pexels(query.split()[0], work, used, prefer_video)
+    """Illustration d'une phrase : Pexels, Pixabay (si une clé est donnée), puis Openverse et Wikimedia Commons
+    (sans clé), sinon mots forts animés (jamais d'échec)."""
+    def search(q: str) -> Shot | None:
+        return (pexels(q, work, used, prefer_video) or pixabay(q, work, used, prefer_video)
+                or openverse(q, work, used) or commons(q, work, used))
+
+    shot = search(query) if query else None
+    if shot is None and query and len(query.split()) > 1:  # requête plus large : deux premiers mots-clés
+        shot = search(" ".join(query.split()[:2]) if len(query.split()) > 2 else query.split()[0])
     if shot is None:  # pas d'image libre : mots forts animés
         return Shot(None, "kinetic", text=key_words(sentence))
     if shot.kind == "image":
