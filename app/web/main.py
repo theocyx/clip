@@ -252,7 +252,7 @@ def schedule(hours: str = Form(""), gap: str = Form(""), reset: str = Form(""), 
 
 
 @app.post("/news")
-def news_settings(action: str = Form(...)):
+def news_settings(action: str = Form(...), next: str = Form("/")):
     """Vidéos d'actu : on / off, ou une vidéo tout de suite."""
     if action == "on":
         news.set_enabled(True)
@@ -262,7 +262,7 @@ def news_settings(action: str = Form(...)):
         news.request_now()
     else:
         raise HTTPException(400, "Action inconnue")
-    return back("/")
+    return back(next if next in ("/", "/videos") else "/")
 
 
 @app.post("/gta6")
@@ -367,7 +367,38 @@ def delete_source(sid: int):
 STEPS = ("Téléchargement", "Transcription", "Analyse IA", "Montage", "Publication")
 STEP_OF = {"recording": 0, "downloading": 0, "downloaded": 1, "transcribing": 1, "analyzing": 2,
            "rendering": 3, "done": 4}
-ACTIVE = {"recording", "downloading", "downloaded", "transcribing", "analyzing", "rendering"}
+ACTIVE = {"recording", "downloading", "downloaded", "transcribing", "analyzing", "rendering", "generating",
+          "news_retry"}
+# vidéos d'actu : étapes de app/news/generate.make (avancement global 0-100 → étape en cours)
+NEWS_STEPS = (("Article", 5), ("Script IA", 15), ("Voix + images", 35), ("Montage", 95), ("Publication", 100))
+
+
+def news_steps(v: Video, pub: tuple[int, int] | None = None) -> list[dict] | None:
+    if v.status not in ("generating", "news_retry", "done"):
+        return None
+    p = 100.0 if v.status == "done" else float(v.progress or 0)
+    steps, lo = [], 0.0
+    for i, (name, hi) in enumerate(NEWS_STEPS):
+        if i == 4:
+            done, total = pub or (0, 0)
+            if v.status != "done":
+                steps.append({"name": name, "pct": 0, "state": "todo", "note": ""})
+            else:
+                steps.append({"name": name, "pct": round(100.0 * done / total) if total else 0,
+                              "state": "done" if total and done == total else "run" if total else "todo",
+                              "note": f"{done}/{total}" if total else "rien en file"})
+            break
+        if v.status == "news_retry":
+            state, pct, note = ("wait", 0, "en attente") if i == 0 else ("todo", 0, "")
+        elif p >= hi:
+            state, pct, note = "done", 100, ""
+        elif p >= lo:
+            state, pct, note = "run", round(100 * (p - lo) / (hi - lo)), "en cours"
+        else:
+            state, pct, note = "todo", 0, ""
+        steps.append({"name": name, "pct": pct, "state": state, "note": note})
+        lo = hi
+    return steps
 
 
 def publish_counts(s, video_ids: list[int]) -> dict[int, tuple[int, int]]:
@@ -386,6 +417,8 @@ def publish_counts(s, video_ids: list[int]) -> dict[int, tuple[int, int]]:
 
 def video_steps(v: Video, pub: tuple[int, int] | None = None) -> list[dict] | None:
     """Avancement de chaque étape d'une vidéo, ou None si elle n'est pas (ou plus) en traitement."""
+    if news.is_news(v):
+        return news_steps(v, pub)
     cur = STEP_OF.get(v.status)
     if cur is None:
         return None
@@ -423,7 +456,8 @@ def list_videos(request: Request, all: bool = False):
             q = q.where(Video.status != "skipped")
         items = s.exec(q).all()
         ctx = progress_context(s, items)
-    return templates.TemplateResponse(request, "videos.html", {"videos": items, "all": all, **ctx})
+    return templates.TemplateResponse(request, "videos.html", {"videos": items, "all": all, "news": news.status(),
+                                                               **ctx})
 
 
 @app.get("/videos/progress")
