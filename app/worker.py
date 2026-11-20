@@ -18,6 +18,7 @@ from sqlmodel import col, select
 from . import curate, db, discovery, gta6, health, learning, maintenance, notify, platforms
 from .config import get_settings
 from .models import Clip, ClipInfo, Post, Source, Video, now
+from .news import generate as news
 from .pipeline import chat, engage, process, sources, sponsor
 from .pipeline import tags as hashtags
 from .publish import creds, tiktok, youtube
@@ -429,6 +430,8 @@ def clip_question(clip: Clip) -> str:
 
 def description(clip: Clip, video: Video) -> tuple[str, list[str]]:
     s = get_settings()
+    if news.is_news(video):  # vidéo d'actu : source et crédits des images au lieu du streamer
+        return news.description(clip, clip_data(clip), hashtags.split_tags(s.hashtags), clip_question(clip))
     name, channel = credit(video)
     tag = streamer_tag(name)
     keywords = ""
@@ -485,6 +488,9 @@ def tiktok_caption(clip: Clip, desc: str, tags: list[str]) -> str:
     from .pipeline import hook as hooks
 
     s = get_settings()
+    info = clip_data(clip)
+    if info.get("kind") == "news":
+        return news.caption(clip, info, s.tiktok_max_hashtags)
     who = next((ln.split(": ", 1)[1] for ln in desc.splitlines() if ln.startswith("🎮 Streamer : ")), "")
     title = clip.title.strip()
     if not hooks.emojis_in(title):
@@ -842,6 +848,11 @@ def reset_interrupted():
             p.status = "pending"
             s.add(p)
         s.commit()
+    news.reset_interrupted()
+
+
+def news_loop():
+    news.loop(stop)
 
 
 def shutdown(*_):
@@ -876,7 +887,7 @@ def main():
     crashed = health.started("worker")
     threads = [threading.Thread(target=f, daemon=True, name=f.__name__)
                for f in (poll_loop, record_loop, download_loop, process_loop, publish_loop, stats_loop, maintenance_loop,
-                         discover_loop)]
+                         discover_loop, news_loop)]
     for t in threads:
         t.start()
     threading.Thread(target=sponsor_purge, daemon=True, name="sponsor_purge").start()

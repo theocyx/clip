@@ -131,6 +131,19 @@ Le tableau de bord affiche le disque, la température du CPU, la mémoire, la ch
 
 Toutes les 30 min (10 min pendant le mode GTA 6), Clip cherche les lives français sur Twitch (catégories `DISCOVER_GAMES`, par défaut GTA VI et GTA V) et les lives GTA FR sur YouTube, et ajoute ceux qui ont au moins `DISCOVER_MIN_VIEWERS` (150) spectateurs : filtre de titre GTA, lives seulement (pas de rediffusions), `DISCOVER_PER_RUN` (2) par recherche et `DISCOVER_MAX_SOURCES` (10) au total pour ménager le CPU. Ils sont marqués « auto » dans Sources ; une chaîne qui ne fait plus de GTA depuis `DISCOVER_EXPIRE_DAYS` (7) jours est retirée, et une chaîne que tu supprimes n'est jamais rajoutée. Bouton « Chercher maintenant » et activation/désactivation dans Sources.
 
+## Vidéos d'actu générées automatiquement
+
+En plus des clips, Clip fabrique seul des vidéos d'actu au format des comptes TikTok d'actu : `NEWS_PER_DAY` (3) par jour, entre `NEWS_HOURS` (7-22 h).
+
+1. **Sujet** : lecture des flux RSS de `NEWS_FEEDS` (actu jeux vidéo / GTA 6 par défaut), sujets de moins de 24 h, les plus repris par plusieurs médias en premier. Bons plans / promos écartés (`NEWS_EXCLUDE`), jamais deux fois le même sujet.
+2. **Script** : l'IA locale réécrit les faits de l'article en 6 à 10 phrases courtes (~45 s) : accroche choc, faits, question finale. Un script qui contient un chiffre absent de l'article est refusé. Sujet noté sous `NEWS_MIN_SCORE` (6/10) : écarté.
+3. **Voix off** : Piper, en local (voix `NEWS_VOICE`, téléchargée au premier usage, débit `NEWS_VOICE_SPEED`).
+4. **Images** : un plan par phrase (~3-4 s) avec mouvement de caméra. Vidéos/photos libres de droits Pexels si `PEXELS_API_KEY` (clé gratuite sur pexels.com/api), sinon Wikimedia Commons (licences libres, auteur crédité dans la description), sinon carte générée avec les mots forts. Aucune image d'article n'est reprise.
+5. **Montage** : pastille rouge « ACTU » + titre en boîte blanche en haut, sous-titres mot à mot (mot prononcé en jaune, chiffres en vert), « Source : X » en bas, musique de fond baissée automatiquement sous la voix (mets des mp3 libres de droits dans `data/music/`), son à -14 LUFS.
+6. **Publication** : rangée dans **Clips** et mise dans la file d'envoi comme un clip (`NEWS_PUBLISH=false` pour poster à la main). La description cite la source et les auteurs des images.
+
+Tableau de bord : activer / couper, et « Générer une actu maintenant ». Pour de l'actu générale, par exemple : `NEWS_TOPIC=actualité France et monde` et `NEWS_FEEDS=https://www.francetvinfo.fr/titres.rss,https://www.lemonde.fr/rss/une.xml,https://www.20minutes.fr/feeds/rss-une.xml` (de préférence sur un autre compte que les clips GTA).
+
 ## Réglages utiles (`.env`)
 
 | Variable | Rôle | Défaut |
@@ -161,6 +174,7 @@ Toutes les 30 min (10 min pendant le mode GTA 6), Clip cherche les lives frança
 ## Droits
 
 Clipper le contenu d'autres créateurs sans leur accord peut entraîner des retraits ou des avertissements (strikes). Chaque publication crédite la vidéo d'origine dans la description.
+Vidéos d'actu : texte réécrit à partir des faits (source citée), voix et cartes générées, images uniquement sous licence libre (Pexels, Wikimedia Commons avec crédit) ; la musique doit être libre de droits.
 
 ## Développement
 

@@ -51,6 +51,8 @@ def reason(clip: Clip, video: Video, info: dict, keywords: str = "", bar: float 
            floor: float | None = None) -> str:
     """Pourquoi ce clip ne doit pas partir automatiquement ("" = il peut partir)."""
     cfg = get_settings()
+    if info.get("kind") == "news":  # vidéo d'actu : sujet et script déjà notés à la création
+        return news_reason(clip, info)
     if not cfg.allow_parts and clip.part_count > 1:
         return "Clip en plusieurs parties (la suite n'est presque jamais vue en Shorts)"
     floor = cfg.publish_min_llm if floor is None else floor
@@ -69,6 +71,18 @@ def reason(clip: Clip, video: Video, info: dict, keywords: str = "", bar: float 
     return ""
 
 
+def news_reason(clip: Clip, info: dict) -> str:
+    """Une vidéo d'actu part si son sujet a été bien noté et qu'elle est encore d'actualité (24 h max)."""
+    cfg = get_settings()
+    note = info.get("llm")
+    if cfg.news_min_score > 0 and note is not None and float(note) < cfg.news_min_score:
+        return f"Sujet d'actu trop faible ({float(note):.0f}/10, minimum {cfg.news_min_score:g})"
+    limit = min(cfg.queue_max_hours or 24, 24)
+    if now() - clip.created_at > timedelta(hours=limit):
+        return f"Actu en attente depuis plus de {limit:g} h : plus d'actualité"
+    return ""
+
+
 def published_titles(days: int = 3) -> list[str]:
     with db.session() as s:
         rows = s.exec(select(Clip.title).join(Post, Post.clip_id == Clip.id).where(
@@ -78,6 +92,8 @@ def published_titles(days: int = 3) -> list[str]:
 
 def retitle(clip: Clip, video: Video, info: dict, recent: list[str]) -> str | None:
     """Nouveau titre si celui du clip recopie le live ou un titre déjà publié, sinon None."""
+    if info.get("kind") == "news":  # le titre d'une actu reprend forcément le sujet de l'article
+        return None
     base = _PART.sub("", clip.title or "")
     fixed = engage.fix_title(base, video.title, recent, info.get("text", ""), info.get("hook", ""))
     if fixed and fixed != base:
