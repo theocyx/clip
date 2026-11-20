@@ -32,6 +32,8 @@ Règles :
 - Pour chaque phrase, "visual" = 2 à 4 mots-clés EN ANGLAIS décrivant une image d'illustration générique
   trouvable dans une banque d'images libres (ex. "video game controller", "city night aerial",
   "stock market screen") ; jamais un logo, une personne célèbre ou une œuvre protégée.
+- Ton neutre et factuel : aucune opinion politique, et sur un drame (décès, accident, attentat, guerre)
+  aucun humour ni emoji rieur.
 - "title" : titre de 40 à 70 caractères, oral et intrigant, sans hashtag, jamais trompeur.
 - "hook" : 4 à 8 mots affichés en gros en haut de la vidéo, terminés par 1 emoji.
 - "score" : note de 1 à 10 de l'intérêt du sujet pour le grand public de la chaîne (7+ seulement si les gens

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import threading
 import uuid
@@ -145,6 +146,18 @@ def clip_score(llm_score: float) -> float:
     return round((bar if bar else 1.0) * llm_score / 7, 4)
 
 
+_GRAVE = re.compile(r"\b(mort|morts|décès|décédé|tué|tués|victimes?|meurtre|attentat|guerre|accident|drame|"
+                    r"blessés?|viol|agression|incendie|séisme|otages?)\b", re.I)
+
+
+def header_text(hook: str, title: str, text: str, emojis: bool = True) -> str:
+    """Titre affiché en haut : avec un emoji, sauf sur un sujet grave (pas de 💀 ni de 😂 sur un drame)."""
+    base = hook or title
+    if not emojis or _GRAVE.search(f"{title} {text}"):
+        return hooks.strip_emojis(base)
+    return hooks.add_emojis(base, text)
+
+
 def make(video_id: int, item: feeds.Item) -> int | None:
     """Fabrique la vidéo d'un sujet. Renvoie l'id du clip, ou None si le sujet est écarté."""
     s = get_settings()
@@ -174,7 +187,7 @@ def make(video_id: int, item: feeds.Item) -> int | None:
             credits.append(shot.credit)
     _set(video_id, progress=35)
     out = s.clips_dir / "news" / f"{video_id}.mp4"
-    hook_text = hooks.add_emojis(sc.hook or sc.title, sc.text) if s.hook_emojis else hooks.strip_emojis(sc.hook)
+    hook_text = header_text(sc.hook, sc.title, sc.text, s.hook_emojis)
     montage.build(shots, spoken, work / "voice.wav", hook_text, item.source, out, work,
                   on_progress=lambda p: _set(video_id, progress=35 + p * 0.6))
     info = {"kind": "news", "text": sc.text, "title": sc.title, "hook": hook_text, "question": sc.question,
@@ -304,7 +317,7 @@ def description(clip: Clip, info: dict, hashtags_default: list[str], question_li
 
 def caption(clip: Clip, info: dict, max_tags: int) -> str:
     title = clip.title.strip()
-    if not hooks.emojis_in(title):
+    if not hooks.emojis_in(title) and hooks.emojis_in(info.get("hook", "")):
         emo = hooks.emojis_in(info.get("hook", ""))[:1]
         title = f"{title} {emo[0]}" if emo else hooks.add_emojis(title)
     tags = [t for t in (info.get("hashtags") or []) if t][:max(1, max_tags + 1)]

@@ -151,13 +151,14 @@ class Settings(BaseSettings):
     news_per_day: int = 3  # vidéos d'actu créées par jour (heure de Paris)
     news_interval_minutes: int = 60  # recherche d'un nouveau sujet toutes les N minutes
     news_hours: str = "7-22"  # heures de Paris où l'on cherche un sujet (vide = à toute heure)
-    news_topic: str = "jeux vidéo et GTA 6"  # thème de la chaîne, donné à l'IA
-    # Flux RSS/Atom séparés par des virgules (actu jeux vidéo par défaut ; voir le README pour l'actu générale)
-    news_feeds: str = ("https://www.jeuxvideo.com/rss/rss.xml,https://www.gamekult.com/feed.xml,"
-                       "https://www.millenium.org/rss,"
-                       "https://news.google.com/rss/search?q=GTA+6+OR+Rockstar&hl=fr&gl=FR&ceid=FR:fr")
+    news_topic: str = "actualité France et monde"  # thème de la chaîne, donné à l'IA
+    # Flux RSS/Atom séparés par des virgules (actu générale par défaut ; voir le README pour l'actu jeux vidéo)
+    news_feeds: str = ("https://www.francetvinfo.fr/titres.rss,https://www.lemonde.fr/rss/une.xml,"
+                       "https://www.20minutes.fr/feeds/rss-une.xml,"
+                       "https://news.google.com/rss?hl=fr&gl=FR&ceid=FR:fr")
     news_keywords: str = ""  # seuls les articles dont le titre/résumé contient un de ces mots (vide = tous)
-    news_exclude: str = "promo,bon plan,soldes,black friday,code promo,test :,guide :,astuce"
+    news_exclude: str = ("promo,bon plan,soldes,black friday,code promo,horoscope,météo,loto,euromillions,"
+                         "nécrologie,obsèques,mots croisés,podcast,vidéo :,en direct")
     news_max_age_hours: float = 24  # article plus vieux : ignoré
     news_min_score: float = 6  # note IA (sur 10) minimum du sujet pour en faire une vidéo
     news_publish: bool = True  # envoie les vidéos d'actu dans la file de publication (sinon : seulement dans Clips)
