@@ -77,13 +77,15 @@ def parse(content: str) -> tuple[float, str, str, str] | None:
     return 0.0 if pub else float(data.get("score", 0)), clean("title", 90), clean("hook", 60), clean("question", 90)
 
 
-def _ask_ollama(prompt: str) -> str:
+def _ask_ollama(prompt: str, timeout: float = 600, max_tokens: int | None = None) -> str:
     s = get_settings()
+    options = {"temperature": 0.5, "num_ctx": 4096}
+    if max_tokens:
+        options["num_predict"] = max_tokens
     r = httpx.post(
         f"{s.ollama_url}/api/generate",
-        json={"model": s.ollama_model, "format": "json", "stream": False, "prompt": prompt,
-              "options": {"temperature": 0.5, "num_ctx": 4096}},
-        timeout=600,
+        json={"model": s.ollama_model, "format": "json", "stream": False, "prompt": prompt, "options": options},
+        timeout=timeout,
     )
     r.raise_for_status()
     return r.json()["response"]

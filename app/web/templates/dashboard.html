@@ -23,22 +23,7 @@
       <button class="{{ '' if gta6.mode == m else 'sec' }}">{{ label }}</button></form>
   {% endfor %}</p>
 </div>
-<div class="card">
-  <h3>📰 Vidéos d'actu auto :
-    {% if news.on %}<span class="ok">actives</span>{% else %}<span class="mut">coupées</span>{% endif %}</h3>
-  <p class="mut">Thème : {{ news.topic }} · {{ news.today }}/{{ news.per_day }} aujourd'hui{% if news.hours %} (sujets cherchés {{ news.hours }} h){% endif %}
-    · {% if news.publish %}envoyées dans la file de publication ({{ news.pending }} en attente){% else %}rangées dans Clips sans publication auto{% endif %}.
-    Images : {% if news.pexels %}Pexels + {% endif %}Wikimedia Commons + cartes générées{% if not news.pexels %} (ajoute PEXELS_API_KEY pour des vidéos libres de droits){% endif %}
-    · Musique : {% if news.music %}{{ news.music }} morceau(x){% else %}aucune (mets des mp3 libres de droits dans data/music){% endif %}.</p>
-  {% for v in news.last %}
-  <div>{{ v.created_at|local }} · {{ v.title[:80] }} ·
-    <span class="{{ 'ok' if v.status == 'done' else ('err' if v.status == 'failed' else 'mut') }}">{{ {'done': 'prête', 'failed': 'échec', 'skipped': 'écartée', 'generating': 'en cours (' ~ (v.progress|int) ~ ' %)', 'news_retry': 'relancée'}.get(v.status, v.status) }}</span>
-    {% if v.error %}<span class="mut">— {{ v.error[:120] }}</span>{% endif %}</div>
-  {% endfor %}
-  <p>{% if news.on %}<form class="inline" method="post" action="/news"><input type="hidden" name="action" value="off"><button class="sec">Couper</button></form>
-    {% else %}<form class="inline" method="post" action="/news"><input type="hidden" name="action" value="on"><button>Activer</button></form>{% endif %}
-    <form class="inline" method="post" action="/news"><input type="hidden" name="action" value="now"><button class="sec">Générer une actu maintenant</button></form></p>
-</div>
+{% include "_news.html" %}
 {% set h = health %}
 <div class="card">
   <h3>🖥️ Santé du serveur :

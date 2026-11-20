@@ -162,8 +162,10 @@ def make(video_id: int, item: feeds.Item) -> int | None:
     """Fabrique la vidéo d'un sujet. Renvoie l'id du clip, ou None si le sujet est écarté."""
     s = get_settings()
     work = work_dir(video_id)
+    log.info("Actu : sujet « %s » (%s), lecture de l'article…", item.title, item.source)
     facts = feeds.fetch_article(item)
     _set(video_id, progress=5)
+    log.info("Actu : écriture du script par l'IA (peut prendre plusieurs minutes)…")
     sc = script.write(item.title, facts, item.source)
     if sc is None:
         _set(video_id, status="skipped", error="Script refusé ou IA indisponible", progress=0)
@@ -174,6 +176,7 @@ def make(video_id: int, item: feeds.Item) -> int | None:
         return None
     (work / "script.json").write_text(json.dumps(sc.__dict__, ensure_ascii=False))
     _set(video_id, progress=15)
+    log.info("Actu : script prêt (%d phrases, note %g/10), voix off et images…", len(sc.sentences), sc.score)
     spoken = tts.speak(sc.sentences, work / "voice.wav")
     total = round(spoken[-1].end + montage.TAIL, 3)
     cuts = montage.plan(spoken, total)
@@ -186,6 +189,7 @@ def make(video_id: int, item: feeds.Item) -> int | None:
         if shot.credit and shot.credit not in credits:
             credits.append(shot.credit)
     _set(video_id, progress=35)
+    log.info("Actu : montage de %d plans…", len(shots))
     out = s.clips_dir / "news" / f"{video_id}.mp4"
     hook_text = header_text(sc.hook, sc.title, sc.text, s.hook_emojis)
     montage.build(shots, spoken, work / "voice.wav", hook_text, item.source, out, work,

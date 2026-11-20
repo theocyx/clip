@@ -4,8 +4,8 @@
 <tr>
   <td><a href="{{ v.url }}" target="_blank" rel="noopener">{{ v.title or v.url }}</a>{% if v.is_live %} <span class="badge">live</span>{% endif %}
     {% if v.error %}<div class="err">{{ v.error[:300] }}</div>{% endif %}
-    <div data-progress="{{ v.id }}" data-status="{{ v.status }}"{% if v.status in ('recording','downloading','downloaded','transcribing','analyzing','rendering') or (v.status == 'done' and steps and steps.get(v.id) and steps[v.id][4].state == 'run') %} data-active="1"{% endif %}>{% with steps=(steps or {}).get(v.id) %}{% include "_progress.html" %}{% endwith %}</div></td>
-  <td><span class="badge">{{ {'new':'en attente','recording':'enregistrement','downloading':'téléchargement','downloaded':'téléchargée','transcribing':'transcription','analyzing':'analyse','rendering':'montage','done':'terminée','failed':'échec','skipped':'ignorée'}.get(v.status, v.status) }}</span></td>
+    <div data-progress="{{ v.id }}" data-status="{{ v.status }}"{% if v.status in ('recording','downloading','downloaded','transcribing','analyzing','rendering','generating','news_retry') or (v.status == 'done' and steps and steps.get(v.id) and steps[v.id][4].state == 'run') %} data-active="1"{% endif %}>{% with steps=(steps or {}).get(v.id) %}{% include "_progress.html" %}{% endwith %}</div></td>
+  <td><span class="badge">{{ {'new':'en attente','recording':'enregistrement','downloading':'téléchargement','downloaded':'téléchargée','transcribing':'transcription','analyzing':'analyse','rendering':'montage','done':'terminée','failed':'échec','skipped':'ignorée','generating':'actu en cours','news_retry':'actu en attente'}.get(v.status, v.status) }}</span></td>
   <td>{% if v.duration %}{{ (v.duration // 60)|int }} min{% endif %}</td>
   <td>
     {% if v.status in ('failed','skipped','done') %}<form class="inline" method="post" action="/videos/{{ v.id }}/retry"><button class="sec">{{ 'Traiter' if v.status=='skipped' else 'Relancer' }}</button></form>{% endif %}

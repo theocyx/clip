@@ -79,10 +79,15 @@ def test_script_parse_and_checks(monkeypatch):
     assert sc.hashtags == ["gta6", "gta", "rockstargames"] and sc.score == 8
     facts = "Rockstar annonce 25 millions de copies vendues en 24 heures."
     assert script.problems(sc, facts) == []
-    # chiffre inventé (40 millions) : refusé
-    bad = script.parse(_llm_json(sentences=[{"text": "Il s'est vendu 40 millions de fois en 24 heures, waouh.",
-                                             "visual": ""}] * 5))
-    assert any("40" in p for p in script.problems(bad, facts))
+    # chiffre inventé (40 millions) : la phrase est retirée, le reste du script est gardé
+    sents = json.loads(_llm_json())["sentences"]
+    bad = script.parse(_llm_json(title="GTA 6 : 40 millions de ventes", hook="40 millions 🤯",
+                                 sentences=sents[:2] + [{"text": "Il s'est vendu 40 millions de fois, waouh.",
+                                                         "visual": ""}] + sents[2:]))
+    assert script.problems(bad, facts) == ["chiffres absents de l'article"]
+    assert script.sanitize(bad, facts, "GTA 6 cartonne") == ["1 phrase(s)", "titre", "accroche"]
+    assert len(bad.sentences) == 5 and len(bad.visuals) == 5 and bad.title == "GTA 6 cartonne" and bad.hook == ""
+    assert script.problems(bad, facts) == []
     assert script.invented_numbers("En 2026, 3 jeux et 25,5 %", "en 2026 on a 25.5 %") == []
     assert script.parse("pas de json") is None
 
@@ -90,13 +95,15 @@ def test_script_parse_and_checks(monkeypatch):
 def test_script_write_retries_then_accepts(monkeypatch):
     from app.pipeline import llm
     monkeypatch.setattr(get_settings(), "news_target_seconds", 12.0)
-    answers = iter([_llm_json(title="GTA 6 : 99 millions !"), _llm_json()])
+    short = json.dumps({"score": 8, "title": "t", "sentences": [{"text": "Trop court.", "visual": ""}]})
+    answers = iter([short, _llm_json(title="GTA 6 : 99 millions !")])
     prompts = []
     monkeypatch.setattr(llm, "provider", lambda: "ollama")
-    monkeypatch.setattr(llm, "_ask_ollama", lambda p: prompts.append(p) or next(answers))
+    monkeypatch.setattr(llm, "_ask_ollama", lambda p, **kw: prompts.append(p) or next(answers))
     sc = script.write("GTA 6 record", "Rockstar : 25 millions de copies en 24 heures.", "Millenium")
-    assert sc and sc.title.startswith("GTA 6 pulvérise")
-    assert "99" in prompts[1] and "refusé" in prompts[1]  # le 2e essai sait pourquoi le 1er a été refusé
+    # 2e essai : le titre au chiffre inventé est remplacé par celui de l'article au lieu de tout jeter
+    assert sc and sc.title == "GTA 6 record" and len(prompts) == 2
+    assert "trop court" in prompts[1] and "refusé" in prompts[1]  # le 2e essai sait pourquoi le 1er a été refusé
     monkeypatch.setattr(llm, "provider", lambda: "none")
     assert script.write("x", "y", "z") is None
 
@@ -286,6 +293,14 @@ def test_dashboard_news_card(monkeypatch):
         c.post("/news", data={"action": "now"}, follow_redirects=False)
         assert generate.take_request()
         assert c.post("/news", data={"action": "x"}).status_code == 400
+        # carte aussi sur la page Vidéos, avec l'étape en cours d'une actu
+        v = generate._new_video(_item(link="https://ex.fr/etapes"))
+        generate._set(v.id, progress=20)
+        r = c.get("/videos")
+        assert "Vidéos d'actu auto" in r.text and "voix + images (20 %)" in r.text and "actu en cours" in r.text
+        assert "Voix + images" in r.text  # étapes de l'actu dans le tableau des vidéos
+        p = c.get(f"/videos/progress?ids={v.id}").json()[str(v.id)]
+        assert p["active"] and "Script IA" in p["html"]
     finally:
         web.app.dependency_overrides.clear()
 

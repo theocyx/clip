@@ -162,7 +162,8 @@ class Settings(BaseSettings):
     news_max_age_hours: float = 24  # article plus vieux : ignoré
     news_min_score: float = 6  # note IA (sur 10) minimum du sujet pour en faire une vidéo
     news_publish: bool = True  # envoie les vidéos d'actu dans la file de publication (sinon : seulement dans Clips)
-    news_target_seconds: float = 45  # durée visée de la voix off
+    news_target_seconds: float = 35  # durée visée de la voix off (le petit modèle local écrit court)
+    news_llm_timeout: float = 1200  # s : l'IA est partagée avec l'analyse des clips, la réponse peut attendre
     news_voice: str = "fr_FR-tom-medium"  # voix Piper (fr_FR-siwis-medium, fr_FR-upmc-medium, fr_FR-gilles-low…)
     news_voice_speed: float = 1.12  # débit de la voix (1 = normal) : un peu rapide, comme les comptes d'actu
     news_badge: str = "ACTU"  # pastille rouge au-dessus du titre (vide = aucune)

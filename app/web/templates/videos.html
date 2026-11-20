@@ -5,6 +5,7 @@
     <input type="url" name="url" placeholder="Lien YouTube ou Twitch (vidéo, rediffusion ou live)" required> <button>Ajouter</button>
   </form>
 </div>
+{% include "_news.html" %}
 <div class="card">
   <p><a href="/videos{{ '' if all else '?all=1' }}">{{ 'Masquer les vidéos ignorées' if all else 'Afficher aussi les vidéos ignorées' }}</a></p>
   {% include "_videos_table.html" %}
