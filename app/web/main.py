@@ -649,6 +649,40 @@ def clip_delete(cid: int):
 
 # ---------- Statistiques et apprentissage ----------
 
+STYLE_FILE = re.compile(r"^[\w-]{1,80}\.(jpg|json)$")
+
+
+@app.get("/style")
+def style_page():
+    """Planches des vidéos modèles analysées par `python -m app.news.probe` (data/style)."""
+    d = get_settings().data_dir / "style"
+    files = sorted(d.glob("*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True) if d.exists() else []
+    items = "".join(f'<h3>{escape(p.stem)}</h3><a href="/style/file/{quote(p.name)}"><img src="/style/file/'
+                    f'{quote(p.name)}" style="max-width:100%"></a>' for p in files)
+    infos = ""
+    for j in sorted(d.glob("*.json")) if d.exists() else []:
+        try:
+            data = json.loads(j.read_text())
+            infos += (f"<li>{escape(data.get('url', j.stem))} : {data.get('duree_s')} s, {data.get('plans')} plans "
+                      f"(~{data.get('duree_moyenne_plan_s')} s par plan)</li>")
+        except ValueError:
+            continue
+    body = (items or "<p>Aucune planche. Lance sur le serveur : <code>docker compose exec worker python -m "
+            "app.news.probe URL…</code></p>")
+    return HTMLResponse(f"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+                        f"<title>Vidéos modèles</title><body style='background:#111;color:#eee;font-family:sans-serif;"
+                        f"padding:16px'><p><a href='/' style='color:#ffd400'>← Clip</a></p><h2>Vidéos modèles</h2>"
+                        f"<ul>{infos}</ul>{body}</body>")
+
+
+@app.get("/style/file/{name}")
+def style_file(name: str):
+    path = get_settings().data_dir / "style" / name
+    if not STYLE_FILE.match(name) or not path.is_file():
+        raise HTTPException(404)
+    return FileResponse(path)
+
+
 @app.get("/stats")
 def stats_page(request: Request, refreshing: bool = False):
     perf = learning.performances()

@@ -58,12 +58,29 @@ def sheet(path: Path, times: list[float], out: Path, cols: int = 4, w: int = 270
     return out
 
 
+def download(url: str, dest: Path, tries: int = 4) -> None:
+    """TikTok refuse parfois (403) : on réessaie avec une pause, en variant le format demandé."""
+    import time
+
+    formats = ["mp4/best[height<=1280]/best", "best", "download_addr-0/best"]
+    err = ""
+    for k in range(tries):
+        proc = subprocess.run(["yt-dlp", "-q", "--no-warnings", "--retries", "5", "-f", formats[k % len(formats)],
+                               "-o", str(dest), url], capture_output=True, text=True)
+        if proc.returncode == 0 and dest.exists():
+            return
+        err = (proc.stderr or "").strip().splitlines()[-1:] or ["erreur inconnue"]
+        err = err[0]
+        time.sleep(3 + 4 * k)
+    raise RuntimeError(err)
+
+
 def probe(url: str, out_dir: Path) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     vid = re.sub(r"\W", "", url.rstrip("/").split("/")[-1].split("?")[0])[-24:] or "video"
     src = out_dir / f"{vid}.mp4"
     if not src.exists():
-        subprocess.run(["yt-dlp", "-q", "-f", "mp4/best[height<=1280]/best", "-o", str(src), url], check=True)
+        download(url, src)
     dur = _duration(src)
     cs = cuts(src)
     sheet(src, [dur * (k + 0.5) / 12 for k in range(12)], out_dir / f"{vid}_planche.jpg")
@@ -86,7 +103,9 @@ def main(argv: list[str]) -> int:
             print(f"OK {url} : {info['duree_s']} s, {info['plans']} plans (~{info['duree_moyenne_plan_s']} s/plan)")
         except Exception as e:
             print(f"ÉCHEC {url} : {e}")
-    print(f"Fichiers dans {out} (sur le serveur : ~/clip/data/style)")
+    print(f"Fichiers dans {out} (sur le serveur : ~/clip/data/style).")
+    print("À voir aussi dans Clip : page /style (lien en bas de la carte « Vidéos d'actu auto »). "
+          "Relance la commande pour réessayer les vidéos en échec (celles réussies ne sont pas retéléchargées).")
     return 0
 
 

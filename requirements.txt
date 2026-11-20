@@ -10,6 +10,8 @@ faster-whisper==1.1.1
 # faster-whisper 1.1.x appelle av.open(metadata_errors=...), retiré de PyAV après la 15
 av==15.1.0
 yt-dlp
+# yt-dlp se fait passer pour un navigateur (TikTok refuse sinon certains téléchargements : 403)
+curl_cffi
 google-api-python-client==2.159.0
 google-auth-oauthlib==1.2.1
 google-auth-httplib2==0.2.0
