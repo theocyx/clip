@@ -1,0 +1,328 @@
+"""Chef d'orchestre des vidéos d'actu : choix du sujet, script, voix, illustrations, montage,
+puis rangement dans Clips (et dans la file d'envoi) comme un clip normal."""
+from __future__ import annotations
+
+import json
+import logging
+import shutil
+import threading
+import uuid
+from datetime import datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from sqlmodel import col, select
+
+from .. import db, platforms
+from ..config import get_settings
+from ..models import Clip, Post, Video, now
+from ..pipeline import engage, hook as hooks
+from . import feeds, montage, script, tts, visuals
+
+log = logging.getLogger(__name__)
+PREFIX = "news:"
+ON_KEY, NOW_KEY = "news_on", "news_now"
+_busy = threading.Lock()
+
+
+# ---------- réglages de l'interface ----------
+
+def enabled() -> bool:
+    v = platforms._get(ON_KEY)
+    return get_settings().news if v is None else v == "1"
+
+
+def set_enabled(on: bool) -> None:
+    platforms._put(ON_KEY, "1" if on else "0")
+
+
+def request_now() -> None:
+    """Bouton « Générer maintenant » : le worker s'en charge à son prochain passage (≤ 30 s)."""
+    platforms._put(NOW_KEY, "1")
+
+
+def take_request() -> bool:
+    if platforms._get(NOW_KEY) == "1":
+        platforms._put(NOW_KEY, None)
+        return True
+    return False
+
+
+def is_news(video: Video | None) -> bool:
+    return bool(video and (video.key or "").startswith(PREFIX))
+
+
+# ---------- planning ----------
+
+def _local_now() -> datetime:
+    return datetime.now(ZoneInfo(get_settings().timezone))
+
+
+def day_start_utc() -> datetime:
+    local = _local_now().replace(hour=0, minute=0, second=0, microsecond=0)
+    return local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+
+
+def made_today() -> int:
+    with db.session() as s:
+        return len(s.exec(select(Video.id).where(col(Video.key).startswith(PREFIX), Video.status == "done",
+                                                 Video.created_at >= day_start_utc())).all())
+
+
+def in_hours(at: datetime | None = None) -> bool:
+    from ..worker import _in_ranges, parse_hours
+
+    ranges = parse_hours(get_settings().news_hours)
+    return not ranges or _in_ranges(ranges, at or _local_now())
+
+
+def due() -> bool:
+    s = get_settings()
+    return enabled() and in_hours() and made_today() < s.news_per_day
+
+
+# ---------- choix du sujet ----------
+
+def recent_titles(days: float = 3) -> list[str]:
+    with db.session() as s:
+        rows = s.exec(select(Video.title).where(col(Video.key).startswith(PREFIX),
+                                                Video.created_at >= now() - timedelta(days=days))).all()
+    return [t for t in rows if t]
+
+
+def known_keys(keys: list[str]) -> set[str]:
+    if not keys:
+        return set()
+    with db.session() as s:
+        return set(s.exec(select(Video.key).where(col(Video.key).in_(keys))).all())
+
+
+def fresh_candidates() -> list[feeds.Item]:
+    s = get_settings()
+    items = feeds.candidates(feeds.split_list(s.news_feeds), feeds.split_list(s.news_keywords),
+                             feeds.split_list(s.news_exclude), s.news_max_age_hours)
+    seen = known_keys([i.key for i in items])
+    recent = recent_titles()
+    return [i for i in items if i.key not in seen
+            and not any(engage.similarity(i.title, t) >= 0.55 for t in recent)]
+
+
+# ---------- création ----------
+
+def work_dir(video_id: int) -> Path:
+    return get_settings().videos_dir / str(video_id)
+
+
+def _set(video_id: int, **fields) -> None:
+    with db.session() as s:
+        v = s.get(Video, video_id)
+        for k, val in fields.items():
+            setattr(v, k, val)
+        v.updated_at = now()
+        s.add(v)
+        s.commit()
+
+
+def _new_video(item: feeds.Item) -> Video:
+    with db.session() as s:
+        v = Video(key=item.key, url=item.link, title=item.title[:300], status="generating")
+        s.add(v)
+        s.commit()
+        s.refresh(v)
+    d = work_dir(v.id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "item.json").write_text(json.dumps({"title": item.title, "link": item.link, "summary": item.summary,
+                                             "source": item.source, "related": item.related},
+                                            ensure_ascii=False))
+    return v
+
+
+def clip_score(llm_score: float) -> float:
+    """Place dans la file d'envoi : un sujet noté 7/10 se range au niveau des bons clips de la semaine."""
+    from .. import curate
+
+    bar = curate.score_bar()
+    return round((bar if bar else 1.0) * llm_score / 7, 4)
+
+
+def make(video_id: int, item: feeds.Item) -> int | None:
+    """Fabrique la vidéo d'un sujet. Renvoie l'id du clip, ou None si le sujet est écarté."""
+    s = get_settings()
+    work = work_dir(video_id)
+    facts = feeds.fetch_article(item)
+    _set(video_id, progress=5)
+    sc = script.write(item.title, facts, item.source)
+    if sc is None:
+        _set(video_id, status="skipped", error="Script refusé ou IA indisponible", progress=0)
+        return None
+    if sc.score < s.news_min_score:
+        _set(video_id, status="skipped", progress=0,
+             error=f"Sujet jugé peu intéressant ({sc.score:.0f}/10, minimum {s.news_min_score:g})")
+        return None
+    (work / "script.json").write_text(json.dumps(sc.__dict__, ensure_ascii=False))
+    _set(video_id, progress=15)
+    spoken = tts.speak(sc.sentences, work / "voice.wav")
+    total = round(spoken[-1].end + montage.TAIL, 3)
+    cuts = montage.plan(spoken, total)
+    used: set[str] = set()
+    shots, credits = [], []
+    for j, (i, _, _) in enumerate(cuts):
+        query = sc.visuals[i] if i < len(sc.visuals) else ""
+        shot = visuals.find(query, sc.sentences[i], work / "media", used, j, prefer_video=j % 2 == 0)
+        shots.append(shot)
+        if shot.credit and shot.credit not in credits:
+            credits.append(shot.credit)
+    _set(video_id, progress=35)
+    out = s.clips_dir / "news" / f"{video_id}.mp4"
+    hook_text = hooks.add_emojis(sc.hook or sc.title, sc.text) if s.hook_emojis else hooks.strip_emojis(sc.hook)
+    montage.build(shots, spoken, work / "voice.wav", hook_text, item.source, out, work,
+                  on_progress=lambda p: _set(video_id, progress=35 + p * 0.6))
+    info = {"kind": "news", "text": sc.text, "title": sc.title, "hook": hook_text, "question": sc.question,
+            "llm": sc.score, "polished": True, "hashtags": sc.hashtags, "source": item.source,
+            "source_url": item.link, "credits": credits, "duration": total, "shots": len(shots),
+            "layout": "news"}
+    with db.session() as ss:
+        clip = Clip(video_id=video_id, group=uuid.uuid4().hex[:10], start=0, end=total,
+                    score=clip_score(sc.score), title=sc.title, path=str(out), status="ready")
+        ss.add(clip)
+        ss.commit()
+        ss.refresh(clip)
+        from .. import learning
+        learning.save_clip_info(clip.id, info)
+        if s.auto_publish and s.news_publish:
+            from ..pipeline.process import queue_posts
+            queue_posts(ss, clip)
+    _set(video_id, status="done", error="", progress=100, duration=total, path="")
+    shutil.rmtree(work / "media", ignore_errors=True)
+    for p in work.glob("shot*.mp4"):
+        p.unlink(missing_ok=True)
+    log.info("Vidéo d'actu créée : %s (%d s, %d plans)", sc.title, total, len(shots))
+    return clip.id
+
+
+def run_once(force: bool = False) -> int | None:
+    """Une vidéo d'actu si c'est le moment (ou si force). Renvoie l'id du clip créé, ou None."""
+    if not _busy.acquire(blocking=False):
+        return None
+    try:
+        retry = _retry_queue()
+        if retry:
+            return _run(*retry)
+        if not (force or due()):
+            return None
+        from ..pipeline import llm
+        if llm.provider() != "ollama":  # sans IA pas de script : on ne « grille » aucun sujet
+            log.info("Actu : IA locale indisponible, sujet cherché au prochain tour.")
+            return None
+        for item in fresh_candidates()[:4]:
+            v = _new_video(item)
+            cid = _run(v, item)
+            if cid:
+                return cid
+        log.info("Actu : aucun sujet retenu ce tour-ci.")
+        return None
+    finally:
+        _busy.release()
+
+
+def _run(video: Video, item: feeds.Item) -> int | None:
+    try:
+        return make(video.id, item)
+    except Exception as e:
+        log.exception("Vidéo d'actu échouée : %s", item.title)
+        _set(video.id, status="failed", error=str(e)[:1000], progress=0)
+        from .. import notify
+        notify.error(f"Vidéo d'actu échouée : {item.title}", str(e))
+        return None
+
+
+def _retry_queue() -> tuple[Video, feeds.Item] | None:
+    """Vidéo d'actu relancée à la main (bouton « Relancer ») : refaite à partir du même article."""
+    with db.session() as s:
+        v = s.exec(select(Video).where(col(Video.key).startswith(PREFIX), Video.status == "news_retry")).first()
+    if not v:
+        return None
+    try:
+        data = json.loads((work_dir(v.id) / "item.json").read_text())
+    except (OSError, ValueError):
+        data = {"title": v.title, "link": v.url}
+    item = feeds.Item(title=data.get("title") or v.title, link=data.get("link") or v.url,
+                      summary=data.get("summary", ""), source=data.get("source", ""), related=data.get("related", []))
+    _set(v.id, status="generating", error="")
+    return v, item
+
+
+def reset_interrupted() -> None:
+    """Vidéo d'actu coupée par un redémarrage : relancée depuis le même article."""
+    with db.session() as s:
+        for v in s.exec(select(Video).where(col(Video.key).startswith(PREFIX), Video.status == "generating")).all():
+            v.status, v.error = "news_retry", ""
+            s.add(v)
+        s.commit()
+
+
+def loop(stop: threading.Event) -> None:
+    s = get_settings()
+    stop.wait(90)  # laisse le reste démarrer
+    last = 0.0
+    import time
+    while not stop.is_set():
+        try:
+            forced = take_request()
+            if forced or time.monotonic() - last >= max(5, s.news_interval_minutes) * 60:
+                last = time.monotonic()
+                run_once(force=forced)
+            elif _retry_pending():
+                run_once()
+        except Exception:
+            log.exception("Boucle des vidéos d'actu en erreur")
+        stop.wait(30)
+
+
+def _retry_pending() -> bool:
+    with db.session() as s:
+        return s.exec(select(Video.id).where(col(Video.key).startswith(PREFIX),
+                                             Video.status == "news_retry")).first() is not None
+
+
+# ---------- textes de publication ----------
+
+def description(clip: Clip, info: dict, hashtags_default: list[str], question_line: str) -> tuple[str, list[str]]:
+    tags = list(dict.fromkeys([t for t in (info.get("hashtags") or []) if t] + hashtags_default))[:8]
+    lines = [clip.title, ""]
+    if question_line:
+        lines += [question_line, ""]
+    if info.get("source"):
+        lines += [f"📰 Source : {info['source']}", info.get("source_url", ""), ""]
+    for c in info.get("credits") or []:
+        lines.append(f"🖼️ {c}")
+    if info.get("credits"):
+        lines.append("")
+    lines += ["Voix et montage générés automatiquement.", "", " ".join("#" + t for t in tags)]
+    return "\n".join(lines), tags
+
+
+def caption(clip: Clip, info: dict, max_tags: int) -> str:
+    title = clip.title.strip()
+    if not hooks.emojis_in(title):
+        emo = hooks.emojis_in(info.get("hook", ""))[:1]
+        title = f"{title} {emo[0]}" if emo else hooks.add_emojis(title)
+    tags = [t for t in (info.get("hashtags") or []) if t][:max(1, max_tags + 1)]
+    cap = title + "".join(f" #{t}" for t in tags)
+    if info.get("source"):
+        cap += f"\n\nSource : {info['source']}"
+    return cap
+
+
+def status() -> dict:
+    s = get_settings()
+    with db.session() as ss:
+        last = ss.exec(select(Video).where(col(Video.key).startswith(PREFIX))
+                       .order_by(col(Video.created_at).desc()).limit(6)).all()
+        pending = ss.exec(select(Post.id).join(Clip, Clip.id == Post.clip_id).join(Video, Video.id == Clip.video_id)
+                          .where(col(Video.key).startswith(PREFIX), Post.status == "pending")).all()
+    return {"on": enabled(), "today": made_today(), "per_day": s.news_per_day, "topic": s.news_topic,
+            "hours": s.news_hours, "pexels": bool(s.pexels_api_key), "publish": s.news_publish and s.auto_publish,
+            "last": last, "pending": len(pending),
+            "music": len([p for p in (s.data_dir / "music").glob("*") if p.is_file()])
+            if (s.data_dir / "music").exists() else 0}

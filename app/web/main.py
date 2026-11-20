@@ -18,6 +18,7 @@ from sqlmodel import col, func, select
 from .. import curate, db, discovery, gta6, health, learning, notify, platforms, worker
 from ..config import get_settings
 from ..models import Clip, DiscoverIgnore, Post, PostStat, Source, Video, now
+from ..news import generate as news
 from ..pipeline import process, sources
 from ..publish import creds, tiktok, youtube
 from . import mfa
@@ -201,7 +202,8 @@ def dashboard(request: Request):
             day_one["queued"] = [src.name if src else v.title for v, src in queued]
     return templates.TemplateResponse(request, "dashboard.html", {
         "counts": counts, "posts": posts, "videos": videos, "n_sources": n_sources, "accounts": accounts_status(),
-        "gta6": day_one, "health": health.snapshot(), "platforms": platforms.status(), "plan": plan, **ctx})
+        "gta6": day_one, "health": health.snapshot(), "platforms": platforms.status(), "plan": plan,
+        "news": news.status(), **ctx})
 
 
 @app.post("/platforms/{platform}")
@@ -247,6 +249,20 @@ def schedule(hours: str = Form(""), gap: str = Form(""), reset: str = Form(""), 
     g = gap.strip()
     platforms.set_schedule(hours, int(g) if g.isdigit() else None)
     return back(f"{nxt}{sep}sched=ok")
+
+
+@app.post("/news")
+def news_settings(action: str = Form(...)):
+    """Vidéos d'actu : on / off, ou une vidéo tout de suite."""
+    if action == "on":
+        news.set_enabled(True)
+    elif action == "off":
+        news.set_enabled(False)
+    elif action == "now":
+        news.request_now()
+    else:
+        raise HTTPException(400, "Action inconnue")
+    return back("/")
 
 
 @app.post("/gta6")
@@ -439,6 +455,11 @@ def add_video(url: str = Form(...)):
 def retry_video(vid: int):
     with db.session() as s:
         v = s.get(Video, vid)
+        if news.is_news(v):  # vidéo d'actu : refaite à partir du même article par le worker
+            v.status, v.error = "news_retry", ""
+            s.add(v)
+            s.commit()
+            return back("/videos")
         v.status, v.error = ("downloaded" if v.path and Path(v.path).exists() else "new"), ""
         if v.status == "new":
             v.is_live = False  # on retélécharge la vidéo (rediffusion) au lieu d'attendre un live

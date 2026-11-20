@@ -215,6 +215,8 @@ def _clip_rows(perf: dict[int, float]) -> list[dict]:
         if not c:
             continue
         info = infos.get(cid, {})
+        if info.get("kind") == "news":  # les vidéos d'actu n'apprennent rien sur le montage des clips
+            continue
         v = videos.get(c.video_id)
         rows.append({**info, "clip_id": cid, "perf": p, "title": info.get("title") or c.title,
                      "duration": c.end - c.start, "source": sources.get(v.source_id, "") if v else ""})

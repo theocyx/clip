@@ -145,6 +145,31 @@ class Settings(BaseSettings):
     gta6_max_posts_per_day: int = 0  # 0 = comme MAX_POSTS_PER_DAY
     gta6_fresh_hours: float = 3  # mode GTA 6 : le score d'un clip est divisé par 2 toutes les N heures
 
+    # Vidéos d'actu générées de A à Z (voir app/news) : sujet trouvé dans des flux RSS, script écrit par l'IA
+    # locale, voix off locale (Piper), images libres de droits, montage vertical et sous-titres mot à mot.
+    news: bool = True  # réglable aussi depuis le tableau de bord
+    news_per_day: int = 3  # vidéos d'actu créées par jour (heure de Paris)
+    news_interval_minutes: int = 60  # recherche d'un nouveau sujet toutes les N minutes
+    news_hours: str = "7-22"  # heures de Paris où l'on cherche un sujet (vide = à toute heure)
+    news_topic: str = "jeux vidéo et GTA 6"  # thème de la chaîne, donné à l'IA
+    # Flux RSS/Atom séparés par des virgules (actu jeux vidéo par défaut ; voir le README pour l'actu générale)
+    news_feeds: str = ("https://www.jeuxvideo.com/rss/rss.xml,https://www.gamekult.com/feed.xml,"
+                       "https://www.millenium.org/rss,"
+                       "https://news.google.com/rss/search?q=GTA+6+OR+Rockstar&hl=fr&gl=FR&ceid=FR:fr")
+    news_keywords: str = ""  # seuls les articles dont le titre/résumé contient un de ces mots (vide = tous)
+    news_exclude: str = "promo,bon plan,soldes,black friday,code promo,test :,guide :,astuce"
+    news_max_age_hours: float = 24  # article plus vieux : ignoré
+    news_min_score: float = 6  # note IA (sur 10) minimum du sujet pour en faire une vidéo
+    news_publish: bool = True  # envoie les vidéos d'actu dans la file de publication (sinon : seulement dans Clips)
+    news_target_seconds: float = 45  # durée visée de la voix off
+    news_voice: str = "fr_FR-tom-medium"  # voix Piper (fr_FR-siwis-medium, fr_FR-upmc-medium, fr_FR-gilles-low…)
+    news_voice_speed: float = 1.12  # débit de la voix (1 = normal) : un peu rapide, comme les comptes d'actu
+    news_badge: str = "ACTU"  # pastille rouge au-dessus du titre (vide = aucune)
+    news_accent: str = "#FFD400"  # couleur des cartes générées quand aucune image libre ne convient
+    pexels_api_key: str = ""  # clé gratuite pexels.com/api : vidéos et photos libres de droits (recommandé)
+    news_wikimedia: bool = True  # images sous licence libre de Wikimedia Commons (auteur crédité en description)
+    news_music_volume: float = 0.14  # volume de la musique de fond (fichiers mp3 libres de droits dans data/music)
+
     # Notifications (laisser vide pour désactiver)
     discord_webhook_url: str = ""
     telegram_bot_token: str = ""
