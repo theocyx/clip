@@ -288,3 +288,11 @@ def test_dashboard_news_card(monkeypatch):
         assert c.post("/news", data={"action": "x"}).status_code == 400
     finally:
         web.app.dependency_overrides.clear()
+
+
+def test_no_emoji_on_grave_topics():
+    assert generate.header_text("Incendie meurtrier à Lyon 💀", "", "Trois morts dans un incendie.") == \
+        "Incendie meurtrier à Lyon"
+    assert generate.header_text("GTA 6 bat tous les records 🤯", "", "Record de ventes.").endswith("🤯")
+    assert generate.header_text("Le prix du pain augmente", "", "Le pain coûte plus cher.", emojis=False) == \
+        "Le prix du pain augmente"
