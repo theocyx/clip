@@ -162,14 +162,16 @@ class Settings(BaseSettings):
     news_max_age_hours: float = 24  # article plus vieux : ignoré
     news_min_score: float = 6  # note IA (sur 10) minimum du sujet pour en faire une vidéo
     news_publish: bool = True  # envoie les vidéos d'actu dans la file de publication (sinon : seulement dans Clips)
-    news_target_seconds: float = 60  # durée visée de la voix off d'une actu (secondes)
+    news_target_seconds: float = 70  # durée visée de la voix off d'une actu (secondes)
+    news_min_seconds: float = 60  # plus court : script rallongé, sinon sujet écarté
     news_llm_timeout: float = 1200  # s : l'IA est partagée avec l'analyse des clips, la réponse peut attendre
     news_voice: str = "fr_FR-tom-medium"  # voix Piper (fr_FR-siwis-medium, fr_FR-upmc-medium, fr_FR-gilles-low…)
     news_voice_speed: float = 1.12  # débit de la voix (1 = normal) : un peu rapide, comme les comptes d'actu
     # Histoires vraies envoûtantes (voir app/news/stories.py) : faits tirés de Wikipédia, même chaîne de montage
     stories: bool = True  # réglable aussi depuis le tableau de bord
     story_per_day: int = 1  # histoires par jour (en plus des actus)
-    story_target_seconds: float = 80  # durée visée de la voix off d'une histoire
+    story_target_seconds: float = 90  # durée visée de la voix off d'une histoire
+    story_min_seconds: float = 75
     story_voice_speed: float = 1.0  # voix plus posée que pour l'actu
     story_topics: str = ""  # tes sujets, séparés par des virgules (aussi : fichier data/stories.txt, un par ligne)
     story_builtin: bool = True  # piocher aussi dans la liste intégrée (Room 641A, col Dyatlov, Mary Celeste…)

@@ -80,6 +80,18 @@ Règles :
   "answers" : 2 réponses courtes possibles à la question finale ; "hashtags" : 3 à 5, du plus précis au plus large.
 Réponds UNIQUEMENT en JSON : {{"score": <1-10>, "title": "...", "hook": "...", "sentences": [{{"text": "...", "visual": "...", "title": "...", "chapter": "...", "place": ""}}], "question": "...", "answers": ["...", "..."], "topic": "...", "place": "...", "hashtags": ["..."]}}"""
 
+EXTEND_PROMPT = """Voici le script (en cours) d'une vidéo {what} en français, sujet « {title} » ({source}) :
+\"\"\"{script}\"\"\"
+
+Faits disponibles :
+\"\"\"{facts}\"\"\"
+
+Le script est trop court. Écris la SUITE : {n} nouvelles phrases (8 à 20 mots chacune) qui se placent avant la
+question finale et apportent d'AUTRES faits de l'article pas encore racontés (contexte, détails, déroulé,
+conséquences, réactions, ce qu'on ignore encore). Même ton, aucune répétition, UNIQUEMENT des faits présents
+ci-dessus (aucun chiffre, nom ni date inventé).
+Réponds UNIQUEMENT en JSON : {{"sentences": [{{"text": "...", "visual": "...", "title": "...", "chapter": "...", "place": ""}}]}}"""
+
 _NUM = re.compile(r"\d+(?:[.,]\d+)?")
 
 
@@ -195,12 +207,70 @@ def sanitize(sc: Script, facts: str, fallback_title: str = "") -> list[str]:
     return removed
 
 
-def target_words(kind: str = "news") -> float:
-    """Mots à écrire pour la durée visée (~2,6 mots/s à vitesse normale)."""
+WORDS_PER_SECOND = 2.6  # débit de la voix Piper à vitesse 1 (corrigé ensuite par la durée réelle mesurée)
+
+
+def target_seconds(kind: str = "news") -> float:
     s = get_settings()
-    if kind == "story":
-        return s.story_target_seconds * 2.6 * s.story_voice_speed
-    return s.news_target_seconds * 2.6 * s.news_voice_speed
+    return s.story_target_seconds if kind == "story" else s.news_target_seconds
+
+
+def min_seconds(kind: str = "news") -> float:
+    """Durée minimum d'une vidéo publiée (en dessous, le script est rallongé, sinon le sujet est écarté)."""
+    s = get_settings()
+    return s.story_min_seconds if kind == "story" else s.news_min_seconds
+
+
+def target_words(kind: str = "news") -> float:
+    """Mots à écrire pour la durée visée."""
+    s = get_settings()
+    speed = s.story_voice_speed if kind == "story" else s.news_voice_speed
+    return target_seconds(kind) * WORDS_PER_SECOND * speed
+
+
+def extend(sc: Script, title: str, facts: str, source: str, kind: str = "news", need_words: float = 60) -> int:
+    """Rallonge le script (le petit modèle local écrit court) : demande des phrases de plus, placées avant la
+    question finale. Renvoie le nombre de phrases ajoutées."""
+    s = get_settings()
+    n = max(3, min(12, round(need_words / 14)))
+    prompt = EXTEND_PROMPT.format(what="« histoire vraie »" if kind == "story" else "d'actualité", title=title,
+                                  source=source or "média", script=" ".join(sc.sentences)[:3000],
+                                  facts=facts[:5000 if kind == "story" else 3000], n=n)
+    try:
+        more = parse(llm._ask_ollama(prompt, timeout=s.news_llm_timeout, max_tokens=300 + n * 110, num_ctx=8192)
+                     .replace('"sentences"', '"score": 0, "sentences"', 1))
+    except Exception as e:
+        log.warning("Script : rallonge impossible (%s)", e)
+        return 0
+    if more is None:
+        return 0
+    rows = sc.per_sentence()
+    tail = [rows.pop()] if rows and rows[-1][0].rstrip().endswith("?") else []
+    added = 0
+    for r in more.per_sentence():
+        if _bad(r[0], facts) or r[0].rstrip().endswith("?"):
+            continue
+        if any(engage.similarity(r[0], old[0]) >= 0.6 for old in rows):
+            continue
+        rows.append((r[0], r[1], "" if _bad(r[2], facts) else r[2], r[3], r[4]))
+        added += 1
+    sc.set_sentences(rows + tail)
+    return added
+
+
+def grow(sc: Script, title: str, facts: str, source: str, kind: str = "news", goal_words: float | None = None,
+         tries: int = 3) -> None:
+    """Rallonge jusqu'à environ goal_words mots (3 demandes maximum, arrêt si l'IA n'a plus rien à ajouter)."""
+    goal = goal_words or target_words(kind)
+    for _ in range(tries):
+        have = len(sc.text.split())
+        if have >= goal * 0.95:
+            return
+        added = extend(sc, title, facts, source, kind, goal - have)
+        log.info("Script : +%d phrase(s) pour atteindre la durée visée (%d → %d mots, objectif %d)", added, have,
+                 len(sc.text.split()), goal)
+        if not added:
+            return
 
 
 def problems(sc: Script, facts: str, kind: str = "news") -> list[str]:
@@ -254,6 +324,7 @@ def write(title: str, facts: str, source: str, kind: str = "news") -> Script | N
             log.info("Script d'actu : retiré (chiffre absent de l'article) : %s", ", ".join(removed))
         last = problems(sc, facts_all, kind)
         if not last:
+            grow(sc, title, facts_all, source, kind)
             if not sc.question:
                 sc.question = engage.clean_question(sc.sentences[-1]) if sc.sentences[-1].endswith("?") else ""
             return sc

@@ -277,6 +277,7 @@ def _item(title="GTA 6 : 25 millions en 24 heures", link="https://ex.fr/gta"):
 def test_make_creates_clip_and_queues(monkeypatch, tmp_path):
     cfg = get_settings()
     monkeypatch.setattr(cfg, "news_target_seconds", 12.0)
+    monkeypatch.setattr(cfg, "news_min_seconds", 5.0)
     monkeypatch.setattr(feeds, "fetch_article", lambda item: item.summary)
     monkeypatch.setattr(script, "write", lambda *a, **k: script.parse(_llm_json()))
     monkeypatch.setattr(tts, "speak", lambda sents, out, speed=None: _real_speak(sents, out, synth=_synth))
@@ -597,3 +598,58 @@ def test_ai_images_story_shots_and_cta(monkeypatch, tmp_path):
     overlay.draw_cta(frame, 2.0, 3.0)
     band = frame[overlay.CTA_Y - 30:overlay.CTA_Y + 30]
     assert ((band[..., 0] > 200) & (band[..., 1] < 80)).sum() > 200  # cœur rouge / bouton
+
+
+def test_short_scripts_are_extended_to_min_duration(monkeypatch, tmp_path):
+    from app.pipeline import llm
+    cfg = get_settings()
+    facts = ("GTA 6 bat un record. Rockstar annonce 25 millions de copies. Les serveurs ont saturé. "
+             "Les joueurs attendent la version PC. Les critiques sont excellentes. Le jeu se passe à Vice City.")
+    extra = [{"text": t, "visual": "game"} for t in (
+        "Les files d'attente se sont formées devant les magasins dès minuit.",
+        "Certains fans avaient posé des congés pour pouvoir jouer toute la journée.",
+        "La carte de Vice City serait la plus grande jamais créée par le studio.",
+        "Les critiques saluent surtout la mise en scène des missions principales.",
+        "Sur les réseaux sociaux, les premières vidéos cumulent déjà des millions de vues.",
+        "Plusieurs streamers ont joué en direct pendant toute la nuit sans s'arrêter.",
+        "Le studio prépare déjà des mises à jour pour le mode en ligne.",
+        "Les joueurs sur ordinateur devront encore patienter plusieurs mois.")]
+    extra.append({"text": "Le jeu coûte 999 euros selon une rumeur.", "visual": "money"})  # chiffre inventé
+    calls = []
+
+    def fake_ask(prompt, timeout=600, max_tokens=None, num_ctx=4096):
+        calls.append(prompt)
+        return json.dumps({"sentences": extra[:4] if len(calls) == 1 else extra[4:]})
+
+    monkeypatch.setattr(llm, "_ask_ollama", fake_ask)
+    sc = script.parse(_llm_json())
+    n0, words0 = len(sc.sentences), len(sc.text.split())
+    added = script.extend(sc, "GTA 6", facts, "Millenium", need_words=50)
+    assert added == 4 and len(sc.sentences) == n0 + 4 and sc.sentences[-1].endswith("?")  # question à la fin
+    assert "trop court" in calls[0] and len(sc.titles) == len(sc.sentences) == len(sc.places)
+    script.grow(sc, "GTA 6", facts, "Millenium", goal_words=words0 + 200, tries=3)
+    assert not any("999" in x for x in sc.sentences) and len(sc.sentences) == n0 + 8
+    # voix trop courte : rallongée d'après la durée lue, sinon sujet écarté
+    monkeypatch.setattr(cfg, "news_target_seconds", 12.0)
+    monkeypatch.setattr(cfg, "news_min_seconds", 25.0)
+    monkeypatch.setattr(cfg, "news_publish", False)
+    monkeypatch.setattr(feeds, "fetch_article", lambda item: facts)
+    monkeypatch.setattr(script, "write", lambda *a, **k: script.parse(_llm_json()))
+    monkeypatch.setattr(tts, "speak", lambda sents, out, speed=None: _real_speak(sents, out, synth=_synth))
+    grown = []
+
+    def fake_grow(sc, title, facts, source, kind="news", goal_words=None, tries=3):
+        grown.append(goal_words)
+        sc.set_sentences(sc.per_sentence()[:-1] + [(f"Phrase de plus numéro {k} sur ce lancement.", "", "", "", "")
+                                                   for k in "abcdefgh"] + sc.per_sentence()[-1:])
+
+    monkeypatch.setattr(script, "grow", fake_grow)
+    monkeypatch.setattr(montage, "build", lambda shots, spoken, *a, **k: spoken[-1].end + montage.TAIL)
+    monkeypatch.setattr(generate, "pick_shots", lambda sc, cuts, work, kind="news": ([visuals.Shot(None, "kinetic")] * len(cuts), []))
+    v = generate._new_video(_item(link="https://ex.fr/court"))
+    assert generate.make(v.id, _item(link="https://ex.fr/court")) is not None and len(grown) == 1
+    monkeypatch.setattr(cfg, "news_min_seconds", 500.0)
+    v2 = generate._new_video(_item(link="https://ex.fr/trop-court"))
+    assert generate.make(v2.id, _item(link="https://ex.fr/trop-court")) is None
+    with db.session() as s:
+        assert s.get(Video, v2.id).status == "skipped" and "Trop court" in s.get(Video, v2.id).error
