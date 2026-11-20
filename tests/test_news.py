@@ -197,12 +197,21 @@ def test_motion_frames_and_map(tmp_path):
 
     need = motion.map_tiles_needed(2.35, 48.85, 40, 12.5)
     assert 20 < len(need) < 600 and all(3 <= z <= 13 for z, _, _ in need)
-    fly = motion.map_fly(2.35, 48.85, "Paris", 40, fetch, acc, z1=12.5, attribution="EOX")
+    ring = [(2.30, 48.87), (2.40, 48.87), (2.40, 48.83), (2.30, 48.83)]
+    fly = motion.map_fly(2.35, 48.85, "Paris", 40, fetch, acc, z1=12.5, attribution="EOX", sub="France",
+                         rings=[ring])
     first, last = fly(0), fly(39)
     assert first.shape == (motion.H, motion.W, 3) and not np.array_equal(first, last)
-    assert (last[..., 0] > 200).sum() > 1000  # l'épingle rouge est posée
+    red = (last[..., 0] > 200) & (last[..., 1] < 80)
+    assert red.sum() > 300  # l'épingle rouge est posée
+    assert (last[..., 2].astype(int) - last[..., 0] > 40).sum() > 10000  # zone surlignée en bleu
+    assert motion.dms(48.8566, "N", "S") == "48°51'24\"N" and motion.nice_scale(10.0) == (200, "2 km")
     assert set(calls) <= need  # aucune tuile en dehors de celles téléchargées à l'avance
-    for gen in (motion.kinetic("Record historique", 20, 0, acc), motion.counter("25 000", "personnes", 20, 1, acc)):
+    from PIL import Image
+    Image.new("RGB", (400, 300), (0, 200, 0)).save(tmp_path / "p.jpg")
+    for gen in (motion.kinetic("Record historique", 20, 0, acc), motion.counter("25 000", "personnes", 20, 1, acc),
+                motion.panel_photo(tmp_path / "p.jpg", 20, 0, "ILLUSTRATION"),
+                motion.quiz("Et toi, tu y vas ?", ["Oui", "Non"], 20, acc)):
         assert gen(0).shape == (motion.H, motion.W, 3) and gen(19).any()
     out = motion.write_frames(motion.kinetic("Test", 6, 0, acc), 6, tmp_path / "k.mp4")
     assert out.stat().st_size > 0
@@ -245,8 +254,17 @@ def test_render_news_video(tmp_path, monkeypatch):
     assert (v["width"], v["height"]) == (1080, 1920)
     assert any(s["codec_type"] == "audio" for s in info["streams"])
     assert float(info["format"]["duration"]) == pytest.approx(dur, abs=0.3)
-    ass = (out.parent / "news.ass").read_text()
-    assert "SOURCE : MILLENIUM" in ass and "RECORD" in ass
+    if get_settings().news_motion:  # habillage incrusté : pastille rouge de la marque en haut à gauche
+        assert not (out.parent / "news.ass").exists()
+        png = tmp_path / "f.png"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "1.0", "-i", str(out), "-frames:v", "1", str(png)],
+                       check=True)
+        from PIL import Image
+        px = np.asarray(Image.open(png).convert("RGB"))[95, 60]
+        assert px[0] > 180 and px[1] < 90
+    else:
+        ass = (out.parent / "news.ass").read_text()
+        assert "SOURCE : MILLENIUM" in ass and "RECORD" in ass
     (music / "m.mp3").unlink()
 
 
@@ -263,7 +281,7 @@ def test_make_creates_clip_and_queues(monkeypatch, tmp_path):
     monkeypatch.setattr(tts, "speak", lambda sents, out: _real_speak(sents, out, synth=_synth))
     built = {}
 
-    def fake_build(shots, spoken, voice, hook, source, out, work, on_progress=None):
+    def fake_build(shots, spoken, voice, hook, source, out, work, on_progress=None, look=None):
         built.update(shots=shots, hook=hook, source=source)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(b"mp4")
@@ -373,7 +391,9 @@ def test_pick_shots_map_counter_and_photos(monkeypatch, tmp_path):
     from app.news import geo
     cfg = get_settings()
     monkeypatch.setattr(cfg, "news_map", True)
-    monkeypatch.setattr(geo, "geocode", lambda place: (2.35, 48.85, "Paris", "city") if place else None)
+    monkeypatch.setattr(geo, "geocode", lambda place: geo.Place(2.35, 48.85, "Paris", "city", "France",
+                                                                 [[(2.2, 48.9), (2.5, 48.9), (2.4, 48.8)]])
+                        if place else None)
 
     class FakeTiles:
         def __init__(self):
@@ -419,3 +439,27 @@ def test_style_page(tmp_path):
         assert c.get("/style/file/clip.db").status_code == 404
     finally:
         web.app.dependency_overrides.clear()
+
+
+def test_overlay_titles_chapters_and_script_fields():
+    from app.news import overlay
+    sp = [tts.Spoken("GTA 6 sort demain.", 0.0, 1.5, tts.word_times("GTA 6 sort demain.", 0.0, 1.5)),
+          tts.Spoken("Rockstar vise 25 millions de ventes.", 1.7, 3.5,
+                     tts.word_times("Rockstar vise 25 millions de ventes.", 1.7, 3.5)),
+          tts.Spoken("Et toi, tu l'achètes ?", 3.7, 5.0, tts.word_times("Et toi, tu l'achètes ?", 3.7, 5.0))]
+    ov = montage.make_overlay(sp, "GTA 6 arrive 🔥", {"chapters": ["LES FAITS", "", "ET TOI ?"], "topic": "GTA 6"})
+    assert ov.titles[0] == "GTA 6 ARRIVE" and ov.titles[1] == "25 MILLIONS" and ov.titles[2] == "TON AVIS ?"
+    assert ov.hud.tabs == ["LES FAITS", "ET TOI ?"] and ov.chapter_of == [0, 0, 1]
+    frame = ov.apply(np.zeros((overlay.H, overlay.W, 3), np.uint8), 2.0)
+    assert frame[overlay.SUB_Y].any() and frame[overlay.TITLE_Y].any()
+    assert overlay.chapters(["A", "B", "A", ""]) == (["A", "B"], [0, 1, 0, 1])
+    sc = script.parse(json.dumps({"score": 7, "title": "t", "hook": "h", "topic": "Grève SNCF",
+                                  "answers": ["Oui", "Non", "Bof"], "sentences": [
+                                      {"text": "Grève à Lyon.", "visual": "train", "title": "GRÈVE",
+                                       "chapter": "LES FAITS", "place": "Lyon, France"},
+                                      "Deuxième phrase sans détails."]}))
+    assert sc.topic == "Grève SNCF" and sc.answers == ["Oui", "Non"]
+    assert sc.titles == ["GRÈVE", ""] and sc.places == ["Lyon, France", ""] and sc.chapters[0] == "LES FAITS"
+    sc.sentences[1] = "Il y a 999 trains supprimés."
+    script.sanitize(sc, "Grève à Lyon.")
+    assert sc.sentences == ["Grève à Lyon."] and sc.places == ["Lyon, France"] and sc.titles == ["GRÈVE"]

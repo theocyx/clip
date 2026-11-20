@@ -1,7 +1,9 @@
 """Montage vertical 1080x1920 d'une vidéo d'actu :
-un plan par phrase (coupé en deux si la phrase est longue) avec mouvement de caméra lent sur les images,
-pastille + titre en haut, sous-titres mot à mot au centre, source en bas, voix off + musique de fond baissée
-automatiquement quand la voix parle, son à -14 LUFS."""
+un plan par phrase (coupé en deux si la phrase est longue) : survol satellite, panneaux animés (photo, vidéo,
+chiffre, mots, quiz) ; habillage dessiné par-dessus (bandeau marque / sujet / date / chapitres / sources,
+mots-clés en boîte inclinée, sous-titres en boîte mot à mot) ; voix off + musique de fond baissée
+automatiquement quand la voix parle, son à -14 LUFS. Sans habillage animé (NEWS_MOTION=false) : images avec
+mouvement de caméra, pastille + titre en haut, sous-titres ASS."""
 from __future__ import annotations
 
 import logging
@@ -131,22 +133,23 @@ HEADER_IN = 0.45  # le titre glisse depuis le haut pendant ces secondes
 
 
 def final_cmd(video: Path, voice: Path, header: str, ass_name: str, out: Path, total: float, codec: str,
-              music: Path | None = None, sfx: Path | None = None, fx: bool = True) -> list[str]:
-    """fx : grain léger + vignette, et titre qui glisse depuis le haut au début."""
+              music: Path | None = None, sfx: Path | None = None, fx: bool = True, vignette: bool = True) -> list[str]:
+    """fx : grain léger (+ vignette), et titre qui glisse depuis le haut au début. ass_name vide : pas de
+    sous-titres ASS (habillage déjà incrusté image par image)."""
     s = get_settings()
     cmd = ["ffmpeg", "-y", "-v", "error"]
     if codec.endswith("_vaapi"):
         cmd += ["-vaapi_device", s.vaapi_device or "/dev/dri/renderD128"]
     cmd += ["-i", str(video), "-i", str(voice)]
     n = 2
-    vf = "[0:v]" + ("vignette=angle=PI/5,noise=alls=5:allf=t," if fx else "")
+    vf = "[0:v]" + (("vignette=angle=PI/5," if vignette else "") + "noise=alls=4:allf=t," if fx else "")
     if header:
         cmd += ["-loop", "1", "-i", header]
         y = (f"if(lt(t\\,{HEADER_IN})\\,-h+({HEADER_Y}+h)*(1-pow(1-t/{HEADER_IN}\\,3))\\,{HEADER_Y})"
              if fx else str(HEADER_Y))
         vf += f"null[base];[base][{n}:v]overlay=x=(W-w)/2:y='{y}':shortest=1:format=auto,"
         n += 1
-    vf += f"ass={ass_name}"
+    vf += f"ass={ass_name}" if ass_name else "null"
     if codec.endswith("_vaapi"):
         vf += ",format=nv12,hwupload"
     vf += "[v]"
@@ -225,7 +228,7 @@ def render_shot(shot, dur: float, seg: Path, idx: int, work: Path, fx: bool) -> 
     s = get_settings()
     accent = anim.rgb(s.news_accent)
     frames = max(1, round(dur * FPS))
-    if shot.kind == "video":
+    if shot.kind == "video" and not fx:
         _run(shot_cmd(shot.path, "video", dur, seg, idx, offset=0.3))
         return seg
     if not fx:  # habillage animé coupé : image fixe avec mouvement de caméra simple
@@ -235,22 +238,89 @@ def render_shot(shot, dur: float, seg: Path, idx: int, work: Path, fx: bool) -> 
             path = visuals.card(shot.text or "INFO", work / f"card_{idx}.jpg").path
         _run(shot_cmd(path, "image", dur, seg, idx))
         return seg
-    if shot.kind == "image":
-        gen = anim.parallax(shot.path, frames, idx)
+    if shot.kind == "video":
+        gen = anim.panel_video(shot.path, frames, idx, label=shot.meta.get("label", ""))
+    elif shot.kind == "image":
+        gen = anim.panel_photo(shot.path, frames, idx, label=shot.meta.get("label", ""))
+    elif shot.kind == "quiz":
+        gen = anim.quiz(shot.text, shot.meta.get("answers") or [], frames, accent)
     elif shot.kind == "counter":
         gen = anim.counter(shot.text, shot.meta.get("unit", ""), frames, idx, accent)
     elif shot.kind == "map":
         from . import geo
         gen = anim.map_fly(shot.meta["lon"], shot.meta["lat"], shot.text, frames, shot.meta["fetch"], accent,
-                           z1=shot.meta.get("zoom", 12.5), attribution=geo.ATTRIBUTION)
+                           z1=shot.meta.get("zoom", 12.5), attribution=geo.ATTRIBUTION,
+                           sub=shot.meta.get("sub", ""), rings=shot.meta.get("rings"))
     else:
         gen = anim.kinetic(shot.text or "INFO", frames, idx, accent)
     return anim.write_frames(gen, frames, seg)
 
 
+def make_overlay(spoken: list[Spoken], hook: str, look: dict | None):
+    """Habillage « carte d'actu » : bandeau (marque, sujet, date, chapitres, sources), mots-clés en boîte,
+    sous-titres en boîte avec le mot prononcé sur fond rouge."""
+    from . import overlay as ov, visuals
+
+    s = get_settings()
+    look = look or {}
+    n = len(spoken)
+    titles = list(look.get("titles") or [])[:n] + [""] * max(0, n - len(look.get("titles") or []))
+    titles = [(t or visuals.key_words(sp.text)).upper()[:40] for t, sp in zip(titles, spoken)]
+    if hook:
+        titles[0] = hooks.strip_emojis(hook).upper()[:40]
+    labels = list(look.get("chapters") or [])
+    labels = (labels + [""] * n)[:n]
+    if not any(labels):  # pas de chapitres : début / milieu / fin
+        labels = ["LES FAITS" if i < max(1, n // 3) else "CONTEXTE" if i < n - 1 else "ET TOI ?"
+                  for i in range(n)]
+    else:  # trous comblés par le chapitre précédent
+        for i in range(n):
+            labels[i] = labels[i] or (labels[i - 1] if i else "LES FAITS")
+    tabs, chapter_of = ov.chapters(labels)
+    hud = ov.Hud(brand=look.get("brand") or s.news_brand or s.news_badge or "ACTU",
+                 topic=look.get("topic") or "", date=ov.date_fr(), tabs=tabs,
+                 sources=look.get("sources") or "")
+    words = [w for sp in spoken for w in sp.words]
+    return ov.Overlay(hud, [(sp.start, sp.end) for sp in spoken], titles, chapter_of, words)
+
+
+def overlay_pass(video: Path, overlay, total: float, out: Path) -> Path:
+    """Décode les plans, dessine l'habillage sur chaque image, réencode (sans fichier par image)."""
+    import numpy as np
+
+    n = max(1, round(total * FPS))
+    dec = subprocess.Popen(["ffmpeg", "-v", "error", "-i", str(video), "-f", "rawvideo", "-pix_fmt", "rgb24",
+                            "-s", f"{W}x{H}", "-"], stdout=subprocess.PIPE)
+    enc = subprocess.Popen(["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
+                            "-r", str(FPS), "-i", "-", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                            "-pix_fmt", "yuv420p", str(out)], stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    size = W * H * 3
+    last = None
+    try:
+        for i in range(n):
+            buf = dec.stdout.read(size) if dec.stdout else b""
+            if len(buf) == size:
+                last = np.frombuffer(buf, np.uint8).reshape(H, W, 3).copy()
+            elif last is None:
+                raise RuntimeError("plans illisibles")
+            frame = overlay.apply(last.copy(), i / FPS)
+            enc.stdin.write(frame.tobytes())
+    finally:
+        if enc.stdin:
+            enc.stdin.close()
+        dec.kill()
+        dec.wait()
+        err = enc.stderr.read().decode(errors="ignore") if enc.stderr else ""
+        enc.wait()
+    if enc.returncode != 0:
+        raise RuntimeError(f"ffmpeg : {err.strip()[-600:]}")
+    return out
+
+
 def build(shots: list, spoken: list[Spoken], voice: Path, hook: str, source: str, out: Path, work: Path,
-          on_progress=None) -> float:
-    """shots : une illustration (visuals.Shot) par plan de `plan()`. Renvoie la durée de la vidéo."""
+          on_progress=None, look: dict | None = None) -> float:
+    """shots : une illustration (visuals.Shot) par plan de `plan()`. Renvoie la durée de la vidéo.
+    look : marque, sujet, chapitres, mots-clés et sources du bandeau (habillage animé uniquement)."""
     from . import motion as anim
 
     s = get_settings()
@@ -273,7 +343,7 @@ def build(shots: list, spoken: list[Spoken], voice: Path, hook: str, source: str
         parts.append(seg)
         durs.append(dur)
         if on_progress:
-            on_progress(80 * (j + 1) / len(cuts))
+            on_progress((70 if fx else 80) * (j + 1) / len(cuts))
     video = work / "shots.mp4"
     try:
         _run(join_cmd(parts, durs, video, transitions=fx))
@@ -286,21 +356,32 @@ def build(shots: list, spoken: list[Spoken], voice: Path, hook: str, source: str
     if fx and s.news_sfx_volume > 0 and len(cuts) > 1:
         cut_times = [c[1] + TRANSITION / 2 for c in cuts[1:]]
         sfx = anim.whoosh_track(cut_times, total, work / "whoosh.wav")
-    header, _ = header_png(hook, s.news_badge, work / "header.png")
     out.parent.mkdir(parents=True, exist_ok=True)
-    ass_name = out.stem + ".ass"
-    (out.parent / ass_name).write_text(ass_text(spoken, total, source), encoding="utf-8")
+    if fx:  # habillage complet dessiné image par image
+        look = dict(look or {})
+        look.setdefault("sources", source.upper() if source else "")
+        ov = make_overlay(spoken, hook, look)
+        if shots and shots[-1].kind == "quiz":  # le quiz a déjà son « ET TOI ? »
+            ov.titles[-1] = ""
+        video = overlay_pass(video, ov, total, work / "overlay.mp4")
+        if on_progress:
+            on_progress(92)
+        header, ass_name = "", ""
+    else:
+        header, _ = header_png(hook, s.news_badge, work / "header.png")
+        ass_name = out.stem + ".ass"
+        (out.parent / ass_name).write_text(ass_text(spoken, total, source), encoding="utf-8")
     music = pick_music()
     codec = render.resolve_codec()
     args = (video.resolve(), voice.resolve(), str(Path(header).resolve()) if header else "", ass_name,
             out.resolve(), total)
     try:
-        _run(final_cmd(*args, codec=codec, music=music, sfx=sfx, fx=fx), cwd=out.parent)
+        _run(final_cmd(*args, codec=codec, music=music, sfx=sfx, fx=fx, vignette=not fx), cwd=out.parent)
     except RuntimeError as e:
         if not codec.endswith("_vaapi"):
             raise
         log.warning("Encodage GPU impossible pour l'actu, passage au CPU : %s", str(e)[-200:])
-        _run(final_cmd(*args, codec="libx264", music=music, sfx=sfx, fx=fx), cwd=out.parent)
+        _run(final_cmd(*args, codec="libx264", music=music, sfx=sfx, fx=fx, vignette=not fx), cwd=out.parent)
     if on_progress:
         on_progress(100)
     return total

@@ -38,10 +38,15 @@ Règles :
 - "hook" : 4 à 8 mots affichés en gros en haut de la vidéo, terminés par 1 emoji.
 - "score" : note de 1 à 10 de l'intérêt du sujet pour le grand public de la chaîne (7+ seulement si les gens
   vont le partager ou en débattre ; promo, bon plan, test produit ou sujet trop pointu : 3 maximum).
+- Pour chaque phrase aussi : "title" = 2 à 4 mots-clés affichés en gros à l'écran (« 25 MILLIONS VENDUS »),
+  "chapter" = 1 ou 2 mots qui résument l'étape (« LES FAITS », « CONTEXTE », « BILAN », « ET APRÈS ? »),
+  "place" = le lieu précis dont parle la phrase s'il y en a un (« Lyon, France »), sinon "".
 - "place" : le lieu principal de l'actu s'il y en a un clairement (« Marseille, France », « Ukraine »),
   sinon "".
+- "topic" : 1 à 3 mots, le sujet (« GRÈVE SNCF », « ÉLECTIONS USA »).
+- "answers" : 2 réponses courtes (2 à 5 mots) possibles à la question finale.
 - "hashtags" : 3 à 5 hashtags en minuscules sans espace, du plus précis au plus large.
-Réponds UNIQUEMENT en JSON : {{"score": <1-10>, "title": "...", "hook": "...", "sentences": [{{"text": "...", "visual": "..."}}], "question": "...", "place": "...", "hashtags": ["..."]}}"""
+Réponds UNIQUEMENT en JSON : {{"score": <1-10>, "title": "...", "hook": "...", "sentences": [{{"text": "...", "visual": "...", "title": "...", "chapter": "...", "place": ""}}], "question": "...", "answers": ["...", "..."], "topic": "...", "place": "...", "hashtags": ["..."]}}"""
 
 _NUM = re.compile(r"\d+(?:[.,]\d+)?")
 
@@ -56,6 +61,20 @@ class Script:
     hashtags: list[str] = field(default_factory=list)
     score: float = 0.0
     place: str = ""
+    titles: list[str] = field(default_factory=list)  # mots-clés à l'écran, un par phrase
+    chapters: list[str] = field(default_factory=list)  # onglet du bandeau, un par phrase
+    places: list[str] = field(default_factory=list)  # lieu cité par la phrase (carte), un par phrase
+    topic: str = ""
+    answers: list[str] = field(default_factory=list)  # réponses A / B du quiz final
+
+    def per_sentence(self) -> list[tuple]:
+        n = len(self.sentences)
+        pad = lambda xs: (list(xs) + [""] * n)[:n]  # noqa: E731
+        return list(zip(self.sentences, pad(self.visuals), pad(self.titles), pad(self.chapters), pad(self.places)))
+
+    def set_sentences(self, rows: list[tuple]) -> None:
+        self.sentences, self.visuals, self.titles, self.chapters, self.places = (
+            [list(r) for r in zip(*rows)] if rows else ([], [], [], [], []))
 
     @property
     def text(self) -> str:
@@ -85,16 +104,17 @@ def parse(content: str) -> Script | None:
         data = json.loads(m.group(0))
     except ValueError:
         return None
-    sentences, visuals = [], []
+    rows = []
     for s in data.get("sentences") or []:
         if isinstance(s, dict):
             text, vis = str(s.get("text", "")).strip(), str(s.get("visual", "")).strip()
+            extra = [_short(s.get("title"), 40), _short(s.get("chapter"), 16), _short(s.get("place"), 80)]
         else:
-            text, vis = str(s).strip(), ""
+            text, vis, extra = str(s).strip(), "", ["", "", ""]
         text = hooks.strip_emojis(text).strip(' "')
         if text:
-            sentences.append(text)
-            visuals.append(vis[:60])
+            rows.append((text, vis[:60], *extra))
+    sentences = [r[0] for r in rows]
     if not sentences:
         return None
     try:
@@ -103,10 +123,19 @@ def parse(content: str) -> Script | None:
         score = 0.0
     tags = [clean_tag(t) for t in (data.get("hashtags") or []) if clean_tag(t)]
     return Script(title=engage.tidy_title(str(data.get("title", "")).strip().strip('"'))[:90],
-                  hook=str(data.get("hook", "")).strip().strip('"')[:70], sentences=sentences, visuals=visuals,
+                  hook=str(data.get("hook", "")).strip().strip('"')[:70], sentences=sentences,
                   question=engage.clean_question(str(data.get("question", ""))) if data.get("question") else "",
                   hashtags=list(dict.fromkeys(tags))[:5], score=score,
-                  place=hooks.strip_emojis(str(data.get("place") or "")).strip(' ."')[:80])
+                  place=_short(data.get("place"), 80), visuals=[r[1] for r in rows],
+                  titles=[r[2] for r in rows], chapters=[r[3] for r in rows], places=[r[4] for r in rows],
+                  topic=_short(data.get("topic"), 28),
+                  answers=[_short(x, 40) for x in (data.get("answers") or []) if _short(x, 40)][:2])
+
+
+def _short(value, n: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    return hooks.strip_emojis(value).strip(' ."«»').strip()[:n]
 
 
 def _bad(text: str, facts: str) -> bool:
@@ -117,10 +146,12 @@ def sanitize(sc: Script, facts: str, fallback_title: str = "") -> list[str]:
     """Retire du script ce qui contient un chiffre absent de l'article (le petit modèle en invente parfois)
     au lieu de jeter tout le script. Renvoie ce qui a été retiré (pour le journal)."""
     removed = []
-    keep = [(t, v) for t, v in zip(sc.sentences, sc.visuals) if not _bad(t, facts)]
-    if len(keep) < len(sc.sentences):
-        removed.append(f"{len(sc.sentences) - len(keep)} phrase(s)")
-        sc.sentences, sc.visuals = [t for t, _ in keep], [v for _, v in keep]
+    rows = sc.per_sentence()
+    keep = [r for r in rows if not _bad(r[0], facts)]
+    if len(keep) < len(rows):
+        removed.append(f"{len(rows) - len(keep)} phrase(s)")
+    # un mot-clé à l'écran avec un chiffre inventé est simplement effacé (remplacé plus tard)
+    sc.set_sentences([(r[0], r[1], "" if _bad(r[2], facts) else r[2], r[3], r[4]) for r in keep])
     if sc.title and _bad(sc.title, facts):
         removed.append("titre")
         sc.title = engage.tidy_title(fallback_title)[:90] if fallback_title and not _bad(fallback_title, facts) else ""
@@ -168,7 +199,7 @@ def write(title: str, facts: str, source: str) -> Script | None:
         try:
             sc = parse(llm._ask_ollama(prompt if not last else prompt + "\n\nATTENTION, essai précédent refusé : "
                                        + "; ".join(last) + ". Corrige ça.", timeout=s.news_llm_timeout,
-                                       max_tokens=900))
+                                       max_tokens=1300))
         except Exception as e:
             log.warning("Script d'actu : IA en erreur (%s)", e)
             return None

@@ -6,6 +6,7 @@ import io
 import logging
 import threading
 import time
+from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -23,8 +24,36 @@ _last_geocode = 0.0
 _lock = threading.Lock()
 
 
-def geocode(place: str) -> tuple[float, float, str, str] | None:
-    """(longitude, latitude, nom court, type de lieu) d'un lieu, ou None. Une requête par seconde maximum (règle Nominatim)."""
+@dataclass
+class Place:
+    lon: float
+    lat: float
+    name: str
+    kind: str = ""
+    sub: str = ""  # pays (ou région) affiché sous le nom
+    rings: list = field(default_factory=list)  # contours du lieu [(lon, lat), …] pour le surligner
+
+
+def _rings(geojson: dict | None, lon: float, lat: float, max_points: int = 1500) -> list[list[tuple[float, float]]]:
+    """Contours extérieurs proches du lieu (on ignore p. ex. l'outre-mer quand on montre la métropole)."""
+    if not geojson:
+        return []
+    kind, coords = geojson.get("type"), geojson.get("coordinates") or []
+    polys = [coords] if kind == "Polygon" else coords if kind == "MultiPolygon" else []
+    out = []
+    for poly in polys:
+        if not poly or len(poly[0]) < 3:
+            continue
+        ring = [(float(x), float(y)) for x, y, *_ in poly[0]]
+        xs, ys = [x for x, _ in ring], [y for _, y in ring]
+        if min(xs) - 8 <= lon <= max(xs) + 8 and min(ys) - 8 <= lat <= max(ys) + 8:
+            step = max(1, len(ring) // max_points)
+            out.append(ring[::step])
+    return out
+
+
+def geocode(place: str) -> Place | None:
+    """Lieu (position, nom court, type, pays, contours), ou None. Une requête par seconde maximum (règle Nominatim)."""
     global _last_geocode
     if not place or not place.strip():
         return None
@@ -35,7 +64,8 @@ def geocode(place: str) -> tuple[float, float, str, str] | None:
         _last_geocode = time.monotonic()
     try:
         r = httpx.get("https://nominatim.openstreetmap.org/search", headers={"User-Agent": UA}, timeout=20,
-                      params={"q": place, "format": "jsonv2", "limit": 1, "accept-language": "fr"})
+                      params={"q": place, "format": "jsonv2", "limit": 1, "accept-language": "fr",
+                              "polygon_geojson": 1, "polygon_threshold": 0.005})
         r.raise_for_status()
         rows = r.json()
     except Exception as e:
@@ -44,8 +74,12 @@ def geocode(place: str) -> tuple[float, float, str, str] | None:
     if not rows:
         return None
     row = rows[0]
+    lon, lat = float(row["lon"]), float(row["lat"])
     name = (row.get("name") or place).strip()
-    return float(row["lon"]), float(row["lat"]), name, row.get("addresstype") or row.get("type") or ""
+    parts = [x.strip() for x in str(row.get("display_name") or "").split(",") if x.strip()]
+    sub = parts[-1] if parts and parts[-1].lower() != name.lower() else ""
+    return Place(lon, lat, name, row.get("addresstype") or row.get("type") or "", sub,
+                 _rings(row.get("geojson"), lon, lat))
 
 
 def zoom_for(place_type: str) -> float:

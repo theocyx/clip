@@ -1,10 +1,11 @@
 """Habillage animé des vidéos d'actu (motion design), calculé image par image avec numpy + OpenCV :
 
-- photo en carte 3D qui pivote lentement devant un fond flou qui bouge en sens inverse (parallaxe) ;
-- mots forts qui basculent en 3D un par un sur un fond animé (dégradé, halos, particules) ;
-- chiffre clé qui défile de 0 à sa valeur dans un anneau qui se remplit ;
+- photo / vidéo libre dans un panneau sombre sur fond quadrillé, avec un lent zoom ;
+- mots forts qui basculent en 3D un par un dans le panneau ;
+- chiffre clé qui défile de 0 à sa valeur, avec une barre qui se remplit ;
+- quiz final « ET TOI ? » avec réponses A / B ;
 - survol « vu d'en haut » : zoom depuis l'espace jusqu'au lieu de l'actu sur des images satellite libres,
-  la caméra s'incline en 3D, puis une épingle tombe sur le lieu avec son nom.
+  la caméra s'incline, la zone est surlignée, épingle + étiquette, boussole, coordonnées et échelle.
 
 Chaque plan est envoyé à ffmpeg en images brutes (pas de fichier intermédiaire par image)."""
 from __future__ import annotations
@@ -181,83 +182,123 @@ def cover(img: np.ndarray, w: int, h: int) -> np.ndarray:
     return r[y:y + h, x:x + w]
 
 
-# ---------- fonds animés ----------
+# ---------- fond quadrillé et panneaux ----------
 
-def animated_bg(seed: int, accent: tuple[int, int, int], margin: float = 1.3) -> Callable[[int], np.ndarray]:
-    """Fond sombre en dégradé avec halos de couleur qui dérivent et particules lumineuses qui montent."""
+PANEL = (50, 520, 1030, 1080)  # x0, y0, x1, y1 du panneau central (le titre est au-dessus, les sous-titres dessous)
+
+
+@functools.lru_cache(maxsize=4)
+def grid_base(seed: int = 0) -> np.ndarray:
+    """Fond presque noir quadrillé, avec une lueur rouge sur les bords."""
     import cv2
 
-    rng = np.random.default_rng(seed)
-    bw, bh = int(W * margin), int(H * margin)
-    y = np.linspace(0, 1, bh, dtype=np.float32)[:, None, None]
-    top, bot = np.array([8, 10, 22], np.float32), np.array(accent, np.float32) * 0.22 + 6
-    big = np.repeat(top * (1 - y) + bot * y, bw, axis=1)
+    f = np.full((H, W, 3), 11, np.uint8)
+    f[:, :, 2] = 13
+    step = 54
+    f[::step, :] = (26, 26, 30)
+    f[:, ::step] = (26, 26, 30)
     q = 8
-    glow = np.zeros((bh // q, bw // q, 3), np.float32)
-    for k in range(4):
-        col = np.array(accent if k % 2 == 0 else (60, 120, 255), np.float32)
-        cx, cy = rng.uniform(0.15, 0.85) * bw / q, rng.uniform(0.15, 0.85) * bh / q
-        cv2.circle(glow, (int(cx), int(cy)), int(rng.uniform(0.18, 0.3) * bw / q), col.tolist(), -1)
-    glow = cv2.GaussianBlur(glow, (0, 0), bw / q * 0.12)
-    big = np.clip(big + cv2.resize(glow, (bw, bh)) * 0.55, 0, 255).astype(np.uint8)
-    parts = rng.uniform(0, 1, (46, 4))  # x, y, vitesse, taille
-    phase = rng.uniform(0, 2 * math.pi)
-
-    def frame(i: int) -> np.ndarray:
-        t = i / FPS
-        dx = (bw - W) / 2 * (1 + 0.8 * math.sin(phase + t * 0.6))
-        dy = (bh - H) / 2 * (1 + 0.8 * math.cos(phase + t * 0.45))
-        f = big[int(dy):int(dy) + H, int(dx):int(dx) + W].copy()
-        for px, py, sp, sz in parts:
-            yy = int(((py - t * (0.04 + 0.08 * sp)) % 1.0) * H)
-            xx = int((px + 0.01 * math.sin(t * 2 + py * 9)) * W)
-            r = int(2 + 5 * sz)
-            cv2.circle(f, (xx, yy), r, (255, 255, 255) if sz < 0.7 else accent, -1, lineType=cv2.LINE_AA)
-        return f
-
-    return frame
+    glow = np.zeros((H // q, W // q), np.float32)
+    cv2.circle(glow, (0, H // q), W // q // 2, 1.0, -1)
+    cv2.circle(glow, (W // q, 0), W // q // 3, 0.7, -1)
+    glow = cv2.resize(cv2.GaussianBlur(glow, (0, 0), 30), (W, H))[..., None]
+    red = np.array([150, 18, 22], np.float32)
+    return np.clip(f * (1 - 0.6 * glow) + red * 0.6 * glow, 0, 255).astype(np.uint8)
 
 
-# ---------- plans ----------
+@functools.lru_cache(maxsize=4)
+def panel_sprite(w: int, h: int) -> np.ndarray:
+    from PIL import Image, ImageDraw
 
-def parallax(path: Path, n: int, idx: int) -> Callable[[int], np.ndarray]:
-    """Photo en carte 3D qui arrive du fond, pivote lentement et flotte ; fond flou de la même photo en sens
-    inverse (effet de profondeur)."""
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(img).rounded_rectangle((0, 0, w - 1, h - 1), radius=18, fill=(15, 15, 19, 250),
+                                          outline=(58, 58, 66, 255), width=2)
+    return np.asarray(img).copy()
+
+
+def paste_rgba(frame: np.ndarray, sprite: np.ndarray, x: int, y: int, opacity: float = 1.0) -> None:
+    from .overlay import paste
+
+    paste(frame, sprite, x, y, opacity)
+
+
+def panel_frame(t: float) -> tuple[np.ndarray, float]:
+    """Fond + panneau vide qui apparaît (léger zoom) ; renvoie aussi l'opacité d'entrée du contenu."""
     import cv2
 
-    img = load_rgb(path)
-    bw, bh = int(W * 1.18), int(H * 1.18)
-    small = cover(img, bw // 6, bh // 6)
-    bg = cv2.resize(cv2.GaussianBlur(small, (0, 0), 6), (bw, bh), interpolation=cv2.INTER_LINEAR)
-    bg = (bg * 0.45).astype(np.uint8)
-    ih, iw = img.shape[:2]
-    cw = 940
-    ch = min(1000, round(ih * cw / iw))
-    if ch < 520:  # image très large : un peu plus grande, quitte à rogner les côtés
-        ch = 560
-    card = rounded_card(cover(img, cw, ch), radius=42, border=6)
+    f = grid_base().copy()
+    x0, y0, x1, y1 = PANEL
+    sp = panel_sprite(x1 - x0, y1 - y0)
+    e = ease_out_cubic(t / 0.25)
+    if e < 1:
+        s = 0.94 + 0.06 * e
+        sp = cv2.resize(sp, (int(sp.shape[1] * s), int(sp.shape[0] * s)))
+    paste_rgba(f, sp, (W - sp.shape[1]) // 2, (y0 + y1) // 2 - sp.shape[0] // 2, e)
+    return f, e
+
+
+def caption(text: str) -> np.ndarray:
+    return text_sprite(text.upper(), 18, (150, 150, 158), stroke=0)
+
+
+def panel_photo(path: Path, n: int, idx: int, label: str = "") -> Callable[[int], np.ndarray]:
+    """Photo dans le panneau, avec un lent zoom / glissement (« Ken Burns »)."""
+    import cv2
+
+    x0, y0, x1, y1 = PANEL
+    iw, ih = x1 - x0 - 28, y1 - y0 - 28
+    big = cover(load_rgb(path), int(iw * 1.12), int(ih * 1.12))
+    mask = rounded_card(np.zeros((ih, iw, 3), np.uint8), radius=12)[..., 3:4].astype(np.float32) / 255
+    cap = caption(label) if label else None
     side = 1 if idx % 2 == 0 else -1
-    cx, cy = W / 2, H * 0.43
 
     def frame(i: int) -> np.ndarray:
         t, p = i / FPS, i / max(1, n - 1)
-        e = ease_out_back(t / 0.45)
-        ry = side * (-10 + 18 * ease_in_out(p)) + (1 - ease_out_cubic(t / 0.45)) * 35 * side
-        rx = 6 - 9 * p
-        scale = 0.6 + 0.4 * e + 0.05 * p
-        fy = cy + 14 * math.sin(t * 2.2)
-        sx = (bw - W) / 2 * (1 - side * 0.8 * (p - 0.5) * 2)
-        sy = (bh - H) / 2 * (1 + 0.5 * (p - 0.5))
-        f = bg[int(sy):int(sy) + H, int(sx):int(sx) + W].copy()
-        poly = project(cw, ch, cx, fy, scale, rx=rx, ry=ry)
-        drop_shadow(f, poly)
-        warp_onto(f, card, poly, opacity=clamp(t / 0.15))
+        f, e = panel_frame(t)
+        z = 1.0 + 0.1 * p
+        cw, ch = int(big.shape[1] / z * 0.9), int(big.shape[0] / z * 0.9)
+        cx = (big.shape[1] - cw) / 2 * (1 + side * 0.6 * (p - 0.5))
+        cy = (big.shape[0] - ch) / 2
+        crop = cv2.resize(big[int(cy):int(cy) + ch, int(cx):int(cx) + cw], (iw, ih), interpolation=cv2.INTER_LINEAR)
+        region = f[y0 + 14:y0 + 14 + ih, x0 + 14:x0 + 14 + iw]
+        a = mask * e
+        region[:] = (crop * a + region * (1 - a)).astype(np.uint8)
+        if cap is not None:
+            paste_rgba(f, cap, x1 - 24 - cap.shape[1], y1 + 10, e)
         return f
 
     return frame
 
 
-def split_words(text: str, per_line: int = 11, max_lines: int = 3) -> list[list[str]]:
+def panel_video(path: Path, n: int, idx: int, label: str = "", offset: float = 0.3) -> Callable[[int], np.ndarray]:
+    """Vidéo libre de droits jouée dans le panneau (décodée par ffmpeg à la taille du panneau)."""
+    x0, y0, x1, y1 = PANEL
+    iw, ih = x1 - x0 - 28, y1 - y0 - 28
+    proc = subprocess.run(["ffmpeg", "-v", "error", "-stream_loop", "-1", "-ss", f"{offset:.2f}", "-i", str(path),
+                           "-vf", f"scale={iw}:{ih}:force_original_aspect_ratio=increase,crop={iw}:{ih},fps={FPS}",
+                           "-frames:v", str(n), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                          capture_output=True, timeout=300)
+    size = iw * ih * 3
+    count = len(proc.stdout) // size
+    if count == 0:
+        raise RuntimeError("vidéo illisible : " + proc.stderr.decode(errors="ignore")[-200:])
+    clip = np.frombuffer(proc.stdout[:count * size], np.uint8).reshape(count, ih, iw, 3)
+    mask = rounded_card(np.zeros((ih, iw, 3), np.uint8), radius=12)[..., 3:4].astype(np.float32) / 255
+    cap = caption(label) if label else None
+
+    def frame(i: int) -> np.ndarray:
+        f, e = panel_frame(i / FPS)
+        region = f[y0 + 14:y0 + 14 + ih, x0 + 14:x0 + 14 + iw]
+        a = mask * e
+        region[:] = (clip[min(i, count - 1)] * a + region * (1 - a)).astype(np.uint8)
+        if cap is not None:
+            paste_rgba(f, cap, x1 - 24 - cap.shape[1], y1 + 10, e)
+        return f
+
+    return frame
+
+
+def split_words(text: str, per_line: int = 12, max_lines: int = 3) -> list[list[str]]:
     words, lines, cur = text.upper().split(), [], []
     for w in words:
         if cur and len(" ".join(cur + [w])) > per_line:
@@ -271,39 +312,98 @@ def split_words(text: str, per_line: int = 11, max_lines: int = 3) -> list[list[
 
 
 def kinetic(text: str, n: int, idx: int, accent: tuple[int, int, int]) -> Callable[[int], np.ndarray]:
-    """Mots forts qui basculent en 3D un par un, puis le bloc flotte en pivotant légèrement."""
-    bg = animated_bg(idx * 7 + 3, accent)
+    """Mots forts dans le panneau, qui basculent en 3D un par un puis flottent légèrement."""
     lines = split_words(text) or [["INFO"]]
-    size = 150
-    while size > 80 and max(sum(text_sprite(w, size).shape[1] for w in ln) + 30 * (len(ln) - 1)
-                            for ln in lines) > W - 120:
-        size -= 14
+    size = 130
+    while size > 70 and max(sum(text_sprite(w, size, stroke=0).shape[1] for w in ln) + 26 * (len(ln) - 1)
+                            for ln in lines) > PANEL[2] - PANEL[0] - 90:
+        size -= 10
     sprites, k = [], 0
-    line_h = size * 1.25
+    line_h = size * 1.2
     y0 = -line_h * (len(lines) - 1) / 2
     for li, ln in enumerate(lines):
-        sp = [text_sprite(w, size, accent if (li + j) % 2 == 0 else (255, 255, 255)) for j, w in enumerate(ln)]
-        total = sum(s.shape[1] for s in sp) + 30 * (len(sp) - 1)
+        sp = [text_sprite(w, size, (230, 32, 38) if (li + j) % 2 else (255, 255, 255), stroke=0)
+              for j, w in enumerate(ln)]
+        total = sum(s.shape[1] for s in sp) + 26 * (len(sp) - 1)
         x = -total / 2
         for s in sp:
             sprites.append((s, x + s.shape[1] / 2, y0 + li * line_h, k))
-            x += s.shape[1] + 30
+            x += s.shape[1] + 26
             k += 1
-    cx, cy = W / 2, H * 0.42
+    cx, cy = W / 2, (PANEL[1] + PANEL[3]) / 2
     phase = idx * 1.3
 
     def frame(i: int) -> np.ndarray:
-        f = bg(i)
         t = i / FPS
-        ry, rz = 9 * math.sin(phase + t * 1.4), 2 * math.sin(phase + t * 0.9)
+        f, _ = panel_frame(t)
+        ry = 6 * math.sin(phase + t * 1.4)
         for s, ox, oy, order in sprites:
-            p = (t - 0.08 * order) / 0.32
+            p = (t - 0.15 - 0.08 * order) / 0.3
             if p <= 0:
                 continue
             e = ease_out_back(p)
-            poly = project(s.shape[1], s.shape[0], cx, cy, 0.7 + 0.3 * e, rx=88 * (1 - ease_out_cubic(p)),
-                           ry=ry, rz=rz, ox=ox, oy=oy)
+            poly = project(s.shape[1], s.shape[0], cx, cy, 0.75 + 0.25 * e, rx=85 * (1 - ease_out_cubic(p)),
+                           ry=ry, ox=ox, oy=oy)
             warp_onto(f, s, poly, opacity=clamp(p * 2))
+        return f
+
+    return frame
+
+
+def quiz(question: str, answers: list[str], n: int, accent: tuple[int, int, int]) -> Callable[[int], np.ndarray]:
+    """Fin interactive : « ET TOI ? », la question dans une boîte rouge, puis les réponses A / B."""
+    from PIL import Image, ImageDraw
+
+    from .overlay import box_text, font
+
+    head = np.asarray(box_text("ET TOI ?", "title", 78, (255, 255, 255), None, pad=(0, 0)).convert("RGBA")).copy()
+    import re as _re
+
+    question = _re.sub(r"^\s*(et\s+)?(toi|vous)\s*,\s*", "", question.strip(), flags=_re.I)
+    lines, cur = [], ""
+    for w in question.upper().replace(" ?", "\x00?").split():  # le « ? » reste collé au dernier mot
+        w = w.replace("\x00", " ")
+        if cur and len(cur) + 1 + len(w) > 22:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}".strip()
+    lines = (lines + [cur])[:3]
+    q_imgs = [box_text(ln, "title", 52, (255, 255, 255), (230, 32, 38), pad=(16, 8), radius=2) for ln in lines]
+    q_list = [np.asarray((im if im.width <= W - 120 else im.resize((W - 120, round(im.height * (W - 120) / im.width))))
+                         .convert("RGBA")).copy() for im in q_imgs]
+    q = np.zeros((sum(x.shape[0] for x in q_list) + 6 * (len(q_list) - 1), max(x.shape[1] for x in q_list), 4),
+                 np.uint8)
+    yy = 0
+    for x in q_list:
+        q[yy:yy + x.shape[0], :x.shape[1]] = x
+        yy += x.shape[0] + 6
+    rows = []
+    for letter, ans in zip("AB", (answers or ["Oui", "Non"])[:2]):
+        img = Image.new("RGBA", (W - 120, 96), (0, 0, 0, 0))
+        dr = ImageDraw.Draw(img)
+        dr.rectangle((0, 0, W - 121, 95), fill=(16, 16, 20, 245), outline=(70, 70, 78, 255), width=2)
+        dr.rectangle((16, 16, 80, 80), fill=(255, 255, 255, 255))
+        f = font("title", 40)
+        l, t, r, b = dr.textbbox((0, 0), letter, font=f)
+        dr.text((48 - (r - l) / 2 - l, 48 - (b - t) / 2 - t), letter, font=f, fill=(0, 0, 0, 255))
+        fs = font("sub", 40)
+        l, t, r, b = dr.textbbox((0, 0), ans[:34], font=fs)
+        dr.text((104 - l, 48 - (b - t) / 2 - t), ans[:34], font=fs, fill=(255, 255, 255, 255))
+        rows.append(np.asarray(img).copy())
+
+    def frame(i: int) -> np.ndarray:
+        t = i / FPS
+        f = grid_base().copy()
+        y = 520
+        paste_rgba(f, head, 60, y, clamp(t / 0.2))
+        y += head.shape[0] + 20
+        paste_rgba(f, q, 60, y, clamp((t - 0.2) / 0.2))
+        y += q.shape[0] + 30
+        for k, r in enumerate(rows):
+            p = clamp((t - 0.45 - 0.2 * k) / 0.2)
+            paste_rgba(f, r, 60 + int((1 - ease_out_cubic(p)) * 80), y, p)
+            y += r.shape[0] + 18
         return f
 
     return frame
@@ -333,38 +433,37 @@ def fmt_number(v: float, dec: int) -> str:
 
 
 def counter(value_text: str, unit: str, n: int, idx: int, accent: tuple[int, int, int]) -> Callable[[int], np.ndarray]:
-    """Chiffre clé qui défile de 0 à sa valeur dans un anneau qui se remplit, l'unité arrive en 3D dessous."""
+    """Chiffre clé dans le panneau : il défile de 0 à sa valeur, une barre rouge se remplit, l'unité arrive."""
     import cv2
 
     parsed = parse_number(value_text)
     val, dec = (parsed[0], parsed[1]) if parsed else (0.0, 0)
-    bg = animated_bg(idx * 11 + 5, accent)
-    cx, cy, radius = W // 2, int(H * 0.40), 280
-    unit_sp = text_sprite(unit.upper()[:22], 84, (0, 0, 0), box=accent) if unit else None
+    x0, y0, x1, y1 = PANEL
+    cx, cy = W // 2, y0 + int((y1 - y0) * 0.4)
+    unit_sp = text_sprite(unit.upper()[:24], 44, (230, 230, 236), stroke=0) if unit else None
     final = fmt_number(val, dec)
-    size = 190
-    while size > 90 and text_sprite(final, size).shape[1] > 2 * radius - 70:
-        size -= 12
+    size = 170
+    while size > 80 and text_sprite(final, size, stroke=0).shape[1] > x1 - x0 - 120:
+        size -= 10
     cache: dict[str, np.ndarray] = {}
+    bar_y = y0 + int((y1 - y0) * 0.66)
 
     def frame(i: int) -> np.ndarray:
-        f = bg(i)
         t = i / FPS
-        p = ease_out_cubic(t / 1.0)
-        cv2.circle(f, (cx, cy), radius, (255, 255, 255), 6, lineType=cv2.LINE_AA)
-        cv2.ellipse(f, (cx, cy), (radius, radius), -90, 0, 360 * p, accent, 22, lineType=cv2.LINE_AA)
+        f, e = panel_frame(t)
+        p = ease_out_cubic((t - 0.15) / 0.9)
         txt = fmt_number(val * p, dec) if p < 1 else final
         sp = cache.get(txt)
         if sp is None:
-            sp = cache[txt] = text_sprite(txt, size)
-        pop = 1 + 0.08 * math.sin(math.pi * clamp((t - 1.0) / 0.25))  # petit rebond à l'arrivée
-        warp_onto(f, sp, project(sp.shape[1], sp.shape[0], cx, cy, pop, ry=6 * math.sin(t * 1.3)))
+            sp = cache[txt] = text_sprite(txt, size, (255, 255, 255), stroke=0)
+        pop = 1 + 0.07 * math.sin(math.pi * clamp((t - 1.05) / 0.25))
+        warp_onto(f, sp, project(sp.shape[1], sp.shape[0], cx, cy, pop), opacity=e)
+        cv2.rectangle(f, (x0 + 60, bar_y), (x1 - 60, bar_y + 26), (40, 40, 46), -1)
+        cv2.rectangle(f, (x0 + 60, bar_y), (x0 + 60 + int((x1 - x0 - 120) * p), bar_y + 26), (38, 32, 230)[::-1], -1)
         if unit_sp is not None:
-            q = (t - 0.5) / 0.35
+            q = (t - 0.5) / 0.3
             if q > 0:
-                poly = project(unit_sp.shape[1], unit_sp.shape[0], cx, cy + radius + 105, 0.8 + 0.2 * ease_out_back(q),
-                               rx=80 * (1 - ease_out_cubic(q)), ry=-5 * math.sin(t * 1.3))
-                warp_onto(f, unit_sp, poly, opacity=clamp(q * 2))
+                paste_rgba(f, unit_sp, cx - unit_sp.shape[1] // 2, bar_y + 50, clamp(q))
         return f
 
     return frame
@@ -435,13 +534,16 @@ RW, RH = 432, 768  # résolution de calcul de la carte (agrandie ensuite) : moin
 SPREAD = 1.8  # largeur calculée en plus pour pouvoir incliner la caméra
 
 
+MAX_TILT = 25.0
+
+
 def map_plan(lon: float, lat: float, n: int, z0: float = 3.0, z1: float = 13.0) -> list[tuple[float, float]]:
-    """(zoom, inclinaison en degrés) de chaque image : descente depuis l'espace puis la caméra se penche."""
+    """(zoom, inclinaison en degrés) de chaque image : descente depuis l'espace puis la caméra se penche un peu."""
     out = []
     for i in range(n):
         p = i / max(1, n - 1)
         z = z0 + (z1 - z0) * ease_in_out(p / 0.72) + 0.35 * clamp((p - 0.72) / 0.28)
-        out.append((z, 42 * ease_in_out((p - 0.35) / 0.6)))
+        out.append((z, MAX_TILT * ease_in_out((p - 0.35) / 0.6)))
     return out
 
 
@@ -456,60 +558,151 @@ def map_tiles_needed(lon: float, lat: float, n: int, z1: float) -> set[tuple[int
     return need
 
 
-def map_fly(lon: float, lat: float, label: str, n: int, fetch, accent: tuple[int, int, int],
-            z1: float = 13.0, attribution: str = "") -> Callable[[int], np.ndarray]:
+def dms(value: float, pos: str, neg: str) -> str:
+    v = abs(value)
+    d, m = int(v), int((v - int(v)) * 60)
+    sec = int(round(((v - d) * 60 - m) * 60)) % 60
+    return f"{d}°{m:02d}'{sec:02d}\"{pos if value >= 0 else neg}"
+
+
+def nice_scale(m_per_px: float, max_px: int = 220) -> tuple[int, str]:
+    """Longueur (px) et texte d'une barre d'échelle « ronde » (1, 2, 5 × 10^n)."""
+    target = m_per_px * max_px
+    best = 1.0
+    for e in range(0, 8):
+        for k in (1, 2, 5):
+            if k * 10 ** e <= target:
+                best = k * 10 ** e
+    px = max(20, int(best / m_per_px))
+    return px, (f"{best / 1000:g} km" if best >= 1000 else f"{best:g} m")
+
+
+MAP_HUD_Y = 1050  # haut de la boussole / des coordonnées (sous la carte « utile », au-dessus des sous-titres)
+
+
+def compass_sprite() -> np.ndarray:
     import cv2
+
+    r = 40
+    sp = np.zeros((2 * r + 8, 2 * r + 8, 4), np.uint8)
+    c = (r + 4, r + 4)
+    cv2.circle(sp, c, r, (12, 12, 16, 200), -1, lineType=cv2.LINE_AA)
+    cv2.circle(sp, c, r, (255, 255, 255, 255), 2, lineType=cv2.LINE_AA)
+    cv2.fillConvexPoly(sp, np.int32([[c[0], c[1] - r + 8], [c[0] - 10, c[1]], [c[0] + 10, c[1]]]), (230, 32, 38, 255),
+                       lineType=cv2.LINE_AA)
+    cv2.fillConvexPoly(sp, np.int32([[c[0], c[1] + r - 8], [c[0] - 10, c[1]], [c[0] + 10, c[1]]]),
+                       (235, 235, 235, 255), lineType=cv2.LINE_AA)
+    return sp
+
+
+def map_fly(lon: float, lat: float, label: str, n: int, fetch, accent: tuple[int, int, int],
+            z1: float = 13.0, attribution: str = "", sub: str = "",
+            rings: list[list[tuple[float, float]]] | None = None) -> Callable[[int], np.ndarray]:
+    """Survol satellite : descente depuis l'espace, caméra qui se penche, zone du lieu surlignée en bleu,
+    épingle + étiquette, boussole, coordonnées, altitude et échelle (habillage « carte d'actu »)."""
+    import cv2
+
+    from .overlay import box_text, paste
 
     view = MapView(fetch)
     plan = map_plan(lon, lat, n, z1=z1)
-    label_sp = text_sprite(label.upper()[:28], 66, (0, 0, 0), box=(255, 255, 255)) if label else None
-    attr_sp = text_sprite(attribution, 22, (255, 255, 255), stroke=3) if attribution else None
+    name_sp = np.asarray(box_text(label.upper()[:26], "title", 38, (0, 0, 0), (255, 255, 255), pad=(14, 8),
+                                  radius=3).convert("RGBA")).copy() if label else None
+    sub_sp = np.asarray(box_text(sub.upper()[:30], "mono", 20, (200, 200, 205), (12, 12, 16, 220), pad=(10, 5),
+                                 radius=2).convert("RGBA")).copy() if sub else None
+    attr_sp = np.asarray(box_text(attribution, "mono", 15, (200, 200, 200), None, pad=(0, 0)).convert("RGBA")).copy() \
+        if attribution else None
+    coords = f"{dms(lat, 'N', 'S')}  {dms(lon, 'E', 'O')}"
+    coord_sp = np.asarray(box_text(coords, "mono", 24, (255, 255, 255), None, pad=(0, 0)).convert("RGBA")).copy()
+    compass = compass_sprite()
+    shapes = [np.array([lonlat_px(x, y, 0) for x, y in ring], np.float64) for ring in (rings or []) if len(ring) > 2]
     fw = int(RW * SPREAD)
+    text_cache: dict[str, np.ndarray] = {}
+
+    def mono(text: str, size: int = 22) -> np.ndarray:
+        if text not in text_cache:
+            text_cache[text] = np.asarray(box_text(text, "mono", size, (255, 255, 255), None, pad=(0, 0))
+                                          .convert("RGBA")).copy()
+        return text_cache[text]
 
     def frame(i: int) -> np.ndarray:
         z, tilt = plan[i]
         lvl = int(round(z))
         s = 2 ** (z - lvl)
         cx, cy = lonlat_px(lon, lat, lvl)
-        # lieu un peu sous le centre une fois incliné (on voit l'horizon au-dessus)
-        flat = view.region(lvl, cx, cy - RH * 0.08 * tilt / 42 / s, fw / s, RH / s, fw, RH)
+        shift = RH * 0.08 * tilt / MAX_TILT  # lieu un peu sous le centre une fois incliné
+        flat = view.region(lvl, cx, cy - shift / s, fw / s, RH / s, fw, RH)
         k = math.tan(math.radians(tilt)) * 0.38
         top_w = RW * (1 + 2 * k)
         src = np.float32([[(fw - top_w) / 2, 0], [(fw + top_w) / 2, 0], [(fw + RW) / 2, RH], [(fw - RW) / 2, RH]])
         dst = np.float32([[0, 0], [RW, 0], [RW, RH], [0, RH]])
         mat = cv2.getPerspectiveTransform(src, dst)
         img = cv2.warpPerspective(flat, mat, (RW, RH), flags=cv2.INTER_LINEAR)
+        # image un peu sombre et désaturée : l'habillage ressort mieux
+        grey = img.mean(axis=2, keepdims=True)
+        img = (img * 0.62 + grey * 0.18).astype(np.uint8)
         if tilt > 1:  # brume vers l'horizon
-            fog = np.linspace(0.55 * tilt / 42, 0, RH // 2, dtype=np.float32)[:, None, None]
-            img[:RH // 2] = (img[:RH // 2] * (1 - fog) + np.array([170, 190, 215]) * fog).astype(np.uint8)
+            fog = np.linspace(0.45 * tilt / MAX_TILT, 0, RH // 2, dtype=np.float32)[:, None, None]
+            img[:RH // 2] = (img[:RH // 2] * (1 - fog) + np.array([60, 70, 90]) * fog).astype(np.uint8)
         f = cv2.resize(img, (W, H), interpolation=cv2.INTER_CUBIC)
         p = i / max(1, n - 1)
-        # le lieu à l'écran : son point sur la carte à plat, passé dans la même perspective
-        here = cv2.perspectiveTransform(np.float32([[[fw / 2, RH / 2 + RH * 0.08 * tilt / 42]]]), mat)[0, 0]
-        px, py = float(here[0]) * W / RW, float(here[1]) * H / RH
-        drop = (p - 0.66) / 0.14
-        if drop > 0:
-            ring = clamp((p - 0.78) / 0.22)
-            if ring > 0:
-                cv2.ellipse(f, (int(px), int(py)), (int(30 + 120 * ring), int((30 + 120 * ring) * 0.45)), 0, 0, 360,
-                            (255, 255, 255), max(1, int(6 * (1 - ring))), lineType=cv2.LINE_AA)
-            fall = (1 - ease_out_back(drop)) * 500  # l'épingle entière tombe puis rebondit
-            tip = py - fall
-            hy = tip - 130
-            cv2.ellipse(f, (int(px), int(py)), (26, 10), 0, 0, 360, (0, 0, 0), -1, lineType=cv2.LINE_AA)
-            tri = np.int32([[px - 44, hy + 30], [px + 44, hy + 30], [px, tip]])
-            cv2.fillConvexPoly(f, tri, (230, 30, 40), lineType=cv2.LINE_AA)
-            cv2.circle(f, (int(px), int(hy)), 56, (230, 30, 40), -1, lineType=cv2.LINE_AA)
-            cv2.circle(f, (int(px), int(hy)), 22, (255, 255, 255), -1, lineType=cv2.LINE_AA)
-            if label_sp is not None:
-                q = (p - 0.76) / 0.12
-                if q > 0:
-                    poly = project(label_sp.shape[1], label_sp.shape[0], px, py + 110, 0.75 + 0.25 * ease_out_back(q),
-                                   rx=75 * (1 - ease_out_cubic(q)))
-                    warp_onto(f, label_sp, poly, opacity=clamp(q * 2))
+        up = W / RW
+
+        def to_screen(pts_flat: np.ndarray) -> np.ndarray:
+            pts_flat[:, 1] = np.clip(pts_flat[:, 1], -2 * RH, 3 * RH)
+            return cv2.perspectiveTransform(pts_flat[None].astype(np.float32), mat)[0] * up
+
+        # zone du lieu (pays, région, ville) surlignée : bleu translucide + contour blanc
+        zone = clamp((p - 0.5) / 0.2)
+        if shapes and zone > 0:
+            x0, y0 = cx - fw / s / 2, cy - shift / s - RH / s / 2
+            layer = f.copy()
+            polys = []
+            for ring in shapes:
+                pts = np.stack([(ring[:, 0] * 2 ** lvl - x0) * s, (ring[:, 1] * 2 ** lvl - y0) * s], axis=1)
+                polys.append(to_screen(pts).astype(np.int32))
+            cv2.fillPoly(layer, polys, (40, 110, 235), lineType=cv2.LINE_AA)
+            f[:] = cv2.addWeighted(layer, 0.35 * zone, f, 1 - 0.35 * zone, 0)
+            cv2.polylines(f, polys, True, (255, 255, 255), 3, lineType=cv2.LINE_AA)
+        here = to_screen(np.float32([[fw / 2, RH / 2 + shift]]))[0]
+        px, py = float(here[0]), float(here[1])
+        pop = (p - 0.6) / 0.12
+        if pop > 0:
+            ring_p = clamp((p - 0.6) / 0.3)
+            cv2.circle(f, (int(px), int(py)), int(18 + 70 * ring_p), (255, 255, 255), max(1, int(4 * (1 - ring_p))),
+                       lineType=cv2.LINE_AA)
+            r = int(16 * ease_out_back(pop))
+            if r > 0:
+                cv2.circle(f, (int(px), int(py)), r + 6, (255, 255, 255), -1, lineType=cv2.LINE_AA)
+                cv2.circle(f, (int(px), int(py)), r, (230, 32, 38), -1, lineType=cv2.LINE_AA)
+            q = clamp((p - 0.68) / 0.12)
+            if name_sp is not None and q > 0:
+                lx = int(px + 34 - (1 - ease_out_cubic(q)) * 40)
+                lx = min(lx, W - 30 - name_sp.shape[1])
+                ly = int(py - name_sp.shape[0] - 6)
+                cv2.line(f, (int(px) + 18, int(py) - 6), (lx, ly + name_sp.shape[0]), (255, 255, 255), 2,
+                         lineType=cv2.LINE_AA)
+                paste(f, name_sp, lx, ly, q)
+                if sub_sp is not None:
+                    paste(f, sub_sp, lx, ly + name_sp.shape[0] + 4, q)
+        # boussole, coordonnées, altitude (à gauche) et échelle (à droite)
+        hud = clamp(i / FPS / 0.4)
+        y = MAP_HUD_Y
+        paste(f, compass, 30, y, hud)
+        paste(f, coord_sp, 30 + compass.shape[1] + 16, y + 12, hud)
+        m_px = 156543.03 * math.cos(math.radians(lat)) / 2 ** z / up
+        alt = W * m_px / 1000 * 1.1
+        paste(f, mono(f"ALT {alt:,.0f} km".replace(",", " ") if alt >= 10 else f"ALT {alt:.1f} km"),
+              30 + compass.shape[1] + 16, y + 48, hud)
+        bar, txt = nice_scale(m_px)
+        bx1, by = W - 40, y + 64
+        cv2.line(f, (bx1 - bar, by), (bx1, by), (255, 255, 255), 3, lineType=cv2.LINE_AA)
+        for xx in (bx1 - bar, bx1):
+            cv2.line(f, (xx, by - 10), (xx, by + 2), (255, 255, 255), 3, lineType=cv2.LINE_AA)
+        t_sp = mono(txt)
+        paste(f, t_sp, bx1 - t_sp.shape[1], by - 40, hud)
         if attr_sp is not None:
-            warp_onto(f, attr_sp, project(attr_sp.shape[1], attr_sp.shape[0], 24 + attr_sp.shape[1] / 2,
-                                          H - 150, 1.0), opacity=0.8)
+            paste(f, attr_sp, 30, y + compass.shape[0] + 14, 0.8 * hud)
         return f
 
     frame.view = view  # type: ignore[attr-defined]
