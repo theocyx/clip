@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -23,10 +23,12 @@ FREE = re.compile(r"^(cc0|public domain|pd\b|pdm|no restrictions|cc[ -]by(-sa)?(
 
 @dataclass
 class Shot:
-    path: Path
-    kind: str  # video / image
+    path: Path | None
+    kind: str  # video / image (photo en carte 3D) / kinetic (mots animés) / counter (chiffre) / map (survol)
     credit: str = ""  # « Photo : X (licence) — lien » quand la licence demande de citer l'auteur
     ident: str = ""
+    text: str = ""  # mots affichés (kinetic), chiffre (counter), nom du lieu (map)
+    meta: dict = field(default_factory=dict)  # unit (counter) ; lon, lat, zoom (map)
 
 
 def _download(url: str, dest: Path, headers: dict | None = None, max_mb: int = 60) -> Path | None:
@@ -233,12 +235,45 @@ def find(query: str, sentence: str, work: Path, used: set[str], idx: int, prefer
     shot = pexels(query, work, used, prefer_video) or commons(query, work, used)
     if shot is None and query and len(query.split()) > 1:  # requête plus large : premier mot-clé seul
         shot = pexels(query.split()[0], work, used, prefer_video)
-    if shot is None:
-        return card(key_words(sentence), work / f"card_{idx}.jpg")
+    if shot is None:  # pas d'image libre : mots forts animés
+        return Shot(None, "kinetic", text=key_words(sentence))
     if shot.kind == "image":
         try:
-            shot.path = frame_image(shot.path, work / f"frame_{idx}.jpg")
+            from PIL import Image
+            with Image.open(shot.path) as im:
+                im.verify()
         except Exception as e:
-            log.info("Image illisible (%s) : carte générée à la place", e)
-            return card(key_words(sentence), work / f"card_{idx}.jpg")
+            log.info("Image illisible (%s) : mots animés à la place", e)
+            return Shot(None, "kinetic", text=key_words(sentence))
     return shot
+
+
+def number_shot(sentence: str) -> Shot | None:
+    """Plan « chiffre clé » si la phrase contient un nombre parlant (pas une année seule)."""
+    from .motion import parse_number
+
+    parsed = parse_number(sentence)
+    if not parsed:
+        return None
+    val, dec, raw = parsed
+    toks = [t.strip(".,;:!?«»\"'()") for t in sentence.split()]
+    try:
+        k = next(i for i, t in enumerate(toks) if raw.split()[0] in t)
+    except StopIteration:
+        return None
+    stop = {"dans", "les", "la", "le", "à", "au", "aux", "en", "sur", "pour", "par", "avec", "ce", "cette", "et",
+            "ou", "qui", "que", "selon", "depuis", "contre", "entre", "vers"}
+    unit_words = []
+    for t in toks[k + len(raw.split()):k + len(raw.split()) + 3]:
+        if not t or t.lower() in stop:
+            break
+        unit_words.append(t)
+    while unit_words and unit_words[-1].lower() in ("de", "d", "des", "du"):
+        unit_words.pop()
+    unit = " ".join(unit_words)[:22]
+    if dec == 0 and 1900 <= val <= 2100 and not unit.lower().startswith(("euro", "€", "million", "milliard")):
+        return None  # une année se lit mieux en mots
+    if val < 2 and not unit:
+        return None
+    unit = " ".join(unit.split()[:3])
+    return Shot(None, "counter", text=raw, meta={"unit": unit})

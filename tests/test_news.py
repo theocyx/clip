@@ -160,12 +160,68 @@ def test_free_licenses_only():
     assert visuals.key_words("Rockstar annonce 25 millions de copies.") == "25 millions"
 
 
-def test_find_falls_back_to_card(tmp_path, monkeypatch):
+def test_find_falls_back_to_animated_words(tmp_path, monkeypatch):
     monkeypatch.setattr(get_settings(), "news_wikimedia", False)
     shot = visuals.find("game controller", "Le jeu fait 25 millions de ventes", tmp_path, set(), 0)
-    assert shot.kind == "image" and shot.path.exists() and shot.credit == ""
+    assert shot.kind == "kinetic" and shot.text == "25 millions" and shot.credit == ""
+    card = visuals.card("25 millions", tmp_path / "c.jpg")  # carte fixe gardée quand NEWS_MOTION=false
     from PIL import Image
-    assert Image.open(shot.path).size == (1080, 1920)
+    assert Image.open(card.path).size == (1080, 1920)
+
+
+def test_number_shots():
+    s = visuals.number_shot("Selon les organisateurs, ils étaient 25 000 dans les rues.")
+    assert s.kind == "counter" and s.text == "25 000" and s.meta["unit"] == ""
+    s = visuals.number_shot("Rockstar annonce 25 millions de copies vendues.")
+    assert s.text == "25" and s.meta["unit"] == "millions de copies"
+    assert visuals.number_shot("En 2026, le prix monte.") is None  # une année seule
+    assert visuals.number_shot("Aucun chiffre ici.") is None
+    from app.news import motion
+    assert motion.parse_number("1 250,5 euros")[:2] == (1250.5, 1)
+    assert motion.fmt_number(1250.5, 1) == "1 250,5" and motion.fmt_number(25000, 0) == "25 000"
+
+
+def test_motion_frames_and_map(tmp_path):
+    from app.news import motion
+    acc = (255, 212, 0)
+    poly = motion.project(100, 50, 540, 960, ry=30)
+    assert poly.shape == (4, 2) and poly[1, 0] - poly[0, 0] < 100  # pivoté : plus étroit
+    canvas = np.zeros((motion.H, motion.W, 3), np.uint8)
+    motion.warp_onto(canvas, np.full((50, 100, 4), 255, np.uint8), poly)
+    assert canvas[960, 540].tolist() == [255, 255, 255] and canvas[0, 0].tolist() == [0, 0, 0]
+    calls = []
+
+    def fetch(z, x, y):
+        calls.append((z, x, y))
+        return np.full((256, 256, 3), 60 + z * 10, np.uint8)
+
+    need = motion.map_tiles_needed(2.35, 48.85, 40, 12.5)
+    assert 20 < len(need) < 600 and all(3 <= z <= 13 for z, _, _ in need)
+    fly = motion.map_fly(2.35, 48.85, "Paris", 40, fetch, acc, z1=12.5, attribution="EOX")
+    first, last = fly(0), fly(39)
+    assert first.shape == (motion.H, motion.W, 3) and not np.array_equal(first, last)
+    assert (last[..., 0] > 200).sum() > 1000  # l'épingle rouge est posée
+    assert set(calls) <= need  # aucune tuile en dehors de celles téléchargées à l'avance
+    for gen in (motion.kinetic("Record historique", 20, 0, acc), motion.counter("25 000", "personnes", 20, 1, acc)):
+        assert gen(0).shape == (motion.H, motion.W, 3) and gen(19).any()
+    out = motion.write_frames(motion.kinetic("Test", 6, 0, acc), 6, tmp_path / "k.mp4")
+    assert out.stat().st_size > 0
+    wav = motion.whoosh_track([1.0, 2.5], 3.0, tmp_path / "w.wav")
+    import wave
+    with wave.open(str(wav)) as w:
+        assert abs(w.getnframes() / w.getframerate() - 3.0) < 0.01
+
+
+def test_probe_sheets(tmp_path):
+    from app.news import probe
+    src = tmp_path / "v.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=180x320:d=2", "-f", "lavfi",
+                    "-i", "color=c=blue:s=180x320:d=2", "-filter_complex", "[0:v][1:v]concat=n=2:v=1[v]",
+                    "-map", "[v]", str(src)], check=True)
+    assert len(probe.cuts(src)) == 1
+    out = probe.sheet(src, [0.5, 1.5, 2.5, 3.5], tmp_path / "s.jpg")
+    from PIL import Image
+    assert Image.open(out).size == (4 * 270, 480)
 
 
 def test_render_news_video(tmp_path, monkeypatch):
@@ -311,3 +367,33 @@ def test_no_emoji_on_grave_topics():
     assert generate.header_text("GTA 6 bat tous les records 🤯", "", "Record de ventes.").endswith("🤯")
     assert generate.header_text("Le prix du pain augmente", "", "Le pain coûte plus cher.", emojis=False) == \
         "Le prix du pain augmente"
+
+
+def test_pick_shots_map_counter_and_photos(monkeypatch, tmp_path):
+    from app.news import geo
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "news_map", True)
+    monkeypatch.setattr(geo, "geocode", lambda place: (2.35, 48.85, "Paris", "city") if place else None)
+
+    class FakeTiles:
+        def __init__(self):
+            pass
+
+        def prefetch(self, keys):
+            return 0
+
+        def get(self, z, x, y):
+            return np.zeros((256, 256, 3), np.uint8)
+
+    monkeypatch.setattr(geo, "Tiles", FakeTiles)
+    monkeypatch.setattr(visuals, "find", lambda q, s, w, u, j, prefer_video=True: visuals.Shot(tmp_path / "p.jpg",
+                                                                                                "image"))
+    sc = script.parse(_llm_json(place="Paris, France"))
+    cuts = [(0, 0, 3), (1, 3, 6), (2, 6, 9), (2, 9, 12), (3, 12, 15), (4, 15, 18)]
+    shots, _ = generate.pick_shots(sc, cuts, tmp_path)
+    kinds = [s.kind for s in shots]
+    assert kinds[0] == "map" and shots[0].credit.startswith("Carte : Sentinel-2")
+    assert kinds.count("counter") == 1 and kinds[1] == "counter"  # « 25 millions de copies »
+    assert kinds[2:] == ["image"] * 4
+    monkeypatch.setattr(cfg, "news_map", False)
+    assert generate.pick_shots(sc, cuts, tmp_path)[0][0].kind != "map"
