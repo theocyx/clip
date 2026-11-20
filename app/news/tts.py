@@ -103,7 +103,7 @@ def word_times(text: str, start: float, end: float) -> list[dict]:
     return out
 
 
-def _synth(voice, text: str) -> tuple[np.ndarray, int]:
+def _synth(voice, text: str, speed: float | None = None) -> tuple[np.ndarray, int]:
     import io
 
     from piper import SynthesisConfig
@@ -112,7 +112,7 @@ def _synth(voice, text: str) -> tuple[np.ndarray, int]:
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
         voice.synthesize_wav(for_speech(text), wf,
-                             syn_config=SynthesisConfig(length_scale=1 / max(0.5, s.news_voice_speed)))
+                             syn_config=SynthesisConfig(length_scale=1 / max(0.5, speed or s.news_voice_speed)))
     buf.seek(0)
     with wave.open(buf, "rb") as wf:
         sr = wf.getframerate()
@@ -120,12 +120,12 @@ def _synth(voice, text: str) -> tuple[np.ndarray, int]:
     return audio, sr
 
 
-def speak(sentences: list[str], out_wav: Path, synth=None) -> list[Spoken]:
+def speak(sentences: list[str], out_wav: Path, synth=None, speed: float | None = None) -> list[Spoken]:
     """Lit les phrases à la suite dans out_wav (mono 16 bits). synth(text) -> (audio float, sr) remplaçable
-    (tests). Renvoie le minutage de chaque phrase et de chaque mot."""
+    (tests). speed : débit (défaut NEWS_VOICE_SPEED). Renvoie le minutage de chaque phrase et de chaque mot."""
     if synth is None:
         voice = _voice(get_settings().news_voice)
-        synth = lambda text: _synth(voice, text)  # noqa: E731
+        synth = lambda text: _synth(voice, text, speed)  # noqa: E731
     chunks, spoken, t, sr = [], [], 0.0, 22050
     for text in sentences:
         audio, sr = synth(text)

@@ -253,13 +253,19 @@ def schedule(hours: str = Form(""), gap: str = Form(""), reset: str = Form(""), 
 
 @app.post("/news")
 def news_settings(action: str = Form(...), next: str = Form("/")):
-    """Vidéos d'actu : on / off, ou une vidéo tout de suite."""
+    """Vidéos d'actu et histoires : on / off, ou une vidéo tout de suite."""
     if action == "on":
         news.set_enabled(True)
     elif action == "off":
         news.set_enabled(False)
     elif action == "now":
         news.request_now()
+    elif action == "story_on":
+        news.set_stories(True)
+    elif action == "story_off":
+        news.set_stories(False)
+    elif action == "story":
+        news.request_story()
     else:
         raise HTTPException(400, "Action inconnue")
     return back(next if next in ("/", "/videos") else "/")

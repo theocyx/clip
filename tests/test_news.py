@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import pytest
+from sqlmodel import select
 
 from app import curate, db, learning, worker
 from app.config import get_settings
@@ -277,8 +278,8 @@ def test_make_creates_clip_and_queues(monkeypatch, tmp_path):
     cfg = get_settings()
     monkeypatch.setattr(cfg, "news_target_seconds", 12.0)
     monkeypatch.setattr(feeds, "fetch_article", lambda item: item.summary)
-    monkeypatch.setattr(script, "write", lambda *a: script.parse(_llm_json()))
-    monkeypatch.setattr(tts, "speak", lambda sents, out: _real_speak(sents, out, synth=_synth))
+    monkeypatch.setattr(script, "write", lambda *a, **k: script.parse(_llm_json()))
+    monkeypatch.setattr(tts, "speak", lambda sents, out, speed=None: _real_speak(sents, out, synth=_synth))
     built = {}
 
     def fake_build(shots, spoken, voice, hook, source, out, work, on_progress=None, look=None):
@@ -288,7 +289,7 @@ def test_make_creates_clip_and_queues(monkeypatch, tmp_path):
         return spoken[-1].end + montage.TAIL
 
     monkeypatch.setattr(montage, "build", fake_build)
-    monkeypatch.setattr(visuals, "find", lambda q, s, w, u, j, prefer_video=True:
+    monkeypatch.setattr(visuals, "find", lambda q, s, w, u, j, prefer_video=True, **k:
                         visuals.Shot(tmp_path / "x.jpg", "image", "Image : Jean (CC BY 4.0)" if j == 0 else ""))
     item = _item()
     v = generate._new_video(item)
@@ -322,7 +323,7 @@ _real_speak = tts.speak
 
 def test_low_score_topic_is_skipped(monkeypatch):
     monkeypatch.setattr(feeds, "fetch_article", lambda item: item.summary)
-    monkeypatch.setattr(script, "write", lambda *a: script.parse(_llm_json(score=3)))
+    monkeypatch.setattr(script, "write", lambda *a, **k: script.parse(_llm_json(score=3)))
     item = _item(link="https://ex.fr/faible")
     v = generate._new_video(item)
     assert generate.make(v.id, item) is None
@@ -406,7 +407,7 @@ def test_pick_shots_map_counter_and_photos(monkeypatch, tmp_path):
             return np.zeros((256, 256, 3), np.uint8)
 
     monkeypatch.setattr(geo, "Tiles", FakeTiles)
-    monkeypatch.setattr(visuals, "find", lambda q, s, w, u, j, prefer_video=True: visuals.Shot(tmp_path / "p.jpg",
+    monkeypatch.setattr(visuals, "find", lambda q, s, w, u, j, prefer_video=True, **k: visuals.Shot(tmp_path / "p.jpg",
                                                                                                 "image"))
     sc = script.parse(_llm_json(place="Paris, France"))
     cuts = [(0, 0, 3), (1, 3, 6), (2, 6, 9), (2, 9, 12), (3, 12, 15), (4, 15, 18)]
@@ -414,7 +415,8 @@ def test_pick_shots_map_counter_and_photos(monkeypatch, tmp_path):
     kinds = [s.kind for s in shots]
     assert kinds[0] == "map" and shots[0].credit.startswith("Carte : Sentinel-2")
     assert kinds.count("counter") == 1 and kinds[1] == "counter"  # « 25 millions de copies »
-    assert kinds[2:] == ["image"] * 4
+    assert kinds[2:] == ["image"] * 3 + ["quiz"]  # question finale : quiz « ET TOI ? »
+    assert shots[-1].text.endswith("?")
     monkeypatch.setattr(cfg, "news_map", False)
     assert generate.pick_shots(sc, cuts, tmp_path)[0][0].kind != "map"
 
@@ -494,3 +496,104 @@ def test_openverse_and_pixabay_sources(tmp_path, monkeypatch):
     assert shot.ident == "openverse-x" and shot.credit.startswith("Image : Jean")
     assert [c[0] for c in calls[:4]] == ["pexels", "pixabay", "openverse", "commons"]
     assert ("openverse", "train station") in calls and ("openverse", "train") not in calls[:4]
+
+
+def test_stories_topics_and_facts(monkeypatch, tmp_path):
+    from app.news import stories
+    cfg = get_settings()
+    (cfg.data_dir / "stories.txt").write_text("# mes sujets\nRoom 641A\nAffaire du vol 19\n", encoding="utf-8")
+    monkeypatch.setattr(cfg, "story_topics", "Mary Celeste, Kryptos")
+    t = stories.topics()
+    assert t[:4] == ["Room 641A", "Affaire du vol 19", "Mary Celeste", "Kryptos"] and len(t) == len(set(t))
+    assert stories.key("Room 641A") == stories.key(" room 641a ") and stories.key("x").startswith("news:story-")
+    text = "Room 641A est une pièce secrète.\n\n\nElle est située à San Francisco.\nNotes et références\n[1] x"
+    assert stories.clean_extract(text) == "Room 641A est une pièce secrète.\nElle est située à San Francisco."
+    pages = {"fr": {"title": "Room 641A", "url": "https://fr.wikipedia.org/wiki/Room_641A", "text": "court " * 50,
+                    "lat": 37.78, "lon": -122.39, "lang": "fr"},
+             "en": {"title": "Room 641A", "url": "https://en.wikipedia.org/wiki/Room_641A", "text": "long " * 900,
+                    "lat": None, "lon": None, "lang": "en"}}
+    monkeypatch.setattr(stories, "wiki", lambda topic, lang="fr": pages[lang])
+    item = stories.fetch("Room 641A")
+    assert item.kind == "story" and item.source == "Wikipedia (en)" and item.key == stories.key("Room 641A")
+    assert feeds.fetch_article(item) == item.summary.strip()
+    (cfg.data_dir / "stories.txt").unlink()
+
+
+def test_story_run_once_and_prompt(monkeypatch, tmp_path):
+    from app.news import stories
+    from app.pipeline import llm
+    cfg = get_settings()
+    monkeypatch.setattr(llm, "provider", lambda: "ollama")
+    asked = {}
+
+    def fake_ask(prompt, timeout=600, max_tokens=None, num_ctx=4096):
+        asked.update(prompt=prompt, max_tokens=max_tokens, num_ctx=num_ctx)
+        return _llm_json()
+
+    monkeypatch.setattr(llm, "_ask_ollama", fake_ask)
+    facts = "GTA 6 record 24 heures 25 millions de copies. " * 3
+    monkeypatch.setattr(cfg, "story_target_seconds", 12.0)
+    sc = script.write("Room 641A", facts, "Wikipédia", kind="story")
+    assert sc is not None and "HISTOIRE VRAIE" in asked["prompt"] and asked["num_ctx"] == 8192
+    assert script.target_words("story") < script.target_words("news")
+    item = feeds.Item(title="Room 641A", link="https://fr.wikipedia.org/wiki/Room_641A", summary=facts,
+                      source="Wikipédia", kind="story", topic="Room 641A")
+    monkeypatch.setattr(stories, "candidates", lambda n=3: [item])
+    seen = []
+    monkeypatch.setattr(generate, "make", lambda vid, it: seen.append(it.kind) or 7)
+    assert generate.run_once(story=True) == 7 and seen == ["story"]
+    with db.session() as s:
+        v = s.exec(select(Video).where(Video.key == stories.key("Room 641A"))).first()
+    assert generate.is_story(v) and generate.is_news(v)
+    data = json.loads((generate.work_dir(v.id) / "item.json").read_text())
+    assert data["kind"] == "story" and data["topic"] == "Room 641A"
+    generate.request_story()
+    assert generate.take_request(generate.STORY_NOW_KEY) and not generate.take_request(generate.STORY_NOW_KEY)
+    look = generate.look(script.parse(_llm_json(topic="ROOM 641A")), item)
+    assert look["story"] and look["topic"] == "ROOM 641A" and "WIKIPÉDIA : Room 641A" in look["sources"]
+
+
+def test_ai_images_story_shots_and_cta(monkeypatch, tmp_path):
+    from PIL import Image
+
+    from app.news import motion, overlay
+    cfg = get_settings()
+    urls = []
+
+    def fake_download(url, dest, headers=None, max_mb=60):
+        urls.append(url)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (768, 1152), (90, 30, 30)).save(dest)
+        return dest
+
+    monkeypatch.setattr(visuals, "_download", fake_download)
+    shot = visuals.ai_image("secret room telephone", tmp_path, set(), "story", seed=3)
+    assert shot.kind == "image" and shot.credit == visuals.AI_CREDIT and shot.meta["label"] == "IA · ILLUSTRATION"
+    assert urls[0].startswith("https://image.pollinations.ai/prompt/secret%20room") and "seed=3" in urls[0]
+    monkeypatch.setattr(cfg, "news_ai_images", "off")
+    assert visuals.ai_image("secret room", tmp_path, set()) is None
+    monkeypatch.setattr(cfg, "news_ai_images", "pollinations")
+    # pas de photo libre : image IA avant les mots animés
+    for name in ("pexels", "pixabay"):
+        monkeypatch.setattr(visuals, name, lambda *a, **k: None)
+    monkeypatch.setattr(visuals, "openverse", lambda *a, **k: None)
+    monkeypatch.setattr(visuals, "commons", lambda *a, **k: None)
+    assert visuals.find("dark corridor", "Un couloir.", tmp_path, set(), 1).ident.startswith("ai-")
+    assert visuals.relevant("dark corridor", "Long corridor in a castle") and not visuals.relevant("corridor", "cat")
+    sc = script.parse(json.dumps({"score": 7, "title": "t", "hook": "h", "sentences": [
+        {"text": "Tout commence à San Francisco.", "visual": "city fog"},
+        {"text": "En 2003, un technicien découvre une pièce fermée.", "visual": "locked door"},
+        {"text": "Personne n'a le droit d'y entrer.", "visual": "security badge"},
+        {"text": "Et toi, tu y crois ?", "visual": "question"}]}))
+    cuts = [(0, 0, 3), (1, 3, 6), (2, 6, 9), (3, 9, 12)]
+    shots, _ = generate.pick_shots(sc, cuts, tmp_path, kind="story")
+    assert shots[1].kind == "counter" and shots[1].meta["year"] and shots[1].text == "2003"
+    assert shots[2].ident.startswith("ai-") and shots[-1].kind == "quiz"
+    gen = motion.counter("2003", "", 30, 0, (255, 0, 0), year=True)
+    assert gen(0).shape == (motion.H, motion.W, 3)
+    win = overlay.cta_windows([(0, 3), (3, 7), (7, 12), (12, 20)], 21.0)
+    assert win[0][0] == 12 and win[-1] == (17.5, 3.5)
+    frame = np.zeros((overlay.H, overlay.W, 3), np.uint8)
+    overlay.draw_cta(frame, 2.0, 3.0)
+    band = frame[overlay.CTA_Y - 30:overlay.CTA_Y + 30]
+    assert ((band[..., 0] > 200) & (band[..., 1] < 80)).sum() > 200  # cœur rouge / bouton

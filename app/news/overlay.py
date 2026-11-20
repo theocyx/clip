@@ -287,6 +287,86 @@ def draw_subs(frame: np.ndarray, groups: list[list[dict]], t: float) -> None:
             return
 
 
+# ---------- rappel like / commentaire / abonnement ----------
+
+CTA_Y = 1440  # sous les sous-titres, au-dessus de la légende TikTok
+
+
+@functools.lru_cache(maxsize=8)
+def cta_item(kind: str, done: bool = False) -> np.ndarray:
+    """Une pastille : icône dessinée + texte (cœur LIKE, bulle COMMENTE, bouton + ABONNE-TOI → ✓ ABONNÉ)."""
+    from PIL import Image, ImageDraw
+
+    labels = {"like": "LIKE", "comment": "COMMENTE", "follow": "ABONNÉ" if done else "ABONNE-TOI"}
+    f = font("title", 30)
+    d = ImageDraw.Draw(Image.new("RGBA", (4, 4)))
+    l, t, r, b = d.textbbox((0, 0), labels[kind], font=f)
+    w, h = 84 + (r - l) + 26, 72
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    dr = ImageDraw.Draw(img)
+    bg = (60, 60, 66, 235) if (kind == "follow" and done) else (12, 12, 16, 225)
+    dr.rounded_rectangle((0, 0, w - 1, h - 1), radius=h // 2, fill=bg, outline=(70, 70, 78, 255), width=2)
+    cx, cy = 42, h // 2
+    if kind == "like":  # cœur : deux disques + triangle
+        dr.ellipse((cx - 19, cy - 15, cx + 1, cy + 5), fill=RED + (255,))
+        dr.ellipse((cx - 1, cy - 15, cx + 19, cy + 5), fill=RED + (255,))
+        dr.polygon([(cx - 19, cy - 2), (cx + 19, cy - 2), (cx, cy + 19)], fill=RED + (255,))
+    elif kind == "comment":  # bulle
+        dr.rounded_rectangle((cx - 20, cy - 16, cx + 20, cy + 10), radius=8, fill=WHITE + (255,))
+        dr.polygon([(cx - 10, cy + 8), (cx - 2, cy + 8), (cx - 14, cy + 19)], fill=WHITE + (255,))
+        for k in (-9, 0, 9):
+            dr.ellipse((cx + k - 3, cy - 6, cx + k + 3, cy), fill=(12, 12, 16, 255))
+    else:  # bouton rond rouge « + », gris « ✓ » une fois abonné
+        dr.ellipse((cx - 20, cy - 20, cx + 20, cy + 20), fill=((120, 120, 128) if done else RED) + (255,))
+        if done:
+            dr.line([(cx - 10, cy), (cx - 3, cy + 8), (cx + 11, cy - 8)], fill=WHITE + (255,), width=5)
+        else:
+            dr.rectangle((cx - 11, cy - 3, cx + 11, cy + 3), fill=WHITE + (255,))
+            dr.rectangle((cx - 3, cy - 11, cx + 3, cy + 11), fill=WHITE + (255,))
+    dr.text((80 - l, (h - (b - t)) / 2 - t), labels[kind], font=f, fill=WHITE + (255,))
+    return _rgba(img)
+
+
+def draw_cta(frame: np.ndarray, since: float, dur: float) -> None:
+    """Les trois pastilles arrivent l'une après l'autre, le cœur bat, « ABONNE-TOI » devient « ✓ ABONNÉ »."""
+    import cv2
+
+    if since < 0 or since > dur:
+        return
+    out = clamp((dur - since) / 0.25)
+    kinds = ["like", "comment", "follow"]
+    items = [cta_item(k, done=(k == "follow" and since > 1.6)) for k in kinds]
+    gap = 14
+    total = sum(x.shape[1] for x in items) + gap * 2
+    scale = min(1.0, (W - 40) / total)
+    x = (W - total * scale) / 2
+    for k, sp in enumerate(items):
+        p = clamp((since - 0.12 * k) / 0.25)
+        if p <= 0:
+            x += (sp.shape[1] + gap) * scale
+            continue
+        s = scale * (0.5 + 0.5 * ease_out_back(p))
+        if kinds[k] == "like" and since > 0.6:
+            s *= 1 + 0.08 * max(0.0, math.sin((since - 0.6) * 9))
+        img = cv2.resize(sp, (max(2, int(sp.shape[1] * s)), max(2, int(sp.shape[0] * s))),
+                         interpolation=cv2.INTER_LINEAR)
+        w0 = sp.shape[1] * scale
+        paste(frame, img, int(x + (w0 - img.shape[1]) / 2), CTA_Y - img.shape[0] // 2, min(p * 2, 1) * out)
+        x += (sp.shape[1] + gap) * scale
+
+
+def cta_windows(sentences: list[tuple[float, float]], total: float) -> list[tuple[float, float]]:
+    """Quand montrer le rappel : au début d'une phrase vers 40 % de la vidéo, puis pendant les 3,5 dernières s."""
+    if not sentences or total < 12:
+        return [(max(0.0, total - 3.5), 3.5)] if total > 4 else []
+    mid = min((a for a, _ in sentences if a >= total * 0.4), default=total * 0.4)
+    out = [(mid, 3.0)]
+    end = max(mid + 4.0, total - 3.5)
+    if end < total - 1:
+        out.append((end, total - end))
+    return out
+
+
 # ---------- tout l'habillage ----------
 
 @dataclass
@@ -297,6 +377,7 @@ class Overlay:
     chapter_of: list[int]  # n° d'onglet de chaque phrase
     words: list[dict]
     groups: list[list[dict]] = field(default_factory=list)
+    cta: list[tuple[float, float]] = field(default_factory=list)  # (début, durée) du rappel like / abonnement
 
     def __post_init__(self):
         self.groups = sub_groups(self.words)
@@ -316,6 +397,8 @@ class Overlay:
             angle = (0.0, -2.0, 1.5, -1.5, 2.0)[i % 5] if i else 0.0
             draw_title(frame, self.titles[i], i % 3, angle, t - self.sentences[i][0])
         draw_subs(frame, self.groups, t)
+        for start, dur in self.cta:
+            draw_cta(frame, t - start, dur)
         return frame
 
 

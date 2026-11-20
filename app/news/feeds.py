@@ -30,9 +30,14 @@ class Item:
     published: datetime | None = None  # UTC, sans fuseau
     buzz: int = 0  # nombre d'autres articles sur le même sujet
     related: list[str] = field(default_factory=list)
+    kind: str = "news"  # news (actu du jour) ou story (histoire vraie, voir stories.py)
+    topic: str = ""  # sujet demandé pour une histoire
 
     @property
     def key(self) -> str:
+        if self.kind == "story":
+            from .stories import key
+            return key(self.topic or self.title)
         return "news:" + hashlib.sha1(self.link.encode()).hexdigest()[:16]
 
 
@@ -196,7 +201,9 @@ def article_text(page: str, limit: int = 3500) -> str:
 
 
 def fetch_article(item: Item) -> str:
-    """Faits de l'article : sa page si elle est lisible, sinon le résumé du flux."""
+    """Faits de l'article : sa page si elle est lisible, sinon le résumé du flux (histoire : texte Wikipédia)."""
+    if item.kind == "story":
+        return item.summary.strip()
     text = ""
     if "news.google." not in item.link:
         try:

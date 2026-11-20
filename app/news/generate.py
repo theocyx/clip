@@ -23,6 +23,8 @@ from . import feeds, montage, script, tts, visuals
 log = logging.getLogger(__name__)
 PREFIX = "news:"
 ON_KEY, NOW_KEY = "news_on", "news_now"
+STORY_ON_KEY, STORY_NOW_KEY = "story_on", "story_now"
+STORY_PREFIX = "news:story-"
 _busy = threading.Lock()
 
 
@@ -42,11 +44,29 @@ def request_now() -> None:
     platforms._put(NOW_KEY, "1")
 
 
-def take_request() -> bool:
-    if platforms._get(NOW_KEY) == "1":
-        platforms._put(NOW_KEY, None)
+def take_request(key: str = NOW_KEY) -> bool:
+    if platforms._get(key) == "1":
+        platforms._put(key, None)
         return True
     return False
+
+
+def stories_enabled() -> bool:
+    v = platforms._get(STORY_ON_KEY)
+    return get_settings().stories if v is None else v == "1"
+
+
+def set_stories(on: bool) -> None:
+    platforms._put(STORY_ON_KEY, "1" if on else "0")
+
+
+def request_story() -> None:
+    """Bouton « Histoire maintenant »."""
+    platforms._put(STORY_NOW_KEY, "1")
+
+
+def is_story(video: Video | None) -> bool:
+    return bool(video and (video.key or "").startswith(STORY_PREFIX))
 
 
 def is_news(video: Video | None) -> bool:
@@ -64,10 +84,12 @@ def day_start_utc() -> datetime:
     return local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
 
 
-def made_today() -> int:
+def made_today(kind: str = "news") -> int:
+    """Actus (kind=news) ou histoires (kind=story) terminées aujourd'hui (heure de Paris)."""
     with db.session() as s:
-        return len(s.exec(select(Video.id).where(col(Video.key).startswith(PREFIX), Video.status == "done",
-                                                 Video.created_at >= day_start_utc())).all())
+        keys = s.exec(select(Video.key).where(col(Video.key).startswith(PREFIX), Video.status == "done",
+                                              Video.created_at >= day_start_utc())).all()
+    return sum(1 for k in keys if (k or "").startswith(STORY_PREFIX) == (kind == "story"))
 
 
 def in_hours(at: datetime | None = None) -> bool:
@@ -80,6 +102,11 @@ def in_hours(at: datetime | None = None) -> bool:
 def due() -> bool:
     s = get_settings()
     return enabled() and in_hours() and made_today() < s.news_per_day
+
+
+def story_due() -> bool:
+    s = get_settings()
+    return stories_enabled() and in_hours() and made_today("story") < s.story_per_day
 
 
 # ---------- choix du sujet ----------
@@ -133,8 +160,8 @@ def _new_video(item: feeds.Item) -> Video:
     d = work_dir(v.id)
     d.mkdir(parents=True, exist_ok=True)
     (d / "item.json").write_text(json.dumps({"title": item.title, "link": item.link, "summary": item.summary,
-                                             "source": item.source, "related": item.related},
-                                            ensure_ascii=False))
+                                             "source": item.source, "related": item.related, "kind": item.kind,
+                                             "topic": item.topic}, ensure_ascii=False))
     return v
 
 
@@ -148,6 +175,9 @@ def clip_score(llm_score: float) -> float:
 
 _GRAVE = re.compile(r"\b(mort|morts|décès|décédé|tué|tués|victimes?|meurtre|attentat|guerre|accident|drame|"
                     r"blessés?|viol|agression|incendie|séisme|otages?)\b", re.I)
+
+
+_YEAR = re.compile(r"\b(1[5-9]\d\d|20[0-2]\d)\b")
 
 
 def header_text(hook: str, title: str, text: str, emojis: bool = True) -> str:
@@ -184,13 +214,14 @@ def map_shot(place: str, n_frames: int = 120):
 MAX_MAPS = 3
 
 
-def pick_shots(sc, cuts, work: Path) -> tuple[list, list]:
+def pick_shots(sc, cuts, work: Path, kind: str = "news") -> tuple[list, list]:
     """Une illustration par plan : survol du lieu en ouverture (et des autres lieux cités, 3 cartes max),
     chiffres clés animés (2 max), quiz « Et toi ? » sur la question finale, sinon vidéo / photo libre de
     droits dans un panneau, sinon mots forts animés."""
     s = get_settings()
     used: set[str] = set()
     shots, counters, maps, seen_sentence, seen_places = [], 0, 0, set(), set()
+    story, years, seen_years = kind == "story", 0, set()
     places = getattr(sc, "places", []) or []
     last = cuts[-1][0] if cuts else -1
     for j, (i, a, b) in enumerate(cuts):
@@ -208,6 +239,13 @@ def pick_shots(sc, cuts, work: Path) -> tuple[list, list]:
         if shot is None and s.news_motion and i == last and j == len(cuts) - 1 and len(cuts) > 2 \
                 and sc.sentences[i].rstrip().endswith("?"):
             shot = visuals.Shot(None, "quiz", text=sc.sentences[i], meta={"answers": getattr(sc, "answers", [])})
+        # histoire : la date d'un moment clé (« En 1959, … ») remonte le temps à l'écran
+        if shot is None and story and s.news_motion and years < 2 and first_of_sentence and j > 0:
+            m = _YEAR.search(sc.sentences[i])
+            if m and m.group(1) not in seen_years:
+                seen_years.add(m.group(1))
+                shot = visuals.Shot(None, "counter", text=m.group(1), meta={"unit": "", "year": True})
+                years += 1
         # pas de compteur qui défile sur un bilan de victimes
         if shot is None and s.news_motion and counters < 2 and first_of_sentence and j > 0 \
                 and not _GRAVE.search(sc.sentences[i]):
@@ -215,37 +253,10 @@ def pick_shots(sc, cuts, work: Path) -> tuple[list, list]:
             counters += shot is not None
         if shot is None:
             query = sc.visuals[i] if i < len(sc.visuals) else ""
-            shot = visuals.find(query, sc.sentences[i], work / "media", used, j, prefer_video=j % 2 == 0)
-            if shot.kind in ("image", "video"):
-                shot.meta = {**(shot.meta or {}), "label": "ILLUSTRATION"}
-        shots.append(shot)
-    return shots, []
-
-
-def pick_shots(sc, cuts, work: Path) -> tuple[list, list]:
-    """Une illustration par plan : survol du lieu en ouverture, chiffres clés animés (2 max), sinon vidéo /
-    photo libre de droits (carte 3D), sinon mots forts animés."""
-    s = get_settings()
-    used: set[str] = set()
-    shots, counters, seen_sentence = [], 0, set()
-    for j, (i, _, _) in enumerate(cuts):
-        shot = None
-        if j == 0:
-            try:
-                shot = map_shot(sc.place)
-            except Exception as e:
-                log.info("Actu : survol impossible : %s", e)
-        first_of_sentence = i not in seen_sentence
-        seen_sentence.add(i)
-        # pas de compteur qui défile sur un bilan de victimes
-        if shot is None and s.news_motion and counters < 2 and first_of_sentence and j > 0 \
-                and not _GRAVE.search(sc.sentences[i]):
-            shot = visuals.number_shot(sc.sentences[i])
-            counters += shot is not None
-        if shot is None:
-            query = sc.visuals[i] if i < len(sc.visuals) else ""
-            shot = visuals.find(query, sc.sentences[i], work / "media", used, j, prefer_video=j % 2 == 0)
-            if shot.kind in ("image", "video"):
+            # histoire : 2 plans sur 3 en image IA (les banques d'images ont rarement la scène racontée)
+            shot = visuals.find(query, sc.sentences[i], work / "media", used, j, prefer_video=j % 2 == 0,
+                                ai_first=story and j % 3 != 0, kind=kind)
+            if shot.kind in ("image", "video") and not (shot.meta or {}).get("label"):
                 shot.meta = {**(shot.meta or {}), "label": "ILLUSTRATION"}
         shots.append(shot)
     return shots, []
@@ -257,43 +268,48 @@ def look(sc, item: feeds.Item) -> dict:
     sources = [item.source.upper()] if item.source else []
     for title in item.related[:3]:
         sources.append(title[:70])
+    if item.kind == "story":
+        sources = [f"{item.source.upper()} : {item.title}"] if item.source else []
     return {"brand": s.news_brand, "topic": sc.topic or (sc.place.split(",")[0] if sc.place else ""),
-            "chapters": sc.chapters, "titles": sc.titles, "sources": "   ·   ".join(sources)}
+            "chapters": sc.chapters, "titles": sc.titles, "sources": "   ·   ".join(sources),
+            "story": item.kind == "story"}
 
 
 def make(video_id: int, item: feeds.Item) -> int | None:
     """Fabrique la vidéo d'un sujet. Renvoie l'id du clip, ou None si le sujet est écarté."""
     s = get_settings()
     work = work_dir(video_id)
-    log.info("Actu : sujet « %s » (%s), lecture de l'article…", item.title, item.source)
+    story = item.kind == "story"
+    what = "Histoire" if story else "Actu"
+    log.info("%s : sujet « %s » (%s), lecture de l'article…", what, item.title, item.source)
     facts = feeds.fetch_article(item)
     _set(video_id, progress=5)
-    log.info("Actu : écriture du script par l'IA (peut prendre plusieurs minutes)…")
-    sc = script.write(item.title, facts, item.source)
+    log.info("%s : écriture du script par l'IA (peut prendre plusieurs minutes)…", what)
+    sc = script.write(item.title, facts, item.source, kind=item.kind)
     if sc is None:
         _set(video_id, status="skipped", error="Script refusé ou IA indisponible", progress=0)
         return None
-    if sc.score < s.news_min_score:
+    if not story and sc.score < s.news_min_score:  # une histoire est choisie dans une liste : pas de note
         _set(video_id, status="skipped", progress=0,
              error=f"Sujet jugé peu intéressant ({sc.score:.0f}/10, minimum {s.news_min_score:g})")
         return None
     (work / "script.json").write_text(json.dumps(sc.__dict__, ensure_ascii=False))
     _set(video_id, progress=15)
-    log.info("Actu : script prêt (%d phrases, note %g/10), voix off et images…", len(sc.sentences), sc.score)
-    spoken = tts.speak(sc.sentences, work / "voice.wav")
+    log.info("%s : script prêt (%d phrases, note %g/10), voix off et images…", what, len(sc.sentences), sc.score)
+    spoken = tts.speak(sc.sentences, work / "voice.wav", speed=s.story_voice_speed if story else None)
     total = round(spoken[-1].end + montage.TAIL, 3)
     cuts = montage.plan(spoken, total)
-    shots, credits = pick_shots(sc, cuts, work)
+    shots, credits = pick_shots(sc, cuts, work, kind=item.kind)
     for shot in shots:
         if shot.credit and shot.credit not in credits:
             credits.append(shot.credit)
     _set(video_id, progress=35)
-    log.info("Actu : montage de %d plans…", len(shots))
+    log.info("%s : montage de %d plans…", what, len(shots))
     out = s.clips_dir / "news" / f"{video_id}.mp4"
     hook_text = header_text(sc.hook, sc.title, sc.text, s.hook_emojis)
     montage.build(shots, spoken, work / "voice.wav", hook_text, item.source, out, work,
                   on_progress=lambda p: _set(video_id, progress=35 + p * 0.6), look=look(sc, item))
-    info = {"kind": "news", "text": sc.text, "title": sc.title, "hook": hook_text, "question": sc.question,
+    info = {"kind": "news", "story": story, "text": sc.text, "title": sc.title, "hook": hook_text, "question": sc.question,
             "llm": sc.score, "polished": True, "hashtags": sc.hashtags, "source": item.source,
             "source_url": item.link, "credits": credits, "duration": total, "shots": len(shots),
             "layout": "news"}
@@ -312,24 +328,37 @@ def make(video_id: int, item: feeds.Item) -> int | None:
     shutil.rmtree(work / "media", ignore_errors=True)
     for p in work.glob("shot*.mp4"):
         p.unlink(missing_ok=True)
-    log.info("Vidéo d'actu créée : %s (%d s, %d plans)", sc.title, total, len(shots))
+    log.info("%s créée : %s (%d s, %d plans)", "Histoire" if story else "Vidéo d'actu", sc.title, total,
+             len(shots))
     return clip.id
 
 
-def run_once(force: bool = False) -> int | None:
-    """Une vidéo d'actu si c'est le moment (ou si force). Renvoie l'id du clip créé, ou None."""
+def run_once(force: bool = False, story: bool = False) -> int | None:
+    """Une vidéo si c'est le moment (ou si force) : l'histoire du jour d'abord, sinon une actu.
+    story=True : une histoire tout de suite (bouton). Renvoie l'id du clip créé, ou None."""
     if not _busy.acquire(blocking=False):
         return None
     try:
         retry = _retry_queue()
         if retry:
             return _run(*retry)
-        if not (force or due()):
+        want_story = story or (not force and story_due())
+        if not (force or want_story or due()):
             return None
         from ..pipeline import llm
         if llm.provider() != "ollama":  # sans IA pas de script : on ne « grille » aucun sujet
             log.info("Actu : IA locale indisponible, sujet cherché au prochain tour.")
             return None
+        if want_story:
+            from . import stories
+            for item in stories.candidates(2):
+                v = _new_video(item)
+                cid = _run(v, item)
+                if cid:
+                    return cid
+            log.info("Histoire : aucune histoire disponible (liste épuisée ou Wikipédia injoignable).")
+            if story or not (force or due()):
+                return None
         for item in fresh_candidates()[:4]:
             v = _new_video(item)
             cid = _run(v, item)
@@ -363,7 +392,8 @@ def _retry_queue() -> tuple[Video, feeds.Item] | None:
     except (OSError, ValueError):
         data = {"title": v.title, "link": v.url}
     item = feeds.Item(title=data.get("title") or v.title, link=data.get("link") or v.url,
-                      summary=data.get("summary", ""), source=data.get("source", ""), related=data.get("related", []))
+                      summary=data.get("summary", ""), source=data.get("source", ""), related=data.get("related", []),
+                      kind=data.get("kind", "news"), topic=data.get("topic", ""))
     _set(v.id, status="generating", error="")
     return v, item
 
@@ -384,7 +414,9 @@ def loop(stop: threading.Event) -> None:
     import time
     while not stop.is_set():
         try:
-            forced = take_request()
+            forced, story = take_request(), take_request(STORY_NOW_KEY)
+            if story:
+                run_once(story=True)
             if forced or time.monotonic() - last >= max(5, s.news_interval_minutes) * 60:
                 last = time.monotonic()
                 run_once(force=forced)
@@ -437,7 +469,10 @@ def status() -> dict:
                        .order_by(col(Video.created_at).desc()).limit(6)).all()
         pending = ss.exec(select(Post.id).join(Clip, Clip.id == Post.clip_id).join(Video, Video.id == Clip.video_id)
                           .where(col(Video.key).startswith(PREFIX), Post.status == "pending")).all()
+    from . import stories
     return {"on": enabled(), "today": made_today(), "per_day": s.news_per_day, "topic": s.news_topic,
+            "stories_on": stories_enabled(), "stories_today": made_today("story"), "story_per_day": s.story_per_day,
+            "stories_left": stories.left(), "ai_images": s.news_ai_images,
             "hours": s.news_hours, "pexels": bool(s.pexels_api_key), "publish": s.news_publish and s.auto_publish,
             "last": last, "pending": len(pending),
             "music": len([p for p in (s.data_dir / "music").glob("*") if p.is_file()])

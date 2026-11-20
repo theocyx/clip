@@ -144,9 +144,22 @@ def pixabay(query: str, work: Path, used: set[str], want_video: bool = True) -> 
 
 # ---------- Openverse (sans clé : images sous licence libre de Flickr, Wikimedia, musées…) ----------
 
-def openverse_pick(results: list[dict], used: set[str]) -> dict | None:
-    """Première image libre pour un usage commercial et modifiable (CC0, domaine public, BY, BY-SA)."""
+def relevant(query: str, text: str) -> bool:
+    """Au moins un mot-clé (4 lettres ou plus) de la recherche dans le titre / les tags de l'image."""
+    words = [w for w in re.findall(r"[a-zà-ÿ]{4,}", (query or "").lower())]
+    if not words:
+        return True
+    text = (text or "").lower()
+    return any(w.rstrip("s") in text for w in words)
+
+
+def openverse_pick(results: list[dict], used: set[str], query: str = "") -> dict | None:
+    """Première image libre pour un usage commercial et modifiable (CC0, domaine public, BY, BY-SA), dont le
+    titre ou les tags parlent bien de la recherche (évite les images hors sujet)."""
     for res in results:
+        tags = " ".join(str(t.get("name", "")) for t in (res.get("tags") or []) if isinstance(t, dict))
+        if not relevant(query, f"{res.get('title') or ''} {tags}"):
+            continue
         lic = str(res.get("license") or "").lower()
         ident = f"openverse-{res.get('id')}"
         if ident in used or lic not in ("cc0", "pdm", "by", "by-sa") or not res.get("url"):
@@ -169,7 +182,7 @@ def openverse(query: str, work: Path, used: set[str]) -> Shot | None:
         r = httpx.get("https://api.openverse.org/v1/images/", headers={"User-Agent": UA}, timeout=20, params={
             "q": query, "license_type": "commercial,modification", "page_size": 20, "mature": "false"})
         r.raise_for_status()
-        pick = openverse_pick(r.json().get("results") or [], used)
+        pick = openverse_pick(r.json().get("results") or [], used, query)
     except Exception as e:
         log.info("Openverse indisponible pour « %s » : %s", query, e)
         return None
@@ -182,6 +195,67 @@ def openverse(query: str, work: Path, used: set[str]) -> Shot | None:
     used.add(pick["id"])
     return Shot(p, "image", f"Image : {pick['artist']} ({pick['license']}), via Openverse — {pick['page']}",
                 pick["id"])
+
+
+# ---------- images générées par IA ----------
+
+AI_CREDIT = "Certaines illustrations sont générées par IA"
+
+
+def ai_prompt(query: str, kind: str = "news") -> str:
+    s = get_settings()
+    mood = ", mysterious dark atmosphere, film grain" if kind == "story" else ""
+    return f"{query.strip()}, {s.news_ai_style}{mood}, vertical composition"
+
+
+def _valid_image(path: Path, min_side: int = 400) -> bool:
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            im.verify()
+        with Image.open(path) as im:
+            return min(im.size) >= min_side
+    except Exception:
+        return False
+
+
+def ai_image(query: str, work: Path, used: set[str], kind: str = "news", seed: int = 0) -> Shot | None:
+    """Illustration générée à partir des mots-clés (Pollinations sans clé, ou Hugging Face avec HF_TOKEN)."""
+    from urllib.parse import quote
+
+    s = get_settings()
+    provider = (s.news_ai_images or "off").lower()
+    if provider == "off" or not query:
+        return None
+    prompt = ai_prompt(query, kind)
+    ident = "ai-" + re.sub(r"\W+", "-", query.lower())[:40] + f"-{seed}"
+    if ident in used:
+        return None
+    dest = work / f"{ident}.jpg"
+    try:
+        if provider == "huggingface" and s.hf_token:
+            r = httpx.post("https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell",
+                           headers={"Authorization": f"Bearer {s.hf_token}", "User-Agent": UA}, timeout=120,
+                           json={"inputs": prompt, "parameters": {"width": 768, "height": 1024}})
+            r.raise_for_status()
+            if not r.headers.get("content-type", "").startswith("image"):
+                raise RuntimeError("réponse sans image")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(r.content)
+            p = dest
+        else:
+            url = (f"https://image.pollinations.ai/prompt/{quote(prompt)}?width=768&height=1152&nologo=true"
+                   f"&safe=true&seed={seed}")
+            p = _download(url, dest, max_mb=15)
+    except Exception as e:
+        log.info("Image IA indisponible pour « %s » : %s", query, e)
+        return None
+    if not p or not _valid_image(p):
+        if p:
+            p.unlink(missing_ok=True)
+        return None
+    used.add(ident)
+    return Shot(p, "image", AI_CREDIT, ident, meta={"label": "IA · ILLUSTRATION"})
 
 
 # ---------- Wikimedia Commons ----------
@@ -315,9 +389,15 @@ def frame_image(src: Path, out: Path) -> Path:
     return out
 
 
-def find(query: str, sentence: str, work: Path, used: set[str], idx: int, prefer_video: bool = True) -> Shot:
+def find(query: str, sentence: str, work: Path, used: set[str], idx: int, prefer_video: bool = True,
+         ai_first: bool = False, kind: str = "news") -> Shot:
     """Illustration d'une phrase : Pexels, Pixabay (si une clé est donnée), puis Openverse et Wikimedia Commons
-    (sans clé), sinon mots forts animés (jamais d'échec)."""
+    (sans clé), puis image générée par IA, sinon mots forts animés (jamais d'échec).
+    ai_first : image IA d'abord (histoires : les banques d'images ont rarement la scène racontée)."""
+    if ai_first and query:
+        shot = ai_image(query, work, used, kind, seed=idx)
+        if shot:
+            return shot
     def search(q: str) -> Shot | None:
         return (pexels(q, work, used, prefer_video) or pixabay(q, work, used, prefer_video)
                 or openverse(q, work, used) or commons(q, work, used))
@@ -325,6 +405,8 @@ def find(query: str, sentence: str, work: Path, used: set[str], idx: int, prefer
     shot = search(query) if query else None
     if shot is None and query and len(query.split()) > 1:  # requête plus large : deux premiers mots-clés
         shot = search(" ".join(query.split()[:2]) if len(query.split()) > 2 else query.split()[0])
+    if shot is None and query and not ai_first:
+        shot = ai_image(query, work, used, kind, seed=idx)
     if shot is None:  # pas d'image libre : mots forts animés
         return Shot(None, "kinetic", text=key_words(sentence))
     if shot.kind == "image":
