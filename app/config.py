@@ -166,6 +166,7 @@ class Settings(BaseSettings):
     news_llm_timeout: float = 1200  # s : l'IA est partagée avec l'analyse des clips, la réponse peut attendre
     news_voice: str = "fr_FR-tom-medium"  # voix Piper (fr_FR-siwis-medium, fr_FR-upmc-medium, fr_FR-gilles-low…)
     news_voice_speed: float = 1.12  # débit de la voix (1 = normal) : un peu rapide, comme les comptes d'actu
+    news_brand: str = "ACTU EN BREF"  # nom de marque dans le bandeau du haut (le tien, jamais celui d'un autre compte)
     news_badge: str = "ACTU"  # pastille rouge au-dessus du titre (vide = aucune)
     news_accent: str = "#FFD400"  # couleur des cartes générées quand aucune image libre ne convient
     pexels_api_key: str = ""  # clé gratuite pexels.com/api : vidéos et photos libres de droits (recommandé)

@@ -158,7 +158,7 @@ def header_text(hook: str, title: str, text: str, emojis: bool = True) -> str:
     return hooks.add_emojis(base, text)
 
 
-def map_shot(place: str):
+def map_shot(place: str, n_frames: int = 120):
     """Survol « vu d'en haut » du lieu de l'actu, si on le trouve et que les tuiles satellite répondent."""
     from . import geo, motion
 
@@ -168,16 +168,58 @@ def map_shot(place: str):
     found = geo.geocode(place)
     if not found:
         return None
-    lon, lat, name, kind = found
-    zoom = geo.zoom_for(kind)
+    zoom = geo.zoom_for(found.kind)
     tiles = geo.Tiles()
-    need = motion.map_tiles_needed(lon, lat, 120, zoom)
+    need = motion.map_tiles_needed(found.lon, found.lat, n_frames, zoom)
     missing = tiles.prefetch(need)
     if missing > len(need) * 0.2:
-        log.info("Actu : survol de « %s » abandonné (%d/%d tuiles satellite manquantes)", name, missing, len(need))
+        log.info("Actu : survol de « %s » abandonné (%d/%d tuiles satellite manquantes)", found.name, missing,
+                 len(need))
         return None
-    return visuals.Shot(None, "map", credit=geo.CREDIT, text=name,
-                        meta={"lon": lon, "lat": lat, "zoom": zoom, "fetch": tiles.get})
+    return visuals.Shot(None, "map", credit=geo.CREDIT, text=found.name,
+                        meta={"lon": found.lon, "lat": found.lat, "zoom": zoom, "fetch": tiles.get,
+                              "sub": found.sub, "rings": found.rings})
+
+
+MAX_MAPS = 3
+
+
+def pick_shots(sc, cuts, work: Path) -> tuple[list, list]:
+    """Une illustration par plan : survol du lieu en ouverture (et des autres lieux cités, 3 cartes max),
+    chiffres clés animés (2 max), quiz « Et toi ? » sur la question finale, sinon vidéo / photo libre de
+    droits dans un panneau, sinon mots forts animés."""
+    s = get_settings()
+    used: set[str] = set()
+    shots, counters, maps, seen_sentence, seen_places = [], 0, 0, set(), set()
+    places = getattr(sc, "places", []) or []
+    last = cuts[-1][0] if cuts else -1
+    for j, (i, a, b) in enumerate(cuts):
+        shot = None
+        first_of_sentence = i not in seen_sentence
+        seen_sentence.add(i)
+        place = sc.place if j == 0 else (places[i] if first_of_sentence and i < len(places) else "")
+        if place and maps < MAX_MAPS and place.lower() not in seen_places:
+            seen_places.add(place.lower())
+            try:
+                shot = map_shot(place, max(30, round((b - a) * montage.FPS)))
+            except Exception as e:
+                log.info("Actu : survol impossible : %s", e)
+            maps += shot is not None
+        if shot is None and s.news_motion and i == last and j == len(cuts) - 1 and len(cuts) > 2 \
+                and sc.sentences[i].rstrip().endswith("?"):
+            shot = visuals.Shot(None, "quiz", text=sc.sentences[i], meta={"answers": getattr(sc, "answers", [])})
+        # pas de compteur qui défile sur un bilan de victimes
+        if shot is None and s.news_motion and counters < 2 and first_of_sentence and j > 0 \
+                and not _GRAVE.search(sc.sentences[i]):
+            shot = visuals.number_shot(sc.sentences[i])
+            counters += shot is not None
+        if shot is None:
+            query = sc.visuals[i] if i < len(sc.visuals) else ""
+            shot = visuals.find(query, sc.sentences[i], work / "media", used, j, prefer_video=j % 2 == 0)
+            if shot.kind in ("image", "video"):
+                shot.meta = {**(shot.meta or {}), "label": "ILLUSTRATION"}
+        shots.append(shot)
+    return shots, []
 
 
 def pick_shots(sc, cuts, work: Path) -> tuple[list, list]:
@@ -203,8 +245,20 @@ def pick_shots(sc, cuts, work: Path) -> tuple[list, list]:
         if shot is None:
             query = sc.visuals[i] if i < len(sc.visuals) else ""
             shot = visuals.find(query, sc.sentences[i], work / "media", used, j, prefer_video=j % 2 == 0)
+            if shot.kind in ("image", "video"):
+                shot.meta = {**(shot.meta or {}), "label": "ILLUSTRATION"}
         shots.append(shot)
     return shots, []
+
+
+def look(sc, item: feeds.Item) -> dict:
+    """Ce qu'affiche le bandeau : marque, sujet, chapitres, mots-clés, et les médias qui en parlent."""
+    s = get_settings()
+    sources = [item.source.upper()] if item.source else []
+    for title in item.related[:3]:
+        sources.append(title[:70])
+    return {"brand": s.news_brand, "topic": sc.topic or (sc.place.split(",")[0] if sc.place else ""),
+            "chapters": sc.chapters, "titles": sc.titles, "sources": "   ·   ".join(sources)}
 
 
 def make(video_id: int, item: feeds.Item) -> int | None:
@@ -238,7 +292,7 @@ def make(video_id: int, item: feeds.Item) -> int | None:
     out = s.clips_dir / "news" / f"{video_id}.mp4"
     hook_text = header_text(sc.hook, sc.title, sc.text, s.hook_emojis)
     montage.build(shots, spoken, work / "voice.wav", hook_text, item.source, out, work,
-                  on_progress=lambda p: _set(video_id, progress=35 + p * 0.6))
+                  on_progress=lambda p: _set(video_id, progress=35 + p * 0.6), look=look(sc, item))
     info = {"kind": "news", "text": sc.text, "title": sc.title, "hook": hook_text, "question": sc.question,
             "llm": sc.score, "polished": True, "hashtags": sc.hashtags, "source": item.source,
             "source_url": item.link, "credits": credits, "duration": total, "shots": len(shots),

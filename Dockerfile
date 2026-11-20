@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg tzdata fontconfig fonts-montserrat fonts-dejavu-core fonts-noto-color-emoji ca-certificates \
+        ffmpeg tzdata fontconfig fonts-montserrat fonts-dejavu-core fonts-inter fonts-noto-color-emoji ca-certificates \
         intel-media-va-driver mesa-va-drivers vainfo tesseract-ocr tesseract-ocr-fra \
     && rm -rf /var/lib/apt/lists/*
 
