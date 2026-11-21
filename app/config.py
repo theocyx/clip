@@ -164,7 +164,14 @@ class Settings(BaseSettings):
     news_publish: bool = True  # envoie les vidéos d'actu dans la file de publication (sinon : seulement dans Clips)
     news_target_seconds: float = 70  # durée visée de la voix off d'une actu (secondes)
     news_min_seconds: float = 60  # plus court : script rallongé, sinon sujet écarté
+    news_script_steps: bool = True  # écriture en 3 étapes : faits dans l'ordre → récit libre → mise en forme
+    news_writer_model: str = "qwen2.5:7b"  # modèle plus fort pour écrire le récit (vide = le modèle habituel)
     news_llm_timeout: float = 1200  # s : l'IA est partagée avec l'analyse des clips, la réponse peut attendre
+    # voix : edge (voix neuronale Microsoft gratuite, sans clé, très naturelle) ou piper (100 % locale, plus robotique)
+    news_tts: str = "edge"
+    news_edge_voice: str = "fr-FR-HenriNeural"  # voix d'actu (fr-FR-DeniseNeural, fr-FR-VivienneMultilingualNeural…)
+    story_edge_voice: str = "fr-FR-RemyMultilingualNeural"  # voix de conteur pour les histoires
+    story_edge_pitch: str = "-2Hz"  # un peu plus grave pour les histoires
     news_voice: str = "fr_FR-tom-medium"  # voix Piper (fr_FR-siwis-medium, fr_FR-upmc-medium, fr_FR-gilles-low…)
     news_voice_speed: float = 1.12  # débit de la voix (1 = normal) : un peu rapide, comme les comptes d'actu
     # Histoires vraies envoûtantes (voir app/news/stories.py) : faits tirés de Wikipédia, même chaîne de montage

@@ -96,6 +96,7 @@ def test_script_parse_and_checks(monkeypatch):
 def test_script_write_retries_then_accepts(monkeypatch):
     from app.pipeline import llm
     monkeypatch.setattr(get_settings(), "news_target_seconds", 12.0)
+    monkeypatch.setattr(get_settings(), "news_script_steps", False)  # ancienne méthode (une seule réponse)
     short = json.dumps({"score": 8, "title": "t", "sentences": [{"text": "Trop court.", "visual": ""}]})
     answers = iter([short, _llm_json(title="GTA 6 : 99 millions !")])
     prompts = []
@@ -280,7 +281,7 @@ def test_make_creates_clip_and_queues(monkeypatch, tmp_path):
     monkeypatch.setattr(cfg, "news_min_seconds", 5.0)
     monkeypatch.setattr(feeds, "fetch_article", lambda item: item.summary)
     monkeypatch.setattr(script, "write", lambda *a, **k: script.parse(_llm_json()))
-    monkeypatch.setattr(tts, "speak", lambda sents, out, speed=None: _real_speak(sents, out, synth=_synth))
+    monkeypatch.setattr(tts, "speak", lambda sents, out, speed=None, **k: _real_speak(sents, out, synth=_synth))
     built = {}
 
     def fake_build(shots, spoken, voice, hook, source, out, work, on_progress=None, look=None):
@@ -534,6 +535,7 @@ def test_story_run_once_and_prompt(monkeypatch, tmp_path):
     monkeypatch.setattr(llm, "_ask_ollama", fake_ask)
     facts = "GTA 6 record 24 heures 25 millions de copies. " * 3
     monkeypatch.setattr(cfg, "story_target_seconds", 12.0)
+    monkeypatch.setattr(cfg, "news_script_steps", False)
     sc = script.write("Room 641A", facts, "Wikipédia", kind="story")
     assert sc is not None and "HISTOIRE VRAIE" in asked["prompt"] and asked["num_ctx"] == 8192
     assert script.target_words("story") < script.target_words("news")
@@ -635,7 +637,7 @@ def test_short_scripts_are_extended_to_min_duration(monkeypatch, tmp_path):
     monkeypatch.setattr(cfg, "news_publish", False)
     monkeypatch.setattr(feeds, "fetch_article", lambda item: facts)
     monkeypatch.setattr(script, "write", lambda *a, **k: script.parse(_llm_json()))
-    monkeypatch.setattr(tts, "speak", lambda sents, out, speed=None: _real_speak(sents, out, synth=_synth))
+    monkeypatch.setattr(tts, "speak", lambda sents, out, speed=None, **k: _real_speak(sents, out, synth=_synth))
     grown = []
 
     def fake_grow(sc, title, facts, source, kind="news", goal_words=None, tries=3):
@@ -653,3 +655,56 @@ def test_short_scripts_are_extended_to_min_duration(monkeypatch, tmp_path):
     assert generate.make(v2.id, _item(link="https://ex.fr/trop-court")) is None
     with db.session() as s:
         assert s.get(Video, v2.id).status == "skipped" and "Trop court" in s.get(Video, v2.id).error
+
+
+def test_script_in_three_steps_and_edge_word_timings(monkeypatch, tmp_path):
+    from app.pipeline import llm
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "story_target_seconds", 20.0)
+    monkeypatch.setattr(llm, "provider", lambda: "ollama")
+    monkeypatch.setattr(llm, "ensure_model", lambda name: True)
+    facts = ("En 2003, Mark Klein, technicien chez AT&T à San Francisco, découvre la Room 641A. "
+             "La pièce copie le trafic internet pour la NSA. Il révèle tout en 2006.")
+    calls = []
+
+    def fake_ask(prompt, timeout=600, max_tokens=None, num_ctx=4096, model="", json_mode=True, temperature=0.5):
+        calls.append((prompt, model, json_mode))
+        if "DANS L'ORDRE" in prompt:
+            return json.dumps({"accroche": "Une pièce secrète copie internet", "qui": "Mark Klein, technicien",
+                               "faits": ["En 2003, Mark Klein découvre la Room 641A à San Francisco.",
+                                         "La pièce copie le trafic internet pour la NSA.",
+                                         "En 2006, il révèle tout."], "inconnu": ""})
+        if not json_mode:
+            return ("1. Ouverture : Une porte fermée à clé cache un secret. Personne n'a le droit d'entrer. "
+                    "En 2003, Mark Klein, un technicien d'AT&T, travaille à San Francisco. Il découvre la Room "
+                    "641A. Cette pièce copie tout le trafic internet. Et c'est pour la NSA. En 2006, il décide de "
+                    "tout révéler au grand jour. Mais la pièce existe-t-elle encore aujourd'hui ? "
+                    "Et toi, tu penses qu'on est surveillés ?")
+        return json.dumps({"score": 8, "title": "La pièce secrète qui copiait internet", "hook": "Une pièce "
+                           "interdite 🤫", "topic": "Room 641A", "answers": ["Oui", "Non"], "hashtags": ["nsa"],
+                           "sentences": [{"n": 1, "visual": "locked door", "title": "PORTE FERMÉE",
+                                          "chapter": "LE SECRET"},
+                                         {"n": 4, "visual": "server room", "title": "ROOM 641A",
+                                          "chapter": "LA DÉCOUVERTE", "place": "San Francisco, USA"}]})
+
+    monkeypatch.setattr(llm, "_ask_ollama", fake_ask)
+    sc = script.write("Room 641A", facts, "Wikipédia", kind="story")
+    assert sc is not None and sc.sentences[0] == "Une porte fermée à clé cache un secret."
+    assert sc.sentences[-1].endswith("?") and sc.question == sc.sentences[-1]
+    assert calls[1][1] == cfg.news_writer_model and calls[1][2] is False  # récit en texte libre, gros modèle
+    assert calls[2][1] == "" and calls[2][2] is True  # mise en forme par le modèle rapide
+    assert sc.visuals[0] == "locked door" and sc.places[3] == "San Francisco, USA" and sc.topic == "Room 641A"
+    assert "STORY_NARRATION" not in calls[1][0] and "frissons" in calls[1][0]
+    # mots calés sur les instants donnés par la voix Edge (silence de début retiré)
+    w = tts.boundary_times("Il entre, enfin !", [(0.30, 0.2, "Il"), (0.55, 0.3, "entre"), (1.0, 0.4, "enfin")],
+                           10.0, 11.5, lead=0.25)
+    assert [x["word"] for x in w] == ["Il", "entre,", "enfin !"] and w[0]["start"] == 10.05 and w[1]["start"] == 10.3
+    assert tts.boundary_times("Deux mots", [(0, 0.2, "Deux")], 0, 1) == tts.word_times("Deux mots", 0, 1)
+    assert tts.edge_rate(1.12) == "+12%" and tts.edge_rate(1.0) == "+0%"
+    monkeypatch.setattr(cfg, "news_tts", "edge")
+    from app.news import tts as tts_mod
+    monkeypatch.setattr(tts_mod, "edge_synth", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("hors ligne")))
+    monkeypatch.setattr(tts_mod, "_voice", lambda name: "piper")
+    monkeypatch.setattr(tts_mod, "_synth", lambda voice, text, speed=None: _synth(text))
+    spoken = tts.speak(["Bonjour à tous.", "Deuxième phrase."], tmp_path / "v.wav", kind="story", gap=0.3)
+    assert len(spoken) == 2 and spoken[1].start - spoken[0].end == pytest.approx(0.3, abs=0.01)

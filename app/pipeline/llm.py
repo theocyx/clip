@@ -77,16 +77,33 @@ def parse(content: str) -> tuple[float, str, str, str] | None:
     return 0.0 if pub else float(data.get("score", 0)), clean("title", 90), clean("hook", 60), clean("question", 90)
 
 
-def _ask_ollama(prompt: str, timeout: float = 600, max_tokens: int | None = None, num_ctx: int = 4096) -> str:
+def ensure_model(name: str) -> bool:
+    """Télécharge un modèle Ollama s'il manque (ex. le modèle plus fort réservé aux scripts d'actu)."""
     s = get_settings()
-    options = {"temperature": 0.5, "num_ctx": num_ctx}
+    try:
+        r = httpx.get(f"{s.ollama_url}/api/tags", timeout=5)
+        if any(m.get("name", "") in (name, name + ":latest") for m in r.json().get("models", [])):
+            return True
+        log.info("Téléchargement du modèle %s dans Ollama (une seule fois)…", name)
+        httpx.post(f"{s.ollama_url}/api/pull", json={"model": name, "stream": False}, timeout=3600).raise_for_status()
+        return True
+    except Exception as e:
+        log.warning("Modèle %s indisponible (%s)", name, e)
+        return False
+
+
+def _ask_ollama(prompt: str, timeout: float = 600, max_tokens: int | None = None, num_ctx: int = 4096,
+                model: str = "", json_mode: bool = True, temperature: float = 0.5) -> str:
+    s = get_settings()
+    options = {"temperature": temperature, "num_ctx": num_ctx}
     if max_tokens:
         options["num_predict"] = max_tokens
-    r = httpx.post(
-        f"{s.ollama_url}/api/generate",
-        json={"model": s.ollama_model, "format": "json", "stream": False, "prompt": prompt, "options": options},
-        timeout=timeout,
-    )
+    body = {"model": model or s.ollama_model, "stream": False, "prompt": prompt, "options": options}
+    if json_mode:
+        body["format"] = "json"
+    if model and model != s.ollama_model:
+        body["keep_alive"] = "2m"  # gros modèle : libère vite la mémoire pour le reste
+    r = httpx.post(f"{s.ollama_url}/api/generate", json=body, timeout=timeout)
     r.raise_for_status()
     return r.json()["response"]
 

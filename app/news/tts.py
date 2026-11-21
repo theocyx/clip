@@ -1,7 +1,8 @@
-"""Voix off 100 % locale avec Piper (rapide sur CPU, voix françaises naturelles).
+"""Voix off : voix neuronale Microsoft Edge (gratuite, sans clé, très naturelle ; NEWS_TTS=edge) ou voix
+100 % locale Piper (NEWS_TTS=piper, et secours automatique si Edge ne répond pas).
 
 Chaque phrase est lue à part : on connaît ainsi sa durée exacte, ce qui donne le découpage des plans
-et l'horodatage mot à mot des sous-titres (réparti selon la longueur des mots, la voix étant régulière)."""
+et l'horodatage mot à mot des sous-titres (instants donnés par Edge, sinon répartis selon la longueur des mots)."""
 from __future__ import annotations
 
 import logging
@@ -76,16 +77,46 @@ def for_speech(text: str) -> str:
     return re.sub(r"\s{2,}", " ", t).strip()
 
 
-def trim(audio: np.ndarray, sr: int, thresh: float = 0.01, pad: float = 0.03) -> np.ndarray:
-    """Retire le silence au début et à la fin d'une phrase (le rythme des sous-titres reste calé)."""
+def trim_bounds(audio: np.ndarray, sr: int, thresh: float = 0.01, pad: float = 0.03) -> tuple[int, int]:
     if audio.size == 0:
-        return audio
+        return 0, 0
     loud = np.flatnonzero(np.abs(audio) > thresh * max(1e-6, float(np.abs(audio).max())))
     if loud.size == 0:
-        return audio[:0]
-    a = max(0, loud[0] - int(pad * sr))
-    b = min(audio.size, loud[-1] + int(pad * sr))
+        return 0, 0
+    return max(0, loud[0] - int(pad * sr)), min(audio.size, loud[-1] + int(pad * sr))
+
+
+def trim(audio: np.ndarray, sr: int, thresh: float = 0.01, pad: float = 0.03) -> np.ndarray:
+    """Retire le silence au début et à la fin d'une phrase (le rythme des sous-titres reste calé)."""
+    a, b = trim_bounds(audio, sr, thresh, pad)
     return audio[a:b]
+
+
+def _norm(w: str) -> str:
+    return re.sub(r"[^\w]", "", w.lower())
+
+
+def boundary_times(text: str, bounds: list[tuple[float, float, str]], start: float, end: float,
+                   lead: float = 0.0) -> list[dict]:
+    """Mots de la phrase calés sur les instants donnés par la voix (Edge), sinon répartis à la longueur.
+    bounds : [(début s, durée s, mot lu)] depuis le début de l'audio de la phrase ; lead : silence retiré."""
+    words = text.split()
+    tokens = [(o - lead, d, t) for o, d, t in bounds if _norm(t)]
+    if not words or len(tokens) != len([w for w in words if _norm(w)]):
+        return word_times(text, start, end)
+    out, k = [], 0
+    for w in words:
+        if not _norm(w):  # ponctuation seule (« – ») : collée au mot précédent
+            if out:
+                out[-1]["word"] += " " + w
+            continue
+        o, d, _ = tokens[k]
+        k += 1
+        a = min(max(start, start + o), end)
+        out.append({"start": round(a, 3), "end": round(min(end, max(a + 0.05, start + o + d)), 3), "word": w})
+    for i in range(len(out) - 1):  # pas de trou entre deux mots (le mot reste surligné jusqu'au suivant)
+        out[i]["end"] = max(out[i]["end"], out[i + 1]["start"])
+    return out
 
 
 def word_times(text: str, start: float, end: float) -> list[dict]:
@@ -101,6 +132,32 @@ def word_times(text: str, start: float, end: float) -> list[dict]:
         out.append({"start": round(t, 3), "end": round(t + d, 3), "word": w})
         t += d
     return out
+
+
+def edge_rate(speed: float) -> str:
+    return f"{round((speed - 1) * 100):+d}%"
+
+
+def edge_synth(text: str, voice: str, speed: float = 1.0, pitch: str = "+0Hz"):
+    """Voix neuronale Edge : (audio float 24 kHz, sr, [(début s, durée s, mot)])."""
+    import subprocess
+
+    import edge_tts
+
+    com = edge_tts.Communicate(text, voice, rate=edge_rate(speed), pitch=pitch, boundary="WordBoundary",
+                               receive_timeout=60)
+    mp3, bounds = bytearray(), []
+    for chunk in com.stream_sync():
+        if chunk["type"] == "audio":
+            mp3 += chunk["data"]
+        elif chunk["type"] == "WordBoundary":
+            bounds.append((chunk["offset"] / 1e7, chunk["duration"] / 1e7, chunk["text"]))
+    if not mp3:
+        raise RuntimeError("voix Edge : aucun son reçu")
+    sr = 24000
+    proc = subprocess.run(["ffmpeg", "-v", "error", "-i", "-", "-f", "f32le", "-ac", "1", "-ar", str(sr), "-"],
+                          input=bytes(mp3), capture_output=True, check=True)
+    return np.frombuffer(proc.stdout, dtype=np.float32).copy(), sr, bounds
 
 
 def _synth(voice, text: str, speed: float | None = None) -> tuple[np.ndarray, int]:
@@ -120,22 +177,58 @@ def _synth(voice, text: str, speed: float | None = None) -> tuple[np.ndarray, in
     return audio, sr
 
 
-def speak(sentences: list[str], out_wav: Path, synth=None, speed: float | None = None) -> list[Spoken]:
-    """Lit les phrases à la suite dans out_wav (mono 16 bits). synth(text) -> (audio float, sr) remplaçable
-    (tests). speed : débit (défaut NEWS_VOICE_SPEED). Renvoie le minutage de chaque phrase et de chaque mot."""
+def default_synth(kind: str = "news", speed: float | None = None):
+    """Fonction de lecture selon NEWS_TTS : Edge (avec secours Piper phrase par phrase) ou Piper."""
+    s = get_settings()
+    speed = speed or s.news_voice_speed
+    piper_voice = []
+
+    def piper(text: str):
+        if not piper_voice:
+            piper_voice.append(_voice(s.news_voice))
+        return _synth(piper_voice[0], text, speed)
+
+    if (s.news_tts or "").lower() != "edge":
+        return piper
+    voice = s.story_edge_voice if kind == "story" else s.news_edge_voice
+    pitch = s.story_edge_pitch if kind == "story" else "+0Hz"
+    failed = []
+
+    def edge(text: str):
+        if not failed:
+            try:
+                return edge_synth(text, voice, speed, pitch)
+            except Exception as e:  # coupure réseau, service changé… : voix locale pour toute la vidéo
+                log.warning("Voix Edge indisponible (%s), voix locale Piper à la place.", e)
+                failed.append(e)
+        return piper(text)
+
+    edge.failed = failed  # type: ignore[attr-defined]
+    return edge
+
+
+def speak(sentences: list[str], out_wav: Path, synth=None, speed: float | None = None, kind: str = "news",
+          gap: float | None = None) -> list[Spoken]:
+    """Lit les phrases à la suite dans out_wav (mono 16 bits). synth(text) -> (audio float, sr[, instants des
+    mots]) remplaçable (tests). speed : débit (défaut NEWS_VOICE_SPEED). Renvoie le minutage de chaque phrase
+    et de chaque mot."""
     if synth is None:
-        voice = _voice(get_settings().news_voice)
-        synth = lambda text: _synth(voice, text, speed)  # noqa: E731
+        synth = default_synth(kind, speed)
+    gap = GAP if gap is None else gap
     chunks, spoken, t, sr = [], [], 0.0, 22050
     for text in sentences:
-        audio, sr = synth(text)
-        audio = trim(audio, sr)
+        res = synth(text)
+        audio, sr = res[0], res[1]
+        bounds = res[2] if len(res) > 2 else None
+        a, b = trim_bounds(audio, sr)
+        audio = audio[a:b]
         if audio.size == 0:
             continue
         dur = audio.size / sr
-        spoken.append(Spoken(text, round(t, 3), round(t + dur, 3), word_times(text, t, t + dur)))
-        chunks += [audio, np.zeros(int(GAP * sr), dtype=np.float32)]
-        t += dur + GAP
+        words = boundary_times(text, bounds, t, t + dur, lead=a / sr) if bounds else word_times(text, t, t + dur)
+        spoken.append(Spoken(text, round(t, 3), round(t + dur, 3), words))
+        chunks += [audio, np.zeros(int(gap * sr), dtype=np.float32)]
+        t += dur + gap
     if not chunks:
         raise RuntimeError("Voix off vide")
     pcm = (np.clip(np.concatenate(chunks), -1, 1) * 32767).astype(np.int16)
