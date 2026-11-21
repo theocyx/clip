@@ -92,6 +92,179 @@ conséquences, réactions, ce qu'on ignore encore). Même ton, aucune répétiti
 ci-dessus (aucun chiffre, nom ni date inventé).
 Réponds UNIQUEMENT en JSON : {{"sentences": [{{"text": "...", "visual": "...", "title": "...", "chapter": "...", "place": ""}}]}}"""
 
+# ---------- écriture en 3 étapes (meilleur récit qu'en une seule réponse JSON) ----------
+
+OUTLINE_PROMPT = """Lis ces informations sur « {title} » ({source}) et liste les faits importants DANS L'ORDRE où ils
+se sont passés, pour pouvoir les raconter à quelqu'un qui ne connaît rien au sujet.
+
+Informations :
+\"\"\"{facts}\"\"\"
+
+Pour chaque fait : une phrase simple et complète en français (qui fait quoi, où, quand), avec les chiffres et
+les noms exacts du texte. 8 à 16 faits. Présente chaque personne ou organisation par son rôle.
+N'invente rien : seulement ce qui est écrit ci-dessus. Une théorie ou une rumeur est notée comme telle.
+Réponds en JSON : {{"accroche": "<le fait le plus surprenant ou intrigant>", "qui": "...", "ou": "...", "quand": "...", "faits": ["...", "..."], "inconnu": "<ce qui reste incertain ou inexpliqué, sinon vide>"}}"""
+
+NEWS_NARRATION = """Tu es la voix off d'une chaîne TikTok d'actualité française qui cartonne. Écris le texte lu à voix
+haute, environ {words} mots (environ {seconds} secondes), sur : « {title} ».
+
+Faits (dans l'ordre) :
+{outline}
+
+Structure obligatoire :
+1. Accroche (1 ou 2 phrases) : le fait le plus fort, dit simplement, qui donne envie de rester.
+2. Le contexte : qui, où, quand. Présente chaque personne ou organisation la première fois.
+3. Les faits dans l'ordre, une idée par phrase, reliés par des mots de liaison (d'abord, ensuite, quelques
+   heures plus tard, résultat, mais).
+4. Pourquoi c'est important, ou ce qui va se passer maintenant.
+5. Une question au spectateur, pour qu'il réponde en commentaire.
+
+Règles : français oral et naturel, phrases courtes (8 à 18 mots) mais complètes, une seule idée par phrase,
+aucun jargon sans explication, ton neutre (aucune opinion), pas de liste ni de titre ni d'emoji ni de guillemets,
+pas d'intro du genre « salut » ou « aujourd'hui on parle de ». Uniquement les faits ci-dessus, nombres en chiffres.
+Réponds avec le texte seul, en un paragraphe."""
+
+STORY_NARRATION = """Tu es un conteur sur TikTok, spécialiste des histoires vraies qui donnent des frissons. Écris le texte
+lu à voix haute, environ {words} mots (environ {seconds} secondes), sur : « {title} ».
+
+Faits (dans l'ordre) :
+{outline}
+Ce qui reste incertain : {unknown}
+
+Structure obligatoire :
+1. Ouverture choc (1 ou 2 phrases au présent) : une scène ou un détail troublant qui intrigue tout de suite.
+2. Retour au début : qui, où, quand. Le spectateur ne connaît rien au sujet : présente chaque personne et lieu.
+3. Le déroulé dans l'ordre, la tension monte, chaque étape amène la suivante (« Mais… », « Et c'est là que… »,
+   « Personne ne sait encore que… »).
+4. Le rebondissement ou la révélation.
+5. Ce qui reste inexpliqué aujourd'hui (une théorie est présentée comme une théorie).
+6. Une question au spectateur.
+
+Règles : présent de narration, phrases courtes (6 à 18 mots) mais complètes, une idée par phrase, mots simples
+et images fortes, suspense sans exagérer, aucun humour sur un drame, pas de liste ni de titre ni d'emoji ni de
+guillemets, pas d'intro du genre « aujourd'hui je vais vous raconter ». Uniquement les faits ci-dessus, nombres
+en chiffres. Réponds avec le texte seul, en un paragraphe."""
+
+META_PROMPT = """Voici les phrases numérotées d'une vidéo TikTok {what} sur « {title} » :
+{numbered}
+
+Pour CHAQUE phrase, donne : "visual" = 2 à 4 mots-clés EN ANGLAIS pour une image d'illustration générique
+(ex. "dark corridor", "train station crowd"), jamais une personne célèbre ni un logo ; "title" = 2 à 4 mots
+affichés en gros (« PIÈCE SECRÈTE ») ; "chapter" = 1 ou 2 mots pour l'étape (« LES FAITS », « CONTEXTE »,
+« LE SECRET », « ET APRÈS ? ») ; "place" = le lieu précis cité dans la phrase (« Lyon, France »), sinon "".
+Puis : "title" de la vidéo (40 à 70 caractères, intrigant, jamais trompeur), "hook" (4 à 8 mots affichés en
+haut, terminés par 1 emoji), "topic" (1 à 3 mots), "place" (lieu principal), "answers" (2 réponses courtes à la
+question finale), "hashtags" (3 à 5), "score" (1 à 10 : intérêt pour le grand public ; promo ou sujet trop
+pointu : 3 maximum).
+Réponds UNIQUEMENT en JSON : {{"score": 7, "title": "...", "hook": "...", "topic": "...", "place": "...", "answers": ["...", "..."], "hashtags": ["..."], "sentences": [{{"n": 1, "visual": "...", "title": "...", "chapter": "...", "place": ""}}]}}"""
+
+_LABEL = re.compile(r"^\s*(?:(?:\d+[.)]\s*|[-•*]\s*|(?:accroche|contexte|conclusion|question|ouverture|"
+                    r"rebondissement|déroulé|partie \d+)\s*:\s*))+", re.I)
+
+
+def split_sentences(text: str) -> list[str]:
+    """Texte libre de l'IA → phrases (sans numéros ni étiquettes « Accroche : »), les miettes recollées."""
+    text = hooks.strip_emojis(text or "").replace("\u2026", "...").strip().strip('"')
+    lines = [_LABEL.sub("", ln).strip(' "«»') for ln in text.splitlines()]
+    text = " ".join(ln for ln in lines if ln)
+    parts = [p.strip(' "«»') for p in re.split(r"(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Þ0-9«\"])", text) if p.strip()]
+    out: list[str] = []
+    for p in parts:
+        if out and len(p.split()) < 4 and not out[-1].endswith("?"):
+            out[-1] = out[-1].rstrip(".") + ", " + p[0].lower() + p[1:]
+        else:
+            out.append(p)
+    return [p if p[-1] in ".!?" else p + "." for p in out if len(p.split()) >= 2]
+
+
+def outline(title: str, facts: str, source: str, kind: str, model: str = "") -> dict:
+    s = get_settings()
+    try:
+        raw = llm._ask_ollama(OUTLINE_PROMPT.format(title=title, source=source or "média",
+                                                    facts=facts[:5000 if kind == "story" else 3500]),
+                              timeout=s.news_llm_timeout, max_tokens=1200, num_ctx=8192, model=model,
+                              temperature=0.2)
+        m = re.search(r"\{.*\}", raw or "", re.S)
+        data = json.loads(m.group(0)) if m else {}
+    except Exception as e:
+        log.info("Script : plan des faits impossible (%s)", e)
+        return {}
+    data["faits"] = [str(f).strip() for f in (data.get("faits") or []) if str(f).strip()][:20]
+    return data if data["faits"] else {}
+
+
+def narrate(title: str, plan: dict, facts: str, kind: str, words: float, model: str = "") -> list[str]:
+    s = get_settings()
+    lines = plan.get("faits") or []
+    head = []
+    for k, label in (("accroche", "Le plus intrigant"), ("qui", "Qui"), ("ou", "Où"), ("quand", "Quand")):
+        if str(plan.get(k) or "").strip():
+            head.append(f"{label} : {plan[k]}")
+    listed = "\n".join(head + [f"- {f}" for f in lines]) if lines else facts[:3500]
+    tpl = STORY_NARRATION if kind == "story" else NEWS_NARRATION
+    seconds = s.story_target_seconds if kind == "story" else s.news_target_seconds
+    try:
+        text = llm._ask_ollama(tpl.format(words=int(words), seconds=int(seconds), title=title, outline=listed,
+                                          unknown=str(plan.get("inconnu") or "rien de particulier")),
+                               timeout=s.news_llm_timeout, max_tokens=int(words * 2.6) + 200, num_ctx=8192,
+                               model=model, json_mode=False, temperature=0.7)
+    except Exception as e:
+        log.info("Script : récit impossible (%s)", e)
+        return []
+    return split_sentences(text)
+
+
+def dress(sentences: list[str], title: str, kind: str) -> Script:
+    """Mise en forme (mots-clés d'image, titres à l'écran, chapitres, titre, accroche…) par le modèle rapide."""
+    s = get_settings()
+    numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(sentences))
+    data: dict = {}
+    try:
+        raw = llm._ask_ollama(META_PROMPT.format(what="« histoire vraie »" if kind == "story" else "d'actualité",
+                                                 title=title, numbered=numbered),
+                              timeout=s.news_llm_timeout, max_tokens=400 + 70 * len(sentences), num_ctx=8192)
+        m = re.search(r"\{.*\}", raw or "", re.S)
+        data = json.loads(m.group(0)) if m else {}
+    except Exception as e:
+        log.info("Script : mise en forme incomplète (%s)", e)
+    per = {}
+    for k, row in enumerate(data.get("sentences") or []):
+        if isinstance(row, dict):
+            try:
+                n = int(row.get("n", k + 1)) - 1
+            except (TypeError, ValueError):
+                n = k
+            per.setdefault(n, row)
+    rows = []
+    for i, t in enumerate(sentences):
+        r = per.get(i, {})
+        rows.append({"text": t, "visual": str(r.get("visual") or ""), "title": r.get("title") or "",
+                     "chapter": r.get("chapter") or "", "place": r.get("place") or ""})
+    data["sentences"] = rows
+    data.setdefault("title", title)
+    if sentences[-1].endswith("?"):
+        data["question"] = sentences[-1]
+    sc = parse(json.dumps(data, ensure_ascii=False))
+    if sc is None:
+        sc = Script(title=title, hook="", sentences=list(sentences), visuals=[""] * len(sentences))
+    return sc
+
+
+def write_steps(title: str, facts: str, source: str, kind: str = "news") -> Script | None:
+    """Plan des faits dans l'ordre → récit en texte libre (structure imposée) → mise en forme.
+    Le récit est écrit par le modèle le plus fort (NEWS_WRITER_MODEL), le reste par le modèle rapide."""
+    s = get_settings()
+    model = s.news_writer_model if s.news_writer_model and llm.ensure_model(s.news_writer_model) else ""
+    words = target_words(kind)
+    plan = outline(title, facts, source, kind, model)
+    log.info("Script : %d faits retenus, écriture du récit%s…", len(plan.get("faits") or []),
+             f" ({model})" if model else "")
+    sentences = narrate(title, plan, facts, kind, words, model)
+    if len(sentences) < 3:
+        return None
+    return dress(sentences, title, kind)
+
+
 _NUM = re.compile(r"\d+(?:[.,]\d+)?")
 
 
@@ -307,6 +480,18 @@ def write(title: str, facts: str, source: str, kind: str = "news") -> Script | N
         n_min=n_min, n_max=n_max, w_min=int(words * 0.85), w_max=int(words * 1.2), seconds=int(seconds))
     max_tokens = 600 + n_max * 110
     facts_all = facts + " " + title
+    if s.news_script_steps:  # récit en 3 étapes, plus clair et plus naturel ; sinon ancienne méthode
+        sc = write_steps(title, facts, source, kind)
+        if sc is not None:
+            removed = sanitize(sc, facts_all, title)
+            if removed:
+                log.info("Script : retiré (chiffre absent de l'article) : %s", ", ".join(removed))
+            issues = problems(sc, facts_all, kind)
+            if not issues or all("trop court" in x for x in issues) and len(sc.sentences) >= 3:
+                grow(sc, title, facts_all, source, kind)
+                if not problems(sc, facts_all, kind):
+                    return sc
+            log.info("Script en 3 étapes refusé : %s ; essai à l'ancienne", "; ".join(problems(sc, facts_all, kind)))
     last: list[str] = []
     for attempt in range(2):
         try:

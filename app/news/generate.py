@@ -297,7 +297,7 @@ def make(video_id: int, item: feeds.Item) -> int | None:
     _set(video_id, progress=15)
     log.info("%s : script prêt (%d phrases, note %g/10), voix off et images…", what, len(sc.sentences), sc.score)
     speed = s.story_voice_speed if story else None
-    spoken = tts.speak(sc.sentences, work / "voice.wav", speed=speed)
+    spoken = tts.speak(sc.sentences, work / "voice.wav", speed=speed, kind=item.kind, gap=0.34 if story else None)
     floor = script.min_seconds(item.kind)
     for _ in range(2):  # voix plus rapide que prévu : on rallonge le script d'après la durée réellement lue
         if spoken[-1].end >= floor:
@@ -306,7 +306,7 @@ def make(video_id: int, item: feeds.Item) -> int | None:
         goal = rate * script.target_seconds(item.kind)
         log.info("%s : voix off de %.0f s (minimum %.0f s), on rallonge le script…", what, spoken[-1].end, floor)
         script.grow(sc, item.title, facts + " " + item.title, item.source, item.kind, goal_words=goal, tries=2)
-        spoken = tts.speak(sc.sentences, work / "voice.wav", speed=speed)
+        spoken = tts.speak(sc.sentences, work / "voice.wav", speed=speed, kind=item.kind, gap=0.34 if story else None)
     if spoken[-1].end < floor:
         _set(video_id, status="skipped", progress=0,
              error=f"Trop court ({spoken[-1].end:.0f} s, minimum {floor:.0f} s) : pas assez de faits dans l'article")
