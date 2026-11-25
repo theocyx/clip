@@ -250,7 +250,8 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
         if rated:
             mix = tun["llm_mix"]
             m.score = (1 - mix) * heur + mix * rated[0] / 10
-            m.title, m.hook = rated[1], rated[2]
+            # « X » des exemples remplacé par le vrai nom, exemple recopié écarté (repli plus bas)
+            m.title, m.hook = engage.fill_name(rated[1], streamer), engage.fill_name(rated[2], streamer)
         else:
             m.score = heur
         m.title = engage.fix_title(m.title, video.title, recent, text, m.hook) or fallback_title(text) or video.title

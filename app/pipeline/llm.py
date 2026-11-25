@@ -26,16 +26,13 @@ le streamer regarderait jusqu'au bout et le partagerait. Bavardage, lecture du c
 Si l'extrait est une publicité, un passage sponsorisé, un placement de produit, un partenariat, un code promo,
 un appel à s'abonner ou à cliquer sur un lien : mets "pub": true et "score": 1.
 Règles pour être vu au maximum sur TikTok et YouTube Shorts (style des clips GTA 6 qui font le plus de vues) :
-- Titre : 30 à 60 caractères, comme un pote qui raconte la scène à l'oral : le streamer (s'il est connu) + ce
-  qu'il fait ou sa réaction + « GTA 6 » (ou le jeu / serveur RP). Modèles : « X est choqué par … de GTA 6 »,
-  « X devient … dans GTA 6 », « X c'est un fou sur GTA 6 », « WTF … dans GTA 6, X n'en revient pas ». Raconte CE
-  QUI SE PASSE DANS CET EXTRAIT, pas tout en majuscules, sans guillemets, jamais vulgaire ni trompeur (rien qui
-  n'est pas dans l'extrait). NE RECOPIE PAS le sujet du live
-  (pas de « live », « stream », nombre d'heures ni de hashtag) : chaque clip doit avoir un titre unique.{recent}
-- Accroche (affichée en gros sur la vidéo pendant tout le clip) : 7 à 10 mots qui décrivent la situation au présent,
-  ton oral et drôle, avec le streamer s'il est connu et « GTA 6 » si ça colle (« X refait sa maison pour séduire
-  Lucia dans GTA 6 », « X se fait rentrer dedans et règle ça à sa façon »), jamais un résumé plat ni une promesse
-  fausse.
+- Titre : 30 à 60 caractères, comme un pote qui raconte la scène à l'oral : {name_rule} + ce qu'il fait ou sa
+  réaction dans CET extrait + « GTA 6 » (ou le jeu / serveur RP). Pas tout en majuscules, sans guillemets,
+  jamais vulgaire ni trompeur (rien qui n'est pas dans l'extrait). NE RECOPIE PAS le sujet du live (pas de « live », « stream », nombre d'heures ni de hashtag) : chaque clip
+  doit avoir un titre unique.{recent}
+- Accroche (affichée en gros sur la vidéo pendant tout le clip) : 7 à 10 mots qui décrivent CETTE situation au
+  présent, ton oral et drôle, avec {name_hook} et « GTA 6 » si ça colle. Jamais un résumé plat, une promesse
+  fausse, ni une lettre à la place d'un nom.
 - Question : une question courte (8 mots max) sur CE moment, à laquelle tout le monde a envie de répondre en
   commentaire (avis, choix, pronostic : « Il aurait dû fuir ou se rendre ? », « Tu lui pardonnes ? »).
 Réponds UNIQUEMENT en JSON : {{"pub": <true|false>, "score": <entier 1-10>, "title": "<titre en français, 60 caractères max, sans hashtag>", "hook": "<accroche affichée sur la vidéo, 7 à 10 mots, terminée par 1 emoji en lien avec le contenu (ex. 😭 💀 😂 🤯 😱), sans hashtag>", "question": "<question courte pour les commentaires>"}}"""
@@ -119,7 +116,10 @@ def rate(text: str, video_title: str, which: str | None = None, guidance: str = 
         avoid = "\n  Titres déjà utilisés (interdit de les reprendre ou de les imiter) :\n" + "\n".join(
             f"  - {t}" for t in recent[:12])
     who = f", streamer : {streamer}" if streamer else ""
-    prompt = PROMPT.format(video_title=video_title, text=text[:4000], recent=avoid, who=who)
+    name_rule = f"le nom du streamer ({streamer})" if streamer else "ce que fait le joueur (nom inconnu : pas de nom)"
+    name_hook = f"le nom {streamer}" if streamer else "« il » (nom du streamer inconnu)"
+    prompt = PROMPT.format(video_title=video_title, text=text[:4000], recent=avoid, who=who,
+                           name_rule=name_rule, name_hook=name_hook)
     if guidance:
         prompt = guidance.strip() + "\n\n" + prompt
     try:
