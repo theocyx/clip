@@ -18,9 +18,16 @@ def duration(path: Path) -> float:
     return float(json.loads(out)["format"]["duration"])
 
 
+# Les trous d'un enregistrement de live (morceaux perdus, coupure réseau) sont remplis de silence : sinon le son
+# extrait est plus court que la vidéo, la transcription se décale de la durée des trous, et les sous-titres et les
+# coupures des blancs tombent au mauvais endroit dans le clip (son haché, mots coupés).
+SYNC = "aresample=async=1:first_pts=0"
+
+
 def extract_audio(path: Path, wav: Path) -> Path:
     subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", str(SR), "-c:a", "pcm_s16le", str(wav)],
+        ["ffmpeg", "-y", "-v", "error", "-i", str(path), "-vn", "-af", SYNC, "-ac", "1", "-ar", str(SR),
+         "-c:a", "pcm_s16le", str(wav)],
         check=True,
     )
     return wav

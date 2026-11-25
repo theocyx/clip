@@ -117,6 +117,15 @@ AUDIO_ARGS = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
 COLOR_ARGS = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
 
 
+FADE = 0.02  # s de fondu à chaque raccord : pas de « clic » quand un blanc est coupé au milieu d'une onde
+SYNC = "aresample=async=1:first_pts=0"  # trous du son remplis de silence : son et image restent calés
+
+
+def piece_audio(dur: float) -> str:
+    """Traitement du son d'un morceau avant le recollage : calé sur l'image, fondus très courts aux deux bouts."""
+    return f"{SYNC},afade=t=in:d={FADE},afade=t=out:st={max(0.0, dur - FADE):.3f}:d={FADE}"
+
+
 def video_args(codec: str) -> list[str]:
     """Encodage du fichier envoyé. Les plateformes réencodent derrière : une image propre au départ
     (qp plus bas qu'avant sur le GPU, qui était moins net que le CPU à réglage égal) donne une meilleure image
@@ -155,7 +164,8 @@ def measure_loudness(src: Path, pieces: list[tuple[float, float]]) -> dict | Non
         for a, b in pieces:
             cmd += ["-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(src)]
         n = len(pieces)
-        chain = ("".join(f"[{i}:a]" for i in range(n)) + f"concat=n={n}:v=0:a=1," if n > 1 else "[0:a]")
+        chain = ("".join(f"[{i}:a]{SYNC}[m{i}];" for i in range(n)) + "".join(f"[m{i}]" for i in range(n))
+                 + f"concat=n={n}:v=0:a=1," if n > 1 else f"[0:a]{SYNC},")
         cmd += ["-filter_complex", chain + AUDIO + ":print_format=json[a]", "-map", "[a]", "-f", "null", "-"]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         found = re.findall(r"\{[^{}]*\}", proc.stderr or "")
@@ -191,8 +201,9 @@ def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, cod
     n = len(pieces)
     vf = ""
     src_v = "[0:v]"
-    if n > 1:  # morceaux bout à bout (extrait d'ouverture, clip sans les blancs)
-        vf = "".join(f"[{i}:v][{i}:a]" for i in range(n)) + f"concat=n={n}:v=1:a=1[cv][ca];"
+    if n > 1:  # morceaux bout à bout (extrait d'ouverture, clip sans les blancs), son calé et raccords sans clic
+        vf = "".join(f"[{i}:a]{piece_audio(b - a)}[pa{i}];" for i, (a, b) in enumerate(pieces))
+        vf += "".join(f"[{i}:v][pa{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[cv][ca];"
         src_v = "[cv]"
     vf += layout_filter(cam, s.split_cam_height, src_v, punch)
     if teaser:  # court flash blanc pour marquer le retour au début
@@ -219,7 +230,7 @@ def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, cod
         cmd += ["-filter_complex", vf + "[v]",
                 "-map", "[v]", "-map", "0:a:0?"]
     cmd += video_args(codec)
-    cmd += AUDIO_ARGS + ([] if n > 1 else ["-af", afilter])
+    cmd += AUDIO_ARGS + ([] if n > 1 else ["-af", piece_audio(total) + "," + afilter])
     cmd += ["-movflags", "+faststart", str(out)]
     return cmd
 
