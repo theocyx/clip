@@ -221,9 +221,14 @@ def speak(sentences: list[str], out_wav: Path, synth=None, speed: float | None =
         audio, sr = res[0], res[1]
         bounds = res[2] if len(res) > 2 else None
         a, b = trim_bounds(audio, sr)
-        audio = audio[a:b]
+        audio = np.array(audio[a:b], dtype=np.float32)
         if audio.size == 0:
             continue
+        ramp = min(int(sr * 0.006), audio.size // 2)  # 6 ms de fondu : pas de « clic » à la coupe du silence
+        if ramp:
+            fade = np.linspace(0.0, 1.0, ramp, dtype=np.float32)
+            audio[:ramp] *= fade
+            audio[-ramp:] *= fade[::-1]
         dur = audio.size / sr
         words = boundary_times(text, bounds, t, t + dur, lead=a / sr) if bounds else word_times(text, t, t + dur)
         spoken.append(Spoken(text, round(t, 3), round(t + dur, 3), words))
