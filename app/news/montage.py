@@ -57,7 +57,7 @@ def shot_cmd(path: Path, kind: str, dur: float, out: Path, idx: int, offset: flo
     frames = max(1, round(dur * FPS))
     cmd = ["ffmpeg", "-y", "-v", "error"]
     if kind == "video":
-        vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps={FPS},"
+        vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{H},setsar=1,fps={FPS},"
               # léger zoom continu : même une vidéo calme donne une impression de mouvement
               f"scale=iw*1.06:-2,crop={W}:{H}")
         cmd += ["-stream_loop", "-1", "-ss", f"{offset:.2f}", "-i", str(path)]
@@ -158,13 +158,13 @@ def final_cmd(video: Path, voice: Path, header: str, ass_name: str, out: Path, t
     if codec.endswith("_vaapi"):
         vf += ",format=nv12,hwupload"
     vf += "[v]"
-    af = f"[1:a]aresample=44100,aformat=channel_layouts=stereo,apad=whole_dur={total:.2f}"
+    af = f"[1:a]aresample=48000,aformat=channel_layouts=stereo,apad=whole_dur={total:.2f}"
     extra = []
     if music:
         cmd += ["-stream_loop", "-1", "-i", str(music)]
         fade = max(0.0, total - 1.5)
         af += ",asplit=2[vo][sc];"
-        af += (f"[{n}:a]aresample=44100,aformat=channel_layouts=stereo,volume={s.news_music_volume:.3f},"
+        af += (f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,volume={s.news_music_volume:.3f},"
                f"atrim=0:{total:.2f},afade=t=out:st={fade:.2f}:d=1.5[mu];"
                "[mu][sc]sidechaincompress=threshold=0.02:ratio=6:attack=15:release=350[md];")
         extra.append("[md]")
@@ -175,7 +175,7 @@ def final_cmd(video: Path, voice: Path, header: str, ass_name: str, out: Path, t
         voice_label = "[vo]"
     if sfx and s.news_sfx_volume > 0:
         cmd += ["-i", str(sfx)]
-        af += (f"[{n}:a]aresample=44100,aformat=channel_layouts=stereo,volume={s.news_sfx_volume:.3f},"
+        af += (f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,volume={s.news_sfx_volume:.3f},"
                f"apad=whole_dur={total:.2f}[fx];")
         extra.append("[fx]")
         n += 1
@@ -185,11 +185,8 @@ def final_cmd(video: Path, voice: Path, header: str, ass_name: str, out: Path, t
         af += voice_label + "anull,"
     af += render.AUDIO + "[a]"
     cmd += ["-filter_complex", vf + ";" + af, "-map", "[v]", "-map", "[a]", "-t", f"{total:.2f}"]
-    if codec.endswith("_vaapi"):
-        cmd += ["-c:v", codec, "-qp", str(s.crf + 2)]
-    else:
-        cmd += ["-c:v", codec, "-preset", "veryfast", "-crf", str(s.crf), "-pix_fmt", "yuv420p"]
-    cmd += ["-r", str(FPS), "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-movflags", "+faststart", str(out)]
+    cmd += render.video_args(codec)
+    cmd += ["-r", str(FPS)] + render.AUDIO_ARGS + ["-movflags", "+faststart", str(out)]
     return cmd
 
 

@@ -44,3 +44,32 @@ def test_measure_loudness_never_raises(monkeypatch):
         raise OSError("ffmpeg absent")
     monkeypatch.setattr(render.subprocess, "run", boom)
     assert render.measure_loudness(render.Path("s.mp4"), [(0, 5)]) is None
+
+
+def test_upload_quality_settings(monkeypatch):
+    """Fichier envoyé : son 48 kHz 192k, couleurs BT.709 déclarées, GPU moins compressé, agrandissements nets."""
+    from dataclasses import dataclass
+    from pathlib import Path
+
+    from app.config import get_settings
+    from app.pipeline import render
+
+    @dataclass
+    class Box:
+        x: float
+        y: float
+        w: float
+        h: float
+
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "crf", 21)
+    monkeypatch.setattr(cfg, "sharpen", 0.5)
+    gpu = render.build_cmd(Path("in.mp4"), 0, 30, "s.ass", Path("out.mp4"), codec="h264_vaapi",
+                           cam=Box(0.75, 0.05, 0.22, 0.25))
+    j = " ".join(gpu)
+    assert "-qp 20" in j and "-ar 48000" in j and "-b:a 192k" in j and "-colorspace bt709" in j
+    assert "flags=lanczos" in j and "unsharp=5:5:0.50" in j and "unsharp=5:5:0.30" in j
+    cpu = " ".join(render.build_cmd(Path("in.mp4"), 0, 30, "s.ass", Path("out.mp4"), codec="libx264"))
+    assert "-crf 21" in cpu and "-color_primaries bt709" in cpu and "unsharp" not in cpu  # vidéo réduite : pas d'accentuation
+    monkeypatch.setattr(cfg, "sharpen", 0)
+    assert render.sharpen() == ""

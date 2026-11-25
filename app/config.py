@@ -55,7 +55,9 @@ class Settings(BaseSettings):
     # Rendu vidéo
     video_codec: str = "auto"  # auto (GPU intégré VAAPI s'il est accessible, sinon CPU), libx264 ou h264_vaapi
     vaapi_device: str = ""  # ex. /dev/dri/renderD128 pour h264_vaapi
-    crf: int = 21
+    crf: int = 21  # qualité (plus bas = plus net et plus lourd) ; GPU : qp = crf - 1
+    # Netteté des zones agrandies (facecam, jeu recadré) : 0 = rien, 0.5 = léger, 1 = fort
+    sharpen: float = 0.5
     font_name: str = "Montserrat"
     hook_title: bool = True  # accroche courte en haut de la vidéo
     hook_seconds: float = 0  # durée d'affichage de l'accroche (0 = tout le clip)
