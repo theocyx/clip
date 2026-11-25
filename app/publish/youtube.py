@@ -5,6 +5,7 @@ import logging
 import os
 from datetime import date
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -63,16 +64,44 @@ def finish_auth(code: str, state: str, code_verifier: str | None = None) -> None
     creds.save("youtube", {"token": c.token, "refresh_token": c.refresh_token, "scopes": scopes}, account=name)
 
 
+class AuthExpired(RuntimeError):
+    """Google a révoqué ou laissé expirer l'accès (7 jours si l'appli Google est « en test ») :
+    il faut reconnecter la chaîne dans Comptes. Les clips restent en file en attendant."""
+
+
+def expired() -> bool:
+    """Accès YouTube expiré : envois en pause jusqu'à la reconnexion."""
+    return bool((creds.load("youtube") or {}).get("expired"))
+
+
+def _is_revoked(e: Exception) -> bool:
+    return isinstance(e, RefreshError) and "invalid_grant" in str(e)
+
+
+def _mark_expired(e: Exception) -> AuthExpired:
+    data = creds.load("youtube")
+    if data:
+        creds.save("youtube", {**data, "expired": True})
+    return AuthExpired(f"Accès YouTube expiré ou révoqué : reconnecte la chaîne dans Comptes ({e})")
+
+
 def _credentials() -> Credentials:
     s = get_settings()
     data = creds.load("youtube")
     if not data:
         raise RuntimeError("Compte YouTube non connecté")
+    if data.get("expired"):
+        raise AuthExpired("Accès YouTube expiré : reconnecte la chaîne dans Comptes")
     # scopes réellement accordés (absent pour une connexion faite avant l'ajout des statistiques)
     c = Credentials(data.get("token"), refresh_token=data.get("refresh_token"), token_uri=TOKEN_URI,
                     client_id=s.youtube_client_id, client_secret=s.youtube_client_secret, scopes=data.get("scopes"))
     if not c.valid:
-        c.refresh(Request())
+        try:
+            c.refresh(Request())
+        except RefreshError as e:
+            if _is_revoked(e):
+                raise _mark_expired(e) from e
+            raise
         creds.save("youtube", {**data, "token": c.token, "refresh_token": c.refresh_token})
     return c
 
@@ -164,6 +193,28 @@ def upload(path: str, title: str, description: str, tags: list[str]) -> str:
         if is_quota_error(e):
             raise QuotaExceeded(str(e)[:500]) from e
         raise
+    except RefreshError as e:  # jeton rafraîchi pendant l'envoi
+        if _is_revoked(e):
+            raise _mark_expired(e) from e
+        raise
+
+
+def requeue_auth_failures() -> int:
+    """Après reconnexion : les envois abandonnés à cause de l'accès expiré repartent en file."""
+    from sqlmodel import select
+
+    from .. import db
+    from ..models import Post
+
+    n = 0
+    with db.session() as s:
+        for p in s.exec(select(Post).where(Post.platform == "youtube", Post.status == "failed")).all():
+            if "invalid_grant" in (p.error or "") or "expiré" in (p.error or ""):
+                p.status, p.attempts, p.error = "pending", 0, ""
+                s.add(p)
+                n += 1
+        s.commit()
+    return n
 
 
 def _upload(path: str, title: str, description: str, tags: list[str]) -> str:

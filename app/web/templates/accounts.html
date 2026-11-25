@@ -2,7 +2,11 @@
 {% with next="/accounts" %}{% include "_platforms.html" %}{% endwith %}
 <div class="card">
   <h3>YouTube Shorts</h3>
-  {% if accounts.youtube.connected %}
+  {% if accounts.youtube.connected and accounts.youtube.expired %}
+    <p class="err">Accès expiré ({{ accounts.youtube.account }}) : les envois YouTube sont en pause, les clips restent en file.</p>
+    <a class="btn" href="/auth/youtube">Reconnecter ma chaîne YouTube</a>
+    <p class="mut">Pour que ça n'expire plus chaque semaine : dans Google Cloud, « Écran de consentement OAuth » → « Publier l'application » (passer de « Test » à « En production »).</p>
+  {% elif accounts.youtube.connected %}
     <p class="ok">Connecté : {{ accounts.youtube.account }}</p>
     <form method="post" action="/accounts/youtube/disconnect"><button class="sec">Déconnecter</button></form>
   {% elif accounts.youtube.configured %}

@@ -103,6 +103,8 @@ def fetch_stats() -> int:
         mine = {p.remote_id: p for p in posts if p.platform == platform}
         if not mine or not configured() or creds.load(platform) is None:
             continue
+        if platform == "youtube" and youtube.expired():  # accès expiré : rien à relever avant reconnexion
+            continue
         try:
             found = fetch(list(mine))
         except Exception as e:

@@ -720,7 +720,7 @@ def plan(s) -> dict[str, dict]:
 
 def connected(platform: str) -> bool:
     if platform == "youtube":
-        return youtube.configured() and creds.load("youtube") is not None
+        return youtube.configured() and creds.load("youtube") is not None and not youtube.expired()
     return tiktok.configured() and creds.load("tiktok") is not None
 
 
@@ -759,6 +759,12 @@ def publish_once(platform: str) -> bool:
         log.warning("Quota %s atteint, reprise le %s UTC : %s", platform, until, e)
         notify.send(f"⏸ Quota {platforms.LABELS[platform]} atteint : envois en pause jusqu'au "
                     f"{local:%d/%m à %H:%M}. {waiting + 1} clip(s) en file, à poster à la main si besoin.")
+    except youtube.AuthExpired as e:
+        # accès Google expiré : rien n'est perdu, les envois YouTube attendent la reconnexion (un seul message)
+        remote, err, status, quota_hit = "", "", "pending", True
+        log.warning("YouTube : %s", e)
+        notify.send("🔑 YouTube : l'accès à ta chaîne a expiré. Reconnecte-la dans Comptes "
+                    f"({get_settings().public_url.rstrip('/')}/accounts). Les clips restent en file en attendant.")
     except Exception as e:
         log.exception("Publication %s échouée", platform)
         remote, err = "", str(e)[:1000]
