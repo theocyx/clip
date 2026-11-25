@@ -5,6 +5,7 @@ import logging
 import os
 from datetime import date
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -21,6 +22,38 @@ ANALYTICS_SCOPE = SCOPES[2]
 # Google peut accorder moins de droits que demandés (cases décochées) : ne pas faire échouer la connexion.
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 TOKEN_URI = "https://oauth2.googleapis.com/token"
+AUTH_ERROR_KEY = "youtube_auth_error"
+
+
+class AuthExpired(RuntimeError):
+    """Jeton YouTube expiré ou révoqué : il faut reconnecter la chaîne dans l'interface (Comptes).
+
+    Cas typique : appli Google Cloud restée en mode « Test », dont les jetons expirent au bout de 7 jours."""
+
+
+def auth_error() -> str:
+    """Raison de la dernière connexion refusée par Google ("" = connexion valide)."""
+    try:
+        from .. import platforms
+        return platforms._get(AUTH_ERROR_KEY) or ""
+    except Exception:
+        return ""
+
+
+def _set_auth_error(msg: str | None) -> None:
+    from .. import platforms
+    platforms._put(AUTH_ERROR_KEY, msg)
+
+
+def _expired(e: Exception) -> AuthExpired:
+    msg = str(e)[:300]
+    _set_auth_error(msg or "jeton refusé")
+    return AuthExpired(msg)
+
+
+def is_auth_error(e: Exception) -> bool:
+    """Google refuse définitivement le jeton (invalid_grant) : inutile de réessayer avant une reconnexion."""
+    return isinstance(e, RefreshError) and "invalid_grant" in str(e)
 
 
 def redirect_uri() -> str:
@@ -61,6 +94,7 @@ def finish_auth(code: str, state: str, code_verifier: str | None = None) -> None
         pass
     scopes = list(getattr(c, "granted_scopes", None) or c.scopes or SCOPES)
     creds.save("youtube", {"token": c.token, "refresh_token": c.refresh_token, "scopes": scopes}, account=name)
+    _set_auth_error(None)
 
 
 def _credentials() -> Credentials:
@@ -72,7 +106,12 @@ def _credentials() -> Credentials:
     c = Credentials(data.get("token"), refresh_token=data.get("refresh_token"), token_uri=TOKEN_URI,
                     client_id=s.youtube_client_id, client_secret=s.youtube_client_secret, scopes=data.get("scopes"))
     if not c.valid:
-        c.refresh(Request())
+        try:
+            c.refresh(Request())
+        except RefreshError as e:
+            if is_auth_error(e):
+                raise _expired(e) from e
+            raise
         creds.save("youtube", {**data, "token": c.token, "refresh_token": c.refresh_token})
     return c
 
@@ -85,12 +124,20 @@ def stats(video_ids: list[str]) -> dict[str, dict]:
     """Vues, likes, commentaires (+ rétention si l'accès « statistiques » a été accordé)."""
     if not video_ids:
         return {}
+    if auth_error():
+        raise AuthExpired("Connexion YouTube expirée : reconnecte la chaîne")
     c = _credentials()
     yt = build("youtube", "v3", credentials=c, cache_discovery=False)
     out: dict[str, dict] = {}
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i:i + 50]
-        for item in yt.videos().list(part="statistics", id=",".join(batch)).execute().get("items", []):
+        try:
+            items = yt.videos().list(part="statistics", id=",".join(batch)).execute().get("items", [])
+        except RefreshError as e:
+            if is_auth_error(e):
+                raise _expired(e) from e
+            raise
+        for item in items:
             st = item.get("statistics", {})
             out[item["id"]] = {"views": int(st.get("viewCount", 0)), "likes": int(st.get("likeCount", 0)),
                                "comments": int(st.get("commentCount", 0))}
@@ -163,6 +210,10 @@ def upload(path: str, title: str, description: str, tags: list[str]) -> str:
     except HttpError as e:
         if is_quota_error(e):
             raise QuotaExceeded(str(e)[:500]) from e
+        raise
+    except RefreshError as e:
+        if is_auth_error(e):
+            raise _expired(e) from e
         raise
 
 

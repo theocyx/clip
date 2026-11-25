@@ -51,6 +51,7 @@ Pour 1 h de vidéo : transcription ≈ 15-25 min (`WHISPER_MODEL=small`), IA ≈
 2. « Écran de consentement OAuth » : type *Externe*, ajoute ton adresse comme utilisateur test.
 3. « Identifiants » → *ID client OAuth* → *Application Web*. URI de redirection : `https://<ton domaine>/auth/youtube/callback`.
 4. Copie l'ID et le secret dans `.env` (`YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`), redémarre (`docker compose up -d`), puis **Comptes → Connecter ma chaîne YouTube**.
+5. Une fois connecté, repasse sur « Écran de consentement OAuth » et clique **Publier l'application** (mode *Production*). En mode *Test*, Google révoque la connexion au bout de **7 jours** : les envois s'arrêtent (Clip met alors la file en pause, prévient sur Discord et affiche « connexion expirée » dans Comptes ; il suffit de reconnecter). L'avertissement « appli non validée » à la connexion est normal : clique *Paramètres avancés → Accéder à l'application*.
 
 ⚠️ Tant que le projet Google n'a pas passé l'[audit de l'API](https://support.google.com/youtube/contact/yt_api_form), Google force les vidéos envoyées en **privé**. Le quota gratuit permet environ 6 envois par jour.
 

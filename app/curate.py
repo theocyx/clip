@@ -114,7 +114,8 @@ def polish(clip: Clip, info: dict, recent: list[str], guidance: str) -> dict | N
     note, title, question = res
     out = {**info, "polished": True, "polish_score": note, "title_before": base}
     title = engage.tidy_title(title)
-    if title and not engage.too_close(title, "", recent) and not engage.bad_title(title):
+    if title and not engage.too_close(title, "", recent) and not engage.bad_title(title) \
+            and not engage.looks_english(title):
         out["polished_title"] = title
     q = engage.clean_question(question) if question else ""
     if q and not info.get("question"):  # la question déjà incrustée en fin de vidéo reste celle de la légende
@@ -168,7 +169,10 @@ def run() -> dict:
                         log.info("Titre amélioré : « %s » → « %s »", c.title, new_title)
                         c.title = (new_title + c.title[len(_PART.sub("", c.title)):])[:100]
                         s.add(c)
-                    clip = c
+                    # écrit tout de suite : sinon la base reste verrouillée pendant les appels suivants à l'IA
+                    # (« database is locked » ailleurs dans le worker, qui avait arrêté l'enregistrement des lives)
+                    s.commit()
+                    clip = s.get(Clip, clip.id)
                     out["polished"] += 1
             if not forced:
                 why = reason(clip, video, info, kw, bar, floor)
@@ -176,6 +180,7 @@ def run() -> dict:
                     p = s.get(Post, post.id)
                     p.status, p.error = "cancelled", f"Retiré : {why}"
                     s.add(p)
+                    s.commit()
                     out["cancelled"] += 1
                     continue
             if clip.id in done_titles:
@@ -186,6 +191,8 @@ def run() -> dict:
                 log.info("Titre corrigé : « %s » → « %s »", c.title, new)
                 c.title = new
                 s.add(c)
+                s.commit()
+                c = s.get(Clip, clip.id)
                 out["retitled"] += 1
             done_titles[clip.id] = c.title
             recent.insert(0, _PART.sub("", c.title))

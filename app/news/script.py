@@ -89,7 +89,7 @@ Faits disponibles :
 Le script est trop court. Écris la SUITE : {n} nouvelles phrases (8 à 20 mots chacune) qui se placent avant la
 question finale et apportent d'AUTRES faits de l'article pas encore racontés (contexte, détails, déroulé,
 conséquences, réactions, ce qu'on ignore encore). Même ton, aucune répétition, UNIQUEMENT des faits présents
-ci-dessus (aucun chiffre, nom ni date inventé).
+ci-dessus (aucun chiffre, nom ni date inventé). Tout en français (sauf "visual", en anglais).
 Réponds UNIQUEMENT en JSON : {{"sentences": [{{"text": "...", "visual": "...", "title": "...", "chapter": "...", "place": ""}}]}}"""
 
 # ---------- écriture en 3 étapes (meilleur récit qu'en une seule réponse JSON) ----------
@@ -140,7 +140,7 @@ Structure obligatoire :
 5. Ce qui reste inexpliqué aujourd'hui (une théorie est présentée comme une théorie).
 6. Une question au spectateur.
 
-Règles : présent de narration, phrases courtes (6 à 18 mots) mais complètes, une idée par phrase, mots simples
+Règles : texte en français (même si les faits sont en anglais), présent de narration, phrases courtes (6 à 18 mots) mais complètes, une idée par phrase, mots simples
 et images fortes, suspense sans exagérer, aucun humour sur un drame, pas de liste ni de titre ni d'emoji ni de
 guillemets, pas d'intro du genre « aujourd'hui je vais vous raconter ». Uniquement les faits ci-dessus, nombres
 en chiffres. Réponds avec le texte seul, en un paragraphe."""
@@ -149,13 +149,14 @@ META_PROMPT = """Voici les phrases numérotées d'une vidéo TikTok {what} sur �
 {numbered}
 
 Pour CHAQUE phrase, donne : "visual" = 2 à 4 mots-clés EN ANGLAIS pour une image d'illustration générique
-(ex. "dark corridor", "train station crowd"), jamais une personne célèbre ni un logo ; "title" = 2 à 4 mots
-affichés en gros (« PIÈCE SECRÈTE ») ; "chapter" = 1 ou 2 mots pour l'étape (« LES FAITS », « CONTEXTE »,
-« LE SECRET », « ET APRÈS ? ») ; "place" = le lieu précis cité dans la phrase (« Lyon, France »), sinon "".
-Puis : "title" de la vidéo (40 à 70 caractères, intrigant, jamais trompeur), "hook" (4 à 8 mots affichés en
-haut, terminés par 1 emoji), "topic" (1 à 3 mots), "place" (lieu principal), "answers" (2 réponses courtes à la
-question finale), "hashtags" (3 à 5), "score" (1 à 10 : intérêt pour le grand public ; promo ou sujet trop
-pointu : 3 maximum).
+(ex. "dark corridor", "train station crowd"), jamais une personne célèbre ni un logo ; "title" = 2 à 4 mots EN
+FRANÇAIS affichés en gros, tirés de la phrase ; "chapter" = 1 ou 2 mots en français pour l'étape (« LES FAITS »,
+« CONTEXTE », « ET APRÈS ? ») ; "place" = le lieu précis cité dans la phrase (« Lyon, France »), sinon "".
+Puis, TOUT EN FRANÇAIS (seuls les "visual" sont en anglais) : "title" de la vidéo (40 à 70 caractères, en
+français, intrigant, jamais trompeur), "hook" (4 à 8 mots en français affichés en haut, terminés par 1 emoji),
+"topic" (1 à 3 mots), "place" (lieu principal), "answers" (2 réponses courtes en français à la question finale),
+"hashtags" (3 à 5, en français), "score" (1 à 10 : intérêt pour le grand public ; promo ou sujet trop pointu :
+3 maximum).
 Réponds UNIQUEMENT en JSON : {{"score": 7, "title": "...", "hook": "...", "topic": "...", "place": "...", "answers": ["...", "..."], "hashtags": ["..."], "sentences": [{{"n": 1, "visual": "...", "title": "...", "chapter": "...", "place": ""}}]}}"""
 
 _LABEL = re.compile(r"^\s*(?:(?:\d+[.)]\s*|[-•*]\s*|(?:accroche|contexte|conclusion|question|ouverture|"
@@ -359,6 +360,66 @@ def _bad(text: str, facts: str) -> bool:
     return bool(invented_numbers(text, facts))
 
 
+FRENCH_TITLE_PROMPT = """Écris EN FRANÇAIS le titre d'une vidéo TikTok / YouTube Shorts (40 à 70 caractères,
+intrigant, jamais trompeur, sans hashtag ni guillemets). Titre proposé (à traduire et améliorer) : « {title} »
+Début du texte de la vidéo : {text}
+Réponds avec le titre seul, en français."""
+
+
+def french_title(title: str, text: str, facts: str) -> str:
+    """Titre réécrit en français quand le modèle a répondu en anglais ("" si l'IA n'y arrive pas)."""
+    s = get_settings()
+    try:
+        raw = llm._ask_ollama(FRENCH_TITLE_PROMPT.format(title=title, text=text[:900]), timeout=s.news_llm_timeout,
+                              max_tokens=60, json_mode=False, temperature=0.3)
+    except Exception as e:
+        log.info("Script : traduction du titre impossible (%s)", e)
+        return ""
+    line = next((ln for ln in (raw or "").splitlines() if ln.strip()), "")
+    line = re.sub(r"^\s*(titre|title)\s*:\s*", "", line, flags=re.I)
+    t = engage.tidy_title(hooks.strip_emojis(line).strip().strip('"«»'))[:90]
+    if len(t) >= 12 and not engage.looks_english(t) and not _bad(t, facts):
+        return t
+    return ""
+
+
+def frenchify(sc: Script, facts: str, fallback_title: str = "") -> list[str]:
+    """Le petit modèle répond parfois en anglais (« The Enigmatic Prisoner ») : titre réécrit en français,
+    accroche, mots-clés à l'écran et réponses en anglais effacés (remplacés plus tard). Renvoie ce qui a changé."""
+    changed = []
+    rows = sc.per_sentence()
+    keep = [r for r in rows if not engage.looks_english(r[0])]  # phrase lue en anglais par la voix française
+    if len(keep) < len(rows):
+        changed.append(f"{len(rows) - len(keep)} phrase(s)")
+        sc.set_sentences(keep)
+        if sc.question and engage.looks_english(sc.question):
+            last = sc.sentences[-1] if sc.sentences else ""
+            sc.question = engage.clean_question(last) if last.endswith("?") else ""
+    if any(engage.looks_english(c) for c in sc.chapters):
+        sc.chapters = ["" if engage.looks_english(c) else c for c in sc.chapters]
+    if sc.topic and engage.looks_english(sc.topic):
+        sc.topic = ""
+    if sc.title and engage.looks_english(sc.title):
+        new = french_title(sc.title, sc.text, facts)
+        if not new and fallback_title and len(fallback_title) <= 90 and not engage.looks_english(fallback_title) \
+                and not _bad(fallback_title, facts):
+            new = engage.tidy_title(fallback_title)
+        log.info("Script : titre en anglais « %s » → « %s »", sc.title, new or "(1re phrase)")
+        sc.title = new
+        changed.append("titre")
+    sc.hook = re.sub(r"\s{2,}", " ", re.sub(r":[a-z_]+:|#\w+", "", sc.hook or "")).strip()  # « :eyes: #Gévaudan »
+    if sc.hook and (engage.looks_english(sc.hook) or not re.search(r"[A-Za-zÀ-ÿ]{3}", sc.hook)):
+        sc.hook = ""  # le titre est affiché à la place
+        changed.append("accroche")
+    if any(engage.looks_english(t) for t in sc.titles):
+        sc.titles = ["" if engage.looks_english(t) else t for t in sc.titles]
+        changed.append("mots-clés à l'écran")
+    if any(engage.looks_english(a) for a in sc.answers):
+        sc.answers = [a for a in sc.answers if not engage.looks_english(a)]
+        changed.append("réponses")
+    return changed
+
+
 def sanitize(sc: Script, facts: str, fallback_title: str = "") -> list[str]:
     """Retire du script ce qui contient un chiffre absent de l'article (le petit modèle en invente parfois)
     au lieu de jeter tout le script. Renvoie ce qui a été retiré (pour le journal)."""
@@ -372,6 +433,7 @@ def sanitize(sc: Script, facts: str, fallback_title: str = "") -> list[str]:
     if sc.title and _bad(sc.title, facts):
         removed.append("titre")
         sc.title = engage.tidy_title(fallback_title)[:90] if fallback_title and not _bad(fallback_title, facts) else ""
+    removed += [f"{x} en anglais" for x in frenchify(sc, facts, fallback_title)]
     if not sc.title and sc.sentences:  # pas de titre utilisable : début de la 1re phrase
         sc.title = engage.tidy_title(" ".join(sc.sentences[0].split()[:10]))[:90]
     if sc.hook and _bad(sc.hook, facts):
@@ -421,7 +483,7 @@ def extend(sc: Script, title: str, facts: str, source: str, kind: str = "news", 
     tail = [rows.pop()] if rows and rows[-1][0].rstrip().endswith("?") else []
     added = 0
     for r in more.per_sentence():
-        if _bad(r[0], facts) or r[0].rstrip().endswith("?"):
+        if _bad(r[0], facts) or r[0].rstrip().endswith("?") or engage.looks_english(r[0]):
             continue
         if any(engage.similarity(r[0], old[0]) >= 0.6 for old in rows):
             continue
@@ -485,7 +547,7 @@ def write(title: str, facts: str, source: str, kind: str = "news") -> Script | N
         if sc is not None:
             removed = sanitize(sc, facts_all, title)
             if removed:
-                log.info("Script : retiré (chiffre absent de l'article) : %s", ", ".join(removed))
+                log.info("Script : retiré ou corrigé (chiffre absent de l'article, anglais) : %s", ", ".join(removed))
             issues = problems(sc, facts_all, kind)
             if not issues or all("trop court" in x for x in issues) and len(sc.sentences) >= 3:
                 grow(sc, title, facts_all, source, kind)
@@ -506,7 +568,7 @@ def write(title: str, facts: str, source: str, kind: str = "news") -> Script | N
             continue
         removed = sanitize(sc, facts_all, title)
         if removed:
-            log.info("Script d'actu : retiré (chiffre absent de l'article) : %s", ", ".join(removed))
+            log.info("Script d'actu : retiré ou corrigé (chiffre absent de l'article, anglais) : %s", ", ".join(removed))
         last = problems(sc, facts_all, kind)
         if not last:
             grow(sc, title, facts_all, source, kind)

@@ -283,7 +283,7 @@ def gta6_mode(mode: str = Form(...)):
 def accounts_status() -> dict:
     return {
         "youtube": {"configured": youtube.configured(), "account": creds.account("youtube"),
-                    "connected": creds.load("youtube") is not None},
+                    "connected": creds.load("youtube") is not None, "expired": youtube.auth_error()},
         "tiktok": {"configured": tiktok.configured(), "account": creds.account("tiktok"),
                    "connected": creds.load("tiktok") is not None},
     }
@@ -752,6 +752,9 @@ def auth_youtube_cb(code: str, state: str):
     if not st or st["platform"] != "youtube":
         raise HTTPException(400, "État OAuth invalide, recommence la connexion")
     youtube.finish_auth(code, state, st.get("verifier"))
+    n = worker.requeue_auth_failures()  # envois abandonnés pendant que le jeton était expiré
+    if n:
+        log.info("YouTube reconnecté : %d envoi(s) remis en file", n)
     return back("/accounts")
 
 

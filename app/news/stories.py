@@ -92,8 +92,10 @@ def wiki(topic: str, lang: str = "fr") -> dict | None:
 
 
 def fetch(topic: str) -> feeds.Item | None:
-    """Faits de l'histoire : article français, ou anglais s'il est bien plus fourni (l'IA traduit)."""
+    """Faits de l'histoire : article français, ou anglais s'il est bien plus fourni (l'IA traduit). Le titre reste
+    celui de l'article français, sinon le sujet tel qu'écrit dans la liste (en français)."""
     fr = wiki(topic, "fr")
+    title = fr["title"] if fr else topic  # titre toujours en français (le sujet), même si les faits sont anglais
     if fr is None or len(fr["text"]) < 2500:
         en = wiki(topic, "en")
         if en and len(en["text"]) > (len(fr["text"]) if fr else 0) * 1.5:
@@ -102,7 +104,7 @@ def fetch(topic: str) -> feeds.Item | None:
         log.info("Histoire : pas assez de faits sur « %s »", topic)
         return None
     source = "Wikipédia" if fr["lang"] == "fr" else "Wikipedia (en)"
-    return feeds.Item(title=fr["title"], link=fr["url"], summary=fr["text"], source=source, kind="story",
+    return feeds.Item(title=title, link=fr["url"], summary=fr["text"], source=source, kind="story",
                       topic=topic)
 
 

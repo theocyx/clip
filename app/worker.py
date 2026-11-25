@@ -237,17 +237,24 @@ def finish_recordings() -> None:
             notify.error(f"Enregistrement du live {vid} vide ou échoué")
 
 
+def record_once() -> None:
+    if gta6.active():
+        stop_off_category()
+        cut_chunks()
+    finish_recordings()
+    with db.session() as s:
+        lives = s.exec(select(Video).where(Video.is_live == True, Video.status == "new")  # noqa: E712
+                       .order_by(col(Video.id))).all()
+    for v in lives_to_start(lives):
+        start_recording(v)
+
+
 def record_loop():
     while not stop.is_set():
-        if gta6.active():
-            stop_off_category()
-            cut_chunks()
-        finish_recordings()
-        with db.session() as s:
-            lives = s.exec(select(Video).where(Video.is_live == True, Video.status == "new")  # noqa: E712
-                           .order_by(col(Video.id))).all()
-        for v in lives_to_start(lives):
-            start_recording(v)
+        try:
+            record_once()
+        except Exception:  # ex. base momentanément verrouillée : on réessaie au tour suivant
+            log.exception("Tour d'enregistrement des lives en erreur")
         stop.wait(15)
 
 
@@ -352,6 +359,11 @@ def download_loop():
             process.delete_video_files(v.id)
         except Exception as e:
             if is_skipped(v.id):
+                continue
+            if sources.subscriber_only(str(e)):  # VOD réservée aux abonnés : impossible sans compte, pas une panne
+                log.info("« %s » ignorée : vidéo réservée aux abonnés", v.title)
+                process.set_status(v.id, "skipped", error="Vidéo réservée aux abonnés")
+                process.delete_video_files(v.id)
                 continue
             log.exception("Téléchargement de la vidéo %d échoué", v.id)
             process.set_status(v.id, "failed", error=str(e)[:1000])
@@ -720,8 +732,28 @@ def plan(s) -> dict[str, dict]:
 
 def connected(platform: str) -> bool:
     if platform == "youtube":
-        return youtube.configured() and creds.load("youtube") is not None
+        return youtube.configured() and creds.load("youtube") is not None and not youtube.auth_error()
     return tiktok.configured() and creds.load("tiktok") is not None
+
+
+AUTH_EXPIRED_MSG = ("🔑 YouTube déconnecté : Google a refusé le jeton (expiré ou révoqué). Les envois sont en pause, "
+                    "rien n'est perdu. Reconnecte la chaîne dans Comptes → « Connecter ma chaîne YouTube ». "
+                    "Pour que ça ne se reproduise pas tous les 7 jours : Google Cloud → Écran de consentement OAuth "
+                    "→ « Publier l'application » (mode Production).")
+
+
+def requeue_auth_failures() -> int:
+    """Après une reconnexion YouTube : les envois abandonnés à cause du jeton expiré repartent en file
+    (le tri de la file retire ensuite ceux qui sont trop vieux)."""
+    n = 0
+    with db.session() as s:
+        for p in s.exec(select(Post).where(Post.platform == "youtube", Post.status == "failed")).all():
+            if "invalid_grant" in (p.error or ""):
+                p.status, p.error, p.attempts = "pending", "", 0
+                s.add(p)
+                n += 1
+        s.commit()
+    return n
 
 
 def publish_once(platform: str) -> bool:
@@ -759,6 +791,11 @@ def publish_once(platform: str) -> bool:
         log.warning("Quota %s atteint, reprise le %s UTC : %s", platform, until, e)
         notify.send(f"⏸ Quota {platforms.LABELS[platform]} atteint : envois en pause jusqu'au "
                     f"{local:%d/%m à %H:%M}. {waiting + 1} clip(s) en file, à poster à la main si besoin.")
+    except youtube.AuthExpired as e:
+        # rien n'est perdu : le clip reste en file et repartira dès que la chaîne sera reconnectée
+        remote, err, status, quota_hit = "", "", "pending", True
+        log.error("Publication YouTube en pause : connexion expirée ou révoquée (%s)", e)
+        notify.send(AUTH_EXPIRED_MSG)
     except Exception as e:
         log.exception("Publication %s échouée", platform)
         remote, err = "", str(e)[:1000]
@@ -878,6 +915,20 @@ def wait_for(threads: list[threading.Thread], recs: list[subprocess.Popen], time
             p.kill()
 
 
+def supervised(f, retry_s: float = 30):
+    """Relance la tâche si elle s'arrête sur une erreur imprévue (une fin normale, à l'arrêt, n'est pas relancée)."""
+    def run():
+        while not stop.is_set():
+            try:
+                f()
+                return
+            except Exception:
+                log.exception("Tâche %s plantée, relance dans %d s", f.__name__, retry_s)
+                stop.wait(retry_s)
+    run.__name__ = f.__name__
+    return run
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     db.get_engine()
@@ -885,7 +936,7 @@ def main():
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
     crashed = health.started("worker")
-    threads = [threading.Thread(target=f, daemon=True, name=f.__name__)
+    threads = [threading.Thread(target=supervised(f), daemon=True, name=f.__name__)
                for f in (poll_loop, record_loop, download_loop, process_loop, publish_loop, stats_loop, maintenance_loop,
                          discover_loop, news_loop)]
     for t in threads:

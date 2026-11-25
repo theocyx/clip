@@ -177,6 +177,12 @@ def _read_progress(stream, tracker: DownloadProgress) -> None:
         tracker.feed(line)
 
 
+def subscriber_only(error: str) -> bool:
+    """Erreur yt-dlp d'une vidéo réservée aux abonnés (VOD Twitch sub-only…) : inaccessible sans compte."""
+    e = (error or "").lower()
+    return "subscriber-only" in e or "subscriber only" in e or "members-only" in e or "members only" in e
+
+
 def download(url: str, out_dir: Path, should_stop=None, on_progress=None) -> Path:
     """Télécharge une vidéo. `should_stop()` est vérifié toutes les 2 s pour pouvoir l'annuler.
 
