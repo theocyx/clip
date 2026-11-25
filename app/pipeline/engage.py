@@ -121,7 +121,46 @@ def bad_title(title: str) -> str:
         return "vulgaire"
     if _MISLEADING.search(title or ""):
         return "trompeur ou vide"
+    if has_placeholder(title):
+        return "« X » au lieu du nom"
+    if copies_example(title):
+        return "exemple des consignes recopié"
     return ""
+
+
+# Le petit modèle recopie parfois un exemple des consignes tel quel, « X » compris
+# (« X règle ça à sa façon GTA 6 » affiché sur une vidéo le 25/11).
+_PLACEHOLDER = re.compile(r"(?<![\w'’.-])(?<!Mr )(?<!Mr\. )(?<!Malcolm )X(?![\w'’-])")
+# exemples des anciennes consignes, que le modèle recopiait (les consignes n'en donnent plus)
+PROMPT_EXAMPLES = ["refait sa maison pour séduire Lucia dans GTA 6", "se fait rentrer dedans et règle ça à sa façon"]
+
+
+def has_placeholder(text: str) -> bool:
+    """« X » tout seul (nom de l'exemple) au lieu du vrai nom du streamer."""
+    return bool(_PLACEHOLDER.search(text or ""))
+
+
+def copies_example(text: str) -> bool:
+    """Titre ou accroche qui reprend un bout d'exemple des consignes (2 mots forts d'affilée ou plus)."""
+    generic = {"gta", "6", "vi"}
+    wt = [w for w in words(text) if w not in generic]
+    for ex in PROMPT_EXAMPLES:
+        we = [w for w in words(ex) if w not in generic]
+        m = difflib.SequenceMatcher(None, wt, we, autojunk=False).find_longest_match(0, len(wt), 0, len(we))
+        if m.size >= 2:
+            return True
+    return False
+
+
+def fill_name(text: str, streamer: str = "") -> str:
+    """Titre ou accroche de l'IA sans « X » : remplacé par le nom du streamer s'il est connu.
+    "" si le texte est inutilisable (nom inconnu, ou exemple recopié) : on prend alors le repli habituel."""
+    t = (text or "").strip()
+    if has_placeholder(t):
+        if not streamer.strip():
+            return ""
+        t = _PLACEHOLDER.sub(streamer.strip(), t)
+    return "" if copies_example(t) else t
 
 
 # Petits mots qui trahissent une langue (le modèle local répond parfois en anglais malgré la consigne)

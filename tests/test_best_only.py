@@ -154,3 +154,12 @@ def test_bad_source_gives_zero_clips(monkeypatch, tmp_path):
     assert process.process(v.id) == 0
     with db.session() as s:
         assert s.get(Video, v.id).status == "done"
+
+
+def test_queue_drops_clip_with_placeholder_hook():
+    from app import curate
+    from app.models import Clip, Video
+    v = Video(key="x:1", url="u", title="GTA 6 RP", status="done")
+    c = Clip(video_id=1, group="g", start=0, end=30, score=0.9, title="Squeezie règle un conflit dans GTA 6")
+    assert "« X »" in curate.reason(c, v, {"hook": "X règle ça à sa façon GTA 6 🤯", "llm": 9})
+    assert "« X »" not in curate.reason(c, v, {"hook": "Squeezie règle un conflit 🤯", "llm": 9})

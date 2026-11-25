@@ -137,3 +137,17 @@ def test_cmd_with_cuts_inputs(tmp_path):
                            cuts=[(0, 4), (5, 10)], bar=True)
     vf = cmd[cmd.index("-filter_complex") + 1]
     assert "concat=n=2" in vf and "[2:v]overlay" in vf and "W*t/9.00" in vf and cmd.count("-i") == 3
+
+
+def test_placeholder_x_replaced_by_streamer_name():
+    """« X règle ça à sa façon GTA 6 » affiché sur une vidéo : le « X » des exemples recopié par l'IA."""
+    from app.pipeline import engage, llm
+    assert "X " not in llm.PROMPT and "règle ça à sa façon" not in llm.PROMPT
+    assert engage.has_placeholder("X règle ça à sa façon GTA 6 🤯")
+    assert not engage.has_placeholder("Xbox : GTA 6 tourne enfin") and not engage.has_placeholder("Mr X débarque")
+    assert engage.fill_name("X vole un avion dans GTA 6 😱", "Squeezie") == "Squeezie vole un avion dans GTA 6 😱"
+    assert engage.fill_name("X vole un avion dans GTA 6", "") == ""  # nom inconnu : repli habituel
+    assert engage.fill_name("Squeezie règle ça à sa façon GTA 6", "Squeezie") == ""  # exemple recopié
+    assert engage.fill_name("Inoxtag se fait arrêter par la police", "Inoxtag") == "Inoxtag se fait arrêter par la police"
+    assert engage.bad_title("X règle ça à sa façon GTA 6")
+    assert not engage.fix_title("X règle ça à sa façon GTA 6", "Live GTA 6", [], "il vole une voiture de police").startswith("X ")

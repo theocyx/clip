@@ -53,6 +53,8 @@ def reason(clip: Clip, video: Video, info: dict, keywords: str = "", bar: float 
     cfg = get_settings()
     if info.get("kind") == "news":  # vidéo d'actu : sujet et script déjà notés à la création
         return news_reason(clip, info)
+    if engage.has_placeholder(info.get("hook") or info.get("title", "")):
+        return "Accroche ratée incrustée dans la vidéo (« X » au lieu du nom du streamer)"
     if not cfg.allow_parts and clip.part_count > 1:
         return "Clip en plusieurs parties (la suite n'est presque jamais vue en Shorts)"
     floor = cfg.publish_min_llm if floor is None else floor
