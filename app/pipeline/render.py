@@ -39,20 +39,30 @@ def _enable(windows) -> str:
 def _punch(label_in: str, label_out: str, w: int, h: int, windows, zoom: float = 1.15) -> str:
     """Zoom rapide (« punch-in ») sur `windows` : copie recadrée au centre puis agrandie, posée par-dessus."""
     return (f"{label_in}split=2[{label_out}a][{label_out}b];"
-            f"[{label_out}b]crop=trunc(iw/{zoom}/2)*2:trunc(ih/{zoom}/2)*2,scale={w}:{h},setsar=1[{label_out}z];"
+            f"[{label_out}b]crop=trunc(iw/{zoom}/2)*2:trunc(ih/{zoom}/2)*2,scale={w}:{h}:flags=lanczos,setsar=1"
+            f"[{label_out}z];"
             f"[{label_out}a][{label_out}z]overlay=0:0:enable='{_enable(windows)}'")
+
+
+def sharpen(amount: float | None = None) -> str:
+    """Filtre de netteté après un agrandissement (facecam, jeu recadré) : l'image agrandie paraît floue sinon.
+    "" si coupé (SHARPEN=0). Seule la luminance est accentuée (pas de bruit coloré)."""
+    a = get_settings().sharpen if amount is None else amount
+    return f",unsharp=5:5:{a:.2f}:5:5:0" if a > 0 else ""
 
 
 def layout_filter(cam=None, cam_h: int = 0, src: str = "[0:v]", punch=None) -> str:
     """punch : fenêtres (début, fin) en temps du clip final où l'on zoome sur la réaction
-    (sur la facecam en format split, sur toute l'image sinon)."""
+    (sur la facecam en format split, sur toute l'image sinon).
+    Agrandissements en lanczos (plus net que le bicubique par défaut), fond flou en bilinéaire rapide."""
     if cam is not None:
         cam = _inset(cam)
     if cam is None:
         f = (
             f"{src}split=2[a][b];"
-            "[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:2,eq=brightness=-0.08[bg];"
-            "[b]scale=1080:-2[fg];"
+            "[a]scale=1080:1920:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=1080:1920,"
+            "boxblur=25:2,eq=brightness=-0.08[bg];"
+            "[b]scale=1080:-2:flags=lanczos[fg];"
             "[bg][fg]overlay=(W-w)/2:(H-h)/2,fps=30"
         )
         if punch:
@@ -71,13 +81,15 @@ def layout_filter(cam=None, cam_h: int = 0, src: str = "[0:v]", punch=None) -> s
     top = (
         f"{src}split=2[a][b];"
         f"[a]crop=iw*{cam.w:.4f}:ih*{cam.h:.4f}:iw*{cam.x:.4f}:ih*{cam.y:.4f},"
-        f"scale={W}:{cam_h}:force_original_aspect_ratio=increase,crop={W}:{cam_h},setsar=1"
+        f"scale={W}:{cam_h}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{cam_h},setsar=1"
+        + sharpen()
     )
     if punch:  # le zoom se fait après fps=30 pour que t soit bien celui du clip final
         top += ",fps=30[top0];" + _punch("[top0]", "pz", W, cam_h, punch)
     return (
         top + "[top];"
-        f"[b]scale={W}:{game_h}:force_original_aspect_ratio=increase,crop={W}:{game_h}:{gx}:0,setsar=1[bot];"
+        f"[b]scale={W}:{game_h}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{game_h}:{gx}:0,setsar=1"
+        + sharpen(get_settings().sharpen * 0.6) + "[bot];"
         "[top][bot]vstack=inputs=2,fps=30"
     )
 
@@ -99,6 +111,20 @@ BAR_H = 10
 
 
 AUDIO = "loudnorm=I=-14:TP=-1.5:LRA=11"
+# Son du fichier envoyé : 48 kHz (fréquence recommandée par YouTube), AAC 192 kb/s
+AUDIO_ARGS = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
+# Couleurs déclarées en BT.709 (HD) : sans ça certains lecteurs supposent BT.601 et les couleurs virent
+COLOR_ARGS = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
+
+
+def video_args(codec: str) -> list[str]:
+    """Encodage du fichier envoyé. Les plateformes réencodent derrière : une image propre au départ
+    (qp plus bas qu'avant sur le GPU, qui était moins net que le CPU à réglage égal) donne une meilleure image
+    finale."""
+    s = get_settings()
+    if codec.endswith("_vaapi"):
+        return ["-c:v", codec, "-qp", str(max(12, s.crf - 1))] + COLOR_ARGS
+    return ["-c:v", codec, "-preset", "veryfast", "-crf", str(s.crf), "-pix_fmt", "yuv420p"] + COLOR_ARGS
 _LOUD_KEYS = ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")
 
 
@@ -192,11 +218,8 @@ def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, cod
     else:
         cmd += ["-filter_complex", vf + "[v]",
                 "-map", "[v]", "-map", "0:a:0?"]
-    if codec.endswith("_vaapi"):
-        cmd += ["-c:v", codec, "-qp", str(s.crf + 2)]
-    else:
-        cmd += ["-c:v", codec, "-preset", "veryfast", "-crf", str(s.crf), "-pix_fmt", "yuv420p"]
-    cmd += ["-c:a", "aac", "-b:a", "160k", "-ar", "44100"] + ([] if n > 1 else ["-af", afilter])
+    cmd += video_args(codec)
+    cmd += AUDIO_ARGS + ([] if n > 1 else ["-af", afilter])
     cmd += ["-movflags", "+faststart", str(out)]
     return cmd
 
