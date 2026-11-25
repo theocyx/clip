@@ -89,7 +89,7 @@ Faits disponibles :
 Le script est trop court. Écris la SUITE : {n} nouvelles phrases (8 à 20 mots chacune) qui se placent avant la
 question finale et apportent d'AUTRES faits de l'article pas encore racontés (contexte, détails, déroulé,
 conséquences, réactions, ce qu'on ignore encore). Même ton, aucune répétition, UNIQUEMENT des faits présents
-ci-dessus (aucun chiffre, nom ni date inventé).
+ci-dessus (aucun chiffre, nom ni date inventé). Tout en français (sauf "visual", en anglais).
 Réponds UNIQUEMENT en JSON : {{"sentences": [{{"text": "...", "visual": "...", "title": "...", "chapter": "...", "place": ""}}]}}"""
 
 # ---------- écriture en 3 étapes (meilleur récit qu'en une seule réponse JSON) ----------
@@ -140,7 +140,7 @@ Structure obligatoire :
 5. Ce qui reste inexpliqué aujourd'hui (une théorie est présentée comme une théorie).
 6. Une question au spectateur.
 
-Règles : présent de narration, phrases courtes (6 à 18 mots) mais complètes, une idée par phrase, mots simples
+Règles : texte en français (même si les faits sont en anglais), présent de narration, phrases courtes (6 à 18 mots) mais complètes, une idée par phrase, mots simples
 et images fortes, suspense sans exagérer, aucun humour sur un drame, pas de liste ni de titre ni d'emoji ni de
 guillemets, pas d'intro du genre « aujourd'hui je vais vous raconter ». Uniquement les faits ci-dessus, nombres
 en chiffres. Réponds avec le texte seul, en un paragraphe."""
@@ -156,6 +156,7 @@ Puis : "title" de la vidéo (40 à 70 caractères, intrigant, jamais trompeur), 
 haut, terminés par 1 emoji), "topic" (1 à 3 mots), "place" (lieu principal), "answers" (2 réponses courtes à la
 question finale), "hashtags" (3 à 5), "score" (1 à 10 : intérêt pour le grand public ; promo ou sujet trop
 pointu : 3 maximum).
+Tout en FRANÇAIS (titre, accroche, mots à l'écran, chapitres, sujet, réponses, hashtags), sauf "visual" en anglais.
 Réponds UNIQUEMENT en JSON : {{"score": 7, "title": "...", "hook": "...", "topic": "...", "place": "...", "answers": ["...", "..."], "hashtags": ["..."], "sentences": [{{"n": 1, "visual": "...", "title": "...", "chapter": "...", "place": ""}}]}}"""
 
 _LABEL = re.compile(r"^\s*(?:(?:\d+[.)]\s*|[-•*]\s*|(?:accroche|contexte|conclusion|question|ouverture|"
@@ -377,7 +378,76 @@ def sanitize(sc: Script, facts: str, fallback_title: str = "") -> list[str]:
     if sc.hook and _bad(sc.hook, facts):
         removed.append("accroche")
         sc.hook = ""
+    removed += frenchify(sc, fallback_title)
     return removed
+
+
+# ---------- tout en français (le modèle local répond parfois en anglais, surtout si l'article est anglais) ----------
+
+_EN_WORDS = set("""the of and to in is was were are be been who what that this these those with for from by it its
+his her their they them has have had did does do not never nobody into about after before behind inside hidden
+truth mystery mysterious unexplained unsolved strange story beast how why when where which will would could
+should can just most world ever still you your we our my he she there here than then""".split())
+_FR_WORDS = set("""le la les de des du un une et est sont en dans qui que pour sur au aux par pas ne il elle ils elles
+son sa ses leur leurs ce cet cette ces où quand comment pourquoi jamais personne mystère histoire bête très plus
+mais ou avec sans été était être fait nous vous je tu on se lui y à là ça""".split())
+
+
+def looks_english(text: str) -> bool:
+    """Vrai si le texte a l'air écrit en anglais (mots-outils anglais plus nombreux que les mots français)."""
+    words = re.findall(r"[a-zà-öø-ÿ']+", (text or "").lower())
+    en = sum(w in _EN_WORDS for w in words)
+    fr = sum(w in _FR_WORDS for w in words)
+    return en >= 2 and en > fr
+
+
+TRANSLATE_PROMPT = """Traduis en français naturel ce {what} de vidéo TikTok, même sens et à peu près même longueur,
+sans guillemets ni hashtag : « {text} »
+Réponds UNIQUEMENT en JSON : {{"fr": "..."}}"""
+
+
+def to_french(text: str, what: str = "titre") -> str:
+    """Traduction par l'IA locale ; "" si elle échoue ou répond encore en anglais."""
+    s = get_settings()
+    try:
+        raw = llm._ask_ollama(TRANSLATE_PROMPT.format(what=what, text=text), timeout=min(180, s.news_llm_timeout),
+                              max_tokens=120, num_ctx=2048)
+        m = re.search(r"\{.*\}", raw or "", re.S)
+        fr = str((json.loads(m.group(0)) if m else {}).get("fr") or "").strip().strip('"«» ')
+    except Exception as e:
+        log.info("Traduction en français impossible (%s)", e)
+        return ""
+    return "" if not fr or looks_english(fr) else fr
+
+
+def frenchify(sc: Script, fallback_title: str = "") -> list[str]:
+    """Retire ou traduit ce qui est sorti en anglais : phrases lues, titre, accroche, mots à l'écran, chapitres,
+    sujet, réponses du quiz. Renvoie ce qui a été corrigé (pour le journal)."""
+    fixed = []
+    rows = sc.per_sentence()
+    keep = [r for r in rows if not looks_english(r[0])]
+    if len(keep) < len(rows):
+        fixed.append(f"{len(rows) - len(keep)} phrase(s) en anglais")
+    sc.set_sentences([(r[0], r[1], "" if looks_english(r[2]) else r[2], "" if looks_english(r[3]) else r[3], r[4])
+                      for r in keep])
+    if sc.question and looks_english(sc.question):
+        last = sc.sentences[-1] if sc.sentences else ""
+        sc.question = engage.clean_question(last) if last.endswith("?") else ""
+    if sc.title and looks_english(sc.title):
+        fixed.append("titre en anglais")
+        title = engage.tidy_title(to_french(sc.title))[:90]
+        if not title and fallback_title and not looks_english(fallback_title):
+            title = engage.tidy_title(fallback_title)[:90]
+        if not title and sc.sentences:
+            title = engage.tidy_title(" ".join(sc.sentences[0].split()[:10]))[:90]
+        sc.title = title
+    if sc.hook and looks_english(sc.hook):
+        fixed.append("accroche en anglais")
+        sc.hook = to_french(sc.hook, "texte d'accroche")[:70]
+    if sc.topic and looks_english(sc.topic):
+        sc.topic = ""
+    sc.answers = [a for a in sc.answers if not looks_english(a)]
+    return fixed
 
 
 WORDS_PER_SECOND = 2.6  # débit de la voix Piper à vitesse 1 (corrigé ensuite par la durée réelle mesurée)
@@ -421,7 +491,7 @@ def extend(sc: Script, title: str, facts: str, source: str, kind: str = "news", 
     tail = [rows.pop()] if rows and rows[-1][0].rstrip().endswith("?") else []
     added = 0
     for r in more.per_sentence():
-        if _bad(r[0], facts) or r[0].rstrip().endswith("?"):
+        if _bad(r[0], facts) or r[0].rstrip().endswith("?") or looks_english(r[0]):
             continue
         if any(engage.similarity(r[0], old[0]) >= 0.6 for old in rows):
             continue
