@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -219,6 +221,27 @@ def _valid_image(path: Path, min_side: int = 400) -> bool:
         return False
 
 
+# Pollinations sans clé n'accepte qu'une image à la fois, espacées d'environ 15 s (NEWS_AI_GAP) : au-delà il
+# répond « 402 Payment Required » (constaté le 25/11 : 1re image servie, les suivantes refusées dans la seconde).
+_poll_lock = threading.Lock()
+_poll_last = [0.0]
+
+
+def _pollinations(url: str, dest: Path, gap: float | None = None, sleep=time.sleep) -> Path | None:
+    """Téléchargement Pollinations espacé (une requête à la fois), avec un seul nouvel essai après un refus."""
+    gap = get_settings().news_ai_gap if gap is None else gap
+    with _poll_lock:
+        for attempt in range(2):
+            wait = _poll_last[0] + gap * (attempt + 1) - time.monotonic()
+            if wait > 0:
+                sleep(wait)
+            _poll_last[0] = time.monotonic()
+            p = _download(url, dest, max_mb=15)
+            if p:
+                return p
+    return None
+
+
 def ai_image(query: str, work: Path, used: set[str], kind: str = "news", seed: int = 0) -> Shot | None:
     """Illustration générée à partir des mots-clés (Pollinations sans clé, ou Hugging Face avec HF_TOKEN)."""
     from urllib.parse import quote
@@ -246,7 +269,7 @@ def ai_image(query: str, work: Path, used: set[str], kind: str = "news", seed: i
         else:
             url = (f"https://image.pollinations.ai/prompt/{quote(prompt)}?width=768&height=1152&nologo=true"
                    f"&safe=true&seed={seed}")
-            p = _download(url, dest, max_mb=15)
+            p = _pollinations(url, dest)
     except Exception as e:
         log.info("Image IA indisponible pour « %s » : %s", query, e)
         return None

@@ -22,6 +22,38 @@ ANALYTICS_SCOPE = SCOPES[2]
 # Google peut accorder moins de droits que demandés (cases décochées) : ne pas faire échouer la connexion.
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 TOKEN_URI = "https://oauth2.googleapis.com/token"
+AUTH_ERROR_KEY = "youtube_auth_error"
+
+
+class AuthExpired(RuntimeError):
+    """Jeton YouTube expiré ou révoqué : il faut reconnecter la chaîne dans l'interface (Comptes).
+
+    Cas typique : appli Google Cloud restée en mode « Test », dont les jetons expirent au bout de 7 jours."""
+
+
+def auth_error() -> str:
+    """Raison de la dernière connexion refusée par Google ("" = connexion valide)."""
+    try:
+        from .. import platforms
+        return platforms._get(AUTH_ERROR_KEY) or ""
+    except Exception:
+        return ""
+
+
+def _set_auth_error(msg: str | None) -> None:
+    from .. import platforms
+    platforms._put(AUTH_ERROR_KEY, msg)
+
+
+def _expired(e: Exception) -> AuthExpired:
+    msg = str(e)[:300]
+    _set_auth_error(msg or "jeton refusé")
+    return AuthExpired(msg)
+
+
+def is_auth_error(e: Exception) -> bool:
+    """Google refuse définitivement le jeton (invalid_grant) : inutile de réessayer avant une reconnexion."""
+    return isinstance(e, RefreshError) and "invalid_grant" in str(e)
 
 
 def redirect_uri() -> str:
@@ -62,27 +94,7 @@ def finish_auth(code: str, state: str, code_verifier: str | None = None) -> None
         pass
     scopes = list(getattr(c, "granted_scopes", None) or c.scopes or SCOPES)
     creds.save("youtube", {"token": c.token, "refresh_token": c.refresh_token, "scopes": scopes}, account=name)
-
-
-class AuthExpired(RuntimeError):
-    """Google a révoqué ou laissé expirer l'accès (7 jours si l'appli Google est « en test ») :
-    il faut reconnecter la chaîne dans Comptes. Les clips restent en file en attendant."""
-
-
-def expired() -> bool:
-    """Accès YouTube expiré : envois en pause jusqu'à la reconnexion."""
-    return bool((creds.load("youtube") or {}).get("expired"))
-
-
-def _is_revoked(e: Exception) -> bool:
-    return isinstance(e, RefreshError) and "invalid_grant" in str(e)
-
-
-def _mark_expired(e: Exception) -> AuthExpired:
-    data = creds.load("youtube")
-    if data:
-        creds.save("youtube", {**data, "expired": True})
-    return AuthExpired(f"Accès YouTube expiré ou révoqué : reconnecte la chaîne dans Comptes ({e})")
+    _set_auth_error(None)
 
 
 def _credentials() -> Credentials:
@@ -90,8 +102,6 @@ def _credentials() -> Credentials:
     data = creds.load("youtube")
     if not data:
         raise RuntimeError("Compte YouTube non connecté")
-    if data.get("expired"):
-        raise AuthExpired("Accès YouTube expiré : reconnecte la chaîne dans Comptes")
     # scopes réellement accordés (absent pour une connexion faite avant l'ajout des statistiques)
     c = Credentials(data.get("token"), refresh_token=data.get("refresh_token"), token_uri=TOKEN_URI,
                     client_id=s.youtube_client_id, client_secret=s.youtube_client_secret, scopes=data.get("scopes"))
@@ -99,8 +109,8 @@ def _credentials() -> Credentials:
         try:
             c.refresh(Request())
         except RefreshError as e:
-            if _is_revoked(e):
-                raise _mark_expired(e) from e
+            if is_auth_error(e):
+                raise _expired(e) from e
             raise
         creds.save("youtube", {**data, "token": c.token, "refresh_token": c.refresh_token})
     return c
@@ -114,12 +124,20 @@ def stats(video_ids: list[str]) -> dict[str, dict]:
     """Vues, likes, commentaires (+ rétention si l'accès « statistiques » a été accordé)."""
     if not video_ids:
         return {}
+    if auth_error():
+        raise AuthExpired("Connexion YouTube expirée : reconnecte la chaîne")
     c = _credentials()
     yt = build("youtube", "v3", credentials=c, cache_discovery=False)
     out: dict[str, dict] = {}
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i:i + 50]
-        for item in yt.videos().list(part="statistics", id=",".join(batch)).execute().get("items", []):
+        try:
+            items = yt.videos().list(part="statistics", id=",".join(batch)).execute().get("items", [])
+        except RefreshError as e:
+            if is_auth_error(e):
+                raise _expired(e) from e
+            raise
+        for item in items:
             st = item.get("statistics", {})
             out[item["id"]] = {"views": int(st.get("viewCount", 0)), "likes": int(st.get("likeCount", 0)),
                                "comments": int(st.get("commentCount", 0))}
@@ -193,28 +211,10 @@ def upload(path: str, title: str, description: str, tags: list[str]) -> str:
         if is_quota_error(e):
             raise QuotaExceeded(str(e)[:500]) from e
         raise
-    except RefreshError as e:  # jeton rafraîchi pendant l'envoi
-        if _is_revoked(e):
-            raise _mark_expired(e) from e
+    except RefreshError as e:
+        if is_auth_error(e):
+            raise _expired(e) from e
         raise
-
-
-def requeue_auth_failures() -> int:
-    """Après reconnexion : les envois abandonnés à cause de l'accès expiré repartent en file."""
-    from sqlmodel import select
-
-    from .. import db
-    from ..models import Post
-
-    n = 0
-    with db.session() as s:
-        for p in s.exec(select(Post).where(Post.platform == "youtube", Post.status == "failed")).all():
-            if "invalid_grant" in (p.error or "") or "expiré" in (p.error or ""):
-                p.status, p.attempts, p.error = "pending", 0, ""
-                s.add(p)
-                n += 1
-        s.commit()
-    return n
 
 
 def _upload(path: str, title: str, description: str, tags: list[str]) -> str:

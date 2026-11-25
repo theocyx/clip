@@ -93,7 +93,7 @@ def wiki(topic: str, lang: str = "fr") -> dict | None:
 
 def fetch(topic: str) -> feeds.Item | None:
     """Faits de l'histoire : article français, ou anglais s'il est bien plus fourni (l'IA traduit). Le titre reste
-celui de l'article français, sinon le sujet tel qu'écrit dans la liste (en français)."""
+    celui de l'article français, sinon le sujet tel qu'écrit dans la liste (en français)."""
     fr = wiki(topic, "fr")
     title = fr["title"] if fr else topic  # titre toujours en français (le sujet), même si les faits sont anglais
     if fr is None or len(fr["text"]) < 2500:

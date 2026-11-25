@@ -307,6 +307,14 @@ def make(video_id: int, item: feeds.Item) -> int | None:
         log.info("%s : voix off de %.0f s (minimum %.0f s), on rallonge le script…", what, spoken[-1].end, floor)
         script.grow(sc, item.title, facts + " " + item.title, item.source, item.kind, goal_words=goal, tries=2)
         spoken = tts.speak(sc.sentences, work / "voice.wav", speed=speed, kind=item.kind, gap=0.34 if story else None)
+    if floor * 0.85 <= spoken[-1].end < floor:
+        # presque assez long (55-59 s pour 60) : voix un peu plus posée plutôt que d'écarter le sujet
+        base = s.story_voice_speed if story else s.news_voice_speed
+        slower = max(0.9, base * spoken[-1].end / floor * 0.97)
+        log.info("%s : voix off de %.0f s, débit ralenti à %.2f pour atteindre %.0f s", what, spoken[-1].end, slower,
+                 floor)
+        spoken = tts.speak(sc.sentences, work / "voice.wav", speed=slower, kind=item.kind,
+                           gap=0.34 if story else 0.26)
     if spoken[-1].end < floor:
         _set(video_id, status="skipped", progress=0,
              error=f"Trop court ({spoken[-1].end:.0f} s, minimum {floor:.0f} s) : pas assez de faits dans l'article")

@@ -188,6 +188,15 @@ def worker_problems(threads=()) -> dict[str, str]:
         out["web"] = "🌐 L'interface web ne répond plus (conteneur web arrêté ou planté)."
     if cfg.ollama_url and _down("ollama", not ping(cfg.ollama_url.rstrip("/") + "/api/version")):
         out["ollama"] = "🤖 L'IA locale (Ollama) ne répond plus : les titres et le choix des moments sont moins bons."
+    try:
+        from .publish import youtube
+        yt_err = youtube.auth_error()
+    except Exception:
+        yt_err = ""
+    if yt_err:
+        out["youtube_auth"] = ("🔑 YouTube déconnecté (jeton expiré ou révoqué) : plus aucun envoi. Reconnecte la chaîne "
+                               "dans Comptes. Pour éviter que ça revienne tous les 7 jours, passe l'appli Google Cloud "
+                               "en Production (Écran de consentement OAuth → Publier l'application).")
     dead = [t.name for t in threads if not t.is_alive()]
     if dead:
         out["threads"] = "🧵 Une tâche de fond du worker s'est arrêtée : " + ", ".join(dead) + ". Redémarre le worker."

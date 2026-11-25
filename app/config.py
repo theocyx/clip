@@ -191,6 +191,7 @@ class Settings(BaseSettings):
     # Images générées par IA quand les banques d'images n'ont rien de pertinent (et une sur deux pour les histoires) :
     # pollinations (gratuit, sans clé), huggingface (HF_TOKEN gratuit, FLUX.1-schnell), off
     news_ai_images: str = "pollinations"
+    news_ai_gap: float = 16  # s entre deux images Pollinations (gratuit : une image toutes les ~15 s, sinon refus 402)
     news_ai_style: str = "cinematic documentary photo, dramatic lighting, highly detailed, realistic, no text"
     hf_token: str = ""
     news_openverse: bool = True  # images libres via Openverse (sans clé)

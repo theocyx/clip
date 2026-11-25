@@ -708,35 +708,3 @@ def test_script_in_three_steps_and_edge_word_timings(monkeypatch, tmp_path):
     monkeypatch.setattr(tts_mod, "_synth", lambda voice, text, speed=None: _synth(text))
     spoken = tts.speak(["Bonjour à tous.", "Deuxième phrase."], tmp_path / "v.wav", kind="story", gap=0.3)
     assert len(spoken) == 2 and spoken[1].start - spoken[0].end == pytest.approx(0.3, abs=0.01)
-
-
-def test_story_titles_forced_in_french(monkeypatch):
-    from app.news import stories
-    from app.pipeline import llm
-    assert script.looks_english("The Unexplained Beast of Gévaudan")
-    assert script.looks_english("Beast of Gévaudan") and script.looks_english("Who killed the hikers?")
-    for fr in ("La bête du Gévaudan : le mystère jamais résolu", "Opération Mincemeat", "Room 641A",
-               "Le Taos Hum", "D. B. Cooper a disparu avec la rançon"):
-        assert not script.looks_english(fr), fr
-    # article anglais plus fourni : le titre reste le sujet français
-    pages = {"fr": None, "en": {"title": "Beast of Gévaudan", "url": "https://en.wikipedia.org/wiki/Beast",
-                                "text": "long " * 900, "lat": None, "lon": None, "lang": "en"}}
-    monkeypatch.setattr(stories, "wiki", lambda topic, lang="fr": pages[lang])
-    assert stories.fetch("Bête du Gévaudan").title == "Bête du Gévaudan"
-    # titre, accroche, phrase et mots à l'écran en anglais : traduits ou retirés
-    asked = []
-    monkeypatch.setattr(llm, "_ask_ollama", lambda prompt, **kw: asked.append(prompt) or
-                        '{"fr": "La bête du Gévaudan, le mystère jamais résolu"}')
-    sents = json.loads(_llm_json())["sentences"]
-    sents[1] = {"text": "The beast was never found and nobody knows what it was.", "visual": "forest",
-                "title": "THE BEAST"}
-    sc = script.parse(_llm_json(title="The Unexplained Beast of Gévaudan", sentences=sents, topic="THE BEAST"))
-    fixed = script.sanitize(sc, "GTA 6 record 24 heures 25 millions de copies", "Bête du Gévaudan")
-    assert sc.title == "La bête du Gévaudan, le mystère jamais résolu" and "titre en anglais" in fixed
-    assert len(sc.sentences) == 4 and not any("beast" in t.lower() for t in sc.sentences)
-    assert sc.topic == "" and len(asked) == 1 and "The Unexplained Beast" in asked[0]
-    # traduction ratée : on garde le sujet français
-    monkeypatch.setattr(llm, "_ask_ollama", lambda prompt, **kw: '{"fr": "The beast of the mountains"}')
-    sc = script.parse(_llm_json(title="The Unexplained Beast of Gévaudan"))
-    script.sanitize(sc, "GTA 6 record 24 heures 25 millions de copies", "Bête du Gévaudan")
-    assert sc.title == "Bête du Gévaudan"

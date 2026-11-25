@@ -54,7 +54,7 @@
   <h3>Comptes</h3>
   {% for name, a in accounts.items() %}
   <div>{{ 'YouTube' if name=='youtube' else 'TikTok' }} :
-    {% if a.connected %}<span class="ok">connecté</span> {{ a.account }}{% elif a.configured %}<a href="/accounts">à connecter</a>{% else %}<span class="mut">clés API absentes du .env</span>{% endif %}</div>
+    {% if a.connected and a.expired %}<span class="err">connexion expirée</span> <a href="/accounts">reconnecter</a>{% elif a.connected %}<span class="ok">connecté</span> {{ a.account }}{% elif a.configured %}<a href="/accounts">à connecter</a>{% else %}<span class="mut">clés API absentes du .env</span>{% endif %}</div>
   {% endfor %}
 </div>
 <div class="card">

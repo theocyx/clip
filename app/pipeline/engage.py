@@ -124,6 +124,36 @@ def bad_title(title: str) -> str:
     return ""
 
 
+# Petits mots qui trahissent une langue (le modèle local répond parfois en anglais malgré la consigne)
+_EN_WORDS = {"the", "of", "and", "in", "under", "with", "for", "to", "is", "are", "was", "were", "his",
+             "her", "its", "their", "how", "why", "what", "who", "when", "from", "behind", "after", "this", "that",
+             "back", "new", "unexplained", "mystery", "mysterious", "enigmatic", "beast", "prisoner",
+             "comeback", "story", "truth", "shocking", "breaking", "amazing", "first", "never", "ever", "again",
+             "man", "woman", "men", "women", "people", "world", "life", "death", "dark", "hidden", "lost", "killer",
+             "murder", "inside", "you", "your", "my", "we", "he", "she", "they", "has", "have", "had", "will",
+             "can", "not", "masked", "mask", "king", "queen", "legend", "ancient", "curse", "cursed", "treasure",
+             "ghost", "haunted"}
+_FR_WORDS = {"le", "la", "les", "un", "une", "des", "du", "de", "et", "à", "au", "aux", "en", "sur", "sous",
+             "pour", "est", "sont", "qui", "que", "dans", "avec", "par", "son", "sa", "ses", "après", "ce", "cette",
+             "il", "elle", "ils", "on", "pas", "plus", "mais", "ou", "où", "quand", "comment", "pourquoi", "mystère",
+             "secret", "énigme", "vérité", "histoire", "nouveau", "nouvelle", "jamais", "enfin", "encore"}
+
+
+def looks_english(text: str) -> bool:
+    """Vrai si le texte est plutôt en anglais (titre, accroche) : il doit alors être réécrit en français."""
+    t = (text or "").lower().replace("’", "'")
+    if re.search(r"\b[a-z]+'s\b", t):  # « Nvidia's comeback »
+        return True
+    words = re.findall(r"[a-zàâäçéèêëîïôöùûüœ']+", t)
+    words = [w.split("'")[-1] if w.startswith(("l'", "d'", "qu'", "n'", "s'", "c'", "j'")) else w for w in words]
+    fr_hint = any(w.startswith(("l'", "d'", "qu'")) for w in re.findall(r"[a-zàâäçéèêëîïôöùûüœ']+", t))
+    en = sum(w in _EN_WORDS and w not in _FR_WORDS for w in words)
+    fr = sum(w in _FR_WORDS and w not in _EN_WORDS for w in words) + fr_hint
+    if re.search(r"[àâçéèêëîïôûùœ]", t):
+        fr += 1
+    return en >= 1 and en > fr
+
+
 def tidy_title(title: str) -> str:
     """Titre propre : sans guillemets ni caractères parasites, commandes de chat (!drop), mentions, hashtags ni
     barres en trop, « GTA 6 » écrit comme on le cherche."""
