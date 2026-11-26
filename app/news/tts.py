@@ -77,6 +77,87 @@ def for_speech(text: str) -> str:
     return re.sub(r"\s{2,}", " ", t).strip()
 
 
+# Abréviations et symboles que la voix Edge lit mal ou épelle (« M. Dupont » → « M Dupont »)
+_WORD_EXPAND = {"mme": "Madame", "mmes": "Mesdames", "mlle": "Mademoiselle", "dr": "Docteur", "pr": "Professeur",
+                "n°": "numéro", "&": "et", "vs": "contre", "vs.": "contre", "km/h": "kilomètres heure",
+                "m€": "millions d'euros", "md€": "milliards d'euros", "mds€": "milliards d'euros",
+                "mrd€": "milliards d'euros", "k€": "mille euros", "°c": "degrés", "gta6": "GTA 6", "vi": None}
+_TRAIL = ",;:!?»)\"'"
+
+
+def edge_text(text: str) -> tuple[str, list[int]]:
+    """Texte envoyé à la voix Edge (abréviations écrites en toutes lettres) et, pour chaque mot affiché, le nombre
+    de mots réellement lus : les instants des mots donnés par Edge restent ainsi calés sur les sous-titres."""
+    words = text.split()
+    spoken, counts = [], []
+    for i, w in enumerate(words):
+        core = w.rstrip(_TRAIL)
+        if core not in ("M.", "MM.") and core.lower() != "vs.":
+            core = core.rstrip(".")  # point de fin de phrase gardé à part (« km/h. »)
+        tail = w[len(core):]
+        low = core.lower()
+        nxt = words[i + 1] if i + 1 < len(words) else ""
+        rep = None
+        if core == "M." and nxt[:1].isupper():
+            rep = "Monsieur"
+        elif core == "MM." and nxt[:1].isupper():
+            rep = "Messieurs"
+        elif low == "vi" and i and words[i - 1].lower().rstrip(_TRAIL) == "gta":
+            rep = "6"
+        elif m := re.fullmatch(r"(\d+(?:[.,]\d+)?)(m€|md€|mds€|k€|°c)", low):
+            rep = m.group(1) + " " + _WORD_EXPAND[m.group(2)]
+        elif _WORD_EXPAND.get(low):
+            rep = _WORD_EXPAND[low]
+        out = (rep + tail) if rep else w
+        spoken.append(out)
+        counts.append(sum(1 for t in out.split() if _norm(t)))
+    return " ".join(spoken), counts
+
+
+# Mots qui relancent le récit : petite respiration avant (« Mais… », « Résultat : »)
+_TURNS = ("mais", "pourtant", "sauf", "résultat", "seulement", "soudain", "alors", "problème", "et c'est là")
+
+
+def prosody(sentences: list[str], kind: str = "news", chapters: list[str] | None = None) -> list[dict]:
+    """Intonation de chaque phrase, comme un vrai présentateur : accroche plus énergique, questions qui montent,
+    phrases courtes appuyées, suspense ralenti, petites variations de débit (pas de ton robotique) et pauses
+    plus longues aux bons endroits. [{rate (multiplicateur), pitch (Hz), pause (multiple du silence de base)}]"""
+    story = kind == "story"
+    n = len(sentences)
+    out = []
+    for i, text in enumerate(sentences):
+        t = text.strip()
+        words = len(t.split())
+        rate, pitch, pause = 1.0 + (0.02 if i % 2 else -0.01), 0, 1.0
+        if t.endswith(("...", "…")):
+            rate, pitch, pause = (0.92, -2, 2.0) if story else (0.95, -1, 1.8)
+        elif t.endswith("?"):
+            rate, pitch, pause = 0.97, 3 if not story else 2, 1.8
+        elif t.endswith("!"):
+            rate, pitch, pause = 1.04, 2, 1.3
+        elif words <= 6:  # phrase choc : posée et suivie d'un blanc
+            rate, pitch, pause = (0.93, -1, 1.6) if story else (0.97, 0, 1.3)
+        if i == 0:  # accroche : énergique pour l'actu, grave et lente pour une histoire
+            rate, pitch = (0.95, -1) if story else (1.05, 2)
+            pause = max(pause, 1.4)
+        nxt = sentences[i + 1].strip().lower() if i + 1 < n else ""
+        if nxt.startswith(_TURNS):
+            pause *= 1.4
+        if chapters and i + 1 < n and i + 1 < len(chapters) and chapters[i + 1] \
+                and chapters[i + 1] != (chapters[i] if i < len(chapters) else ""):
+            pause *= 1.5  # changement de partie du récit
+        if i + 1 == n - 1 and sentences[-1].strip().endswith("?"):
+            pause = max(pause, 1.6)  # blanc avant la question au spectateur
+        out.append({"rate": round(rate, 3), "pitch": pitch, "pause": round(min(pause, 3.0), 2)})
+    return out
+
+
+def add_hz(base: str, delta: int) -> str:
+    """« -2Hz » + 3 → « +1Hz »."""
+    m = re.fullmatch(r"\s*([+-]?\d+)\s*Hz\s*", base or "")
+    return f"{(int(m.group(1)) if m else 0) + delta:+d}Hz"
+
+
 def trim_bounds(audio: np.ndarray, sr: int, thresh: float = 0.01, pad: float = 0.03) -> tuple[int, int]:
     if audio.size == 0:
         return 0, 0
@@ -97,23 +178,27 @@ def _norm(w: str) -> str:
 
 
 def boundary_times(text: str, bounds: list[tuple[float, float, str]], start: float, end: float,
-                   lead: float = 0.0) -> list[dict]:
+                   lead: float = 0.0, counts: list[int] | None = None) -> list[dict]:
     """Mots de la phrase calés sur les instants donnés par la voix (Edge), sinon répartis à la longueur.
-    bounds : [(début s, durée s, mot lu)] depuis le début de l'audio de la phrase ; lead : silence retiré."""
+    bounds : [(début s, durée s, mot lu)] depuis le début de l'audio de la phrase ; lead : silence retiré.
+    counts : nombre de mots lus pour chaque mot affiché (« M€ » → « millions d'euros » = 2), voir edge_text."""
     words = text.split()
+    if counts is None or len(counts) != len(words):
+        counts = [1 if _norm(w) else 0 for w in words]
     tokens = [(o - lead, d, t) for o, d, t in bounds if _norm(t)]
-    if not words or len(tokens) != len([w for w in words if _norm(w)]):
+    if not words or len(tokens) != sum(counts):
         return word_times(text, start, end)
     out, k = [], 0
-    for w in words:
-        if not _norm(w):  # ponctuation seule (« – ») : collée au mot précédent
+    for w, c in zip(words, counts):
+        if not c:  # ponctuation seule (« – ») : collée au mot précédent
             if out:
                 out[-1]["word"] += " " + w
             continue
-        o, d, _ = tokens[k]
-        k += 1
+        o, _, _ = tokens[k]
+        lo, ld, _ = tokens[k + c - 1]
+        k += c
         a = min(max(start, start + o), end)
-        out.append({"start": round(a, 3), "end": round(min(end, max(a + 0.05, start + o + d)), 3), "word": w})
+        out.append({"start": round(a, 3), "end": round(min(end, max(a + 0.05, start + lo + ld)), 3), "word": w})
     for i in range(len(out) - 1):  # pas de trou entre deux mots (le mot reste surligné jusqu'au suivant)
         out[i]["end"] = max(out[i]["end"], out[i + 1]["start"])
     return out
@@ -177,49 +262,67 @@ def _synth(voice, text: str, speed: float | None = None) -> tuple[np.ndarray, in
     return audio, sr
 
 
-def default_synth(kind: str = "news", speed: float | None = None):
-    """Fonction de lecture selon NEWS_TTS : Edge (avec secours Piper phrase par phrase) ou Piper."""
+def default_synth(kind: str = "news", speed: float | None = None, voice: str | None = None):
+    """Fonction de lecture selon NEWS_TTS : Edge (avec secours Piper phrase par phrase) ou Piper.
+    voice : voix Edge à utiliser (choisie par l'amélioration continue), sinon celle du .env.
+    La fonction renvoyée accepte rate (multiplicateur du débit) et pitch (Hz) pour l'intonation de chaque phrase."""
     s = get_settings()
     speed = speed or s.news_voice_speed
     piper_voice = []
 
-    def piper(text: str):
+    def piper(text: str, rate: float = 1.0, pitch: int = 0):
         if not piper_voice:
             piper_voice.append(_voice(s.news_voice))
-        return _synth(piper_voice[0], text, speed)
+        return _synth(piper_voice[0], text, speed * rate)
 
+    piper.expressive = True  # type: ignore[attr-defined]
+    piper.engine = "piper"  # type: ignore[attr-defined]
     if (s.news_tts or "").lower() != "edge":
         return piper
-    voice = s.story_edge_voice if kind == "story" else s.news_edge_voice
-    pitch = s.story_edge_pitch if kind == "story" else "+0Hz"
+    voice = voice or (s.story_edge_voice if kind == "story" else s.news_edge_voice)
+    base_pitch = s.story_edge_pitch if kind == "story" else "+0Hz"
     failed = []
 
-    def edge(text: str):
+    def edge(text: str, rate: float = 1.0, pitch: int = 0):
         if not failed:
             try:
-                return edge_synth(text, voice, speed, pitch)
+                said, counts = edge_text(text)
+                audio, sr, bounds = edge_synth(said, voice, speed * rate, add_hz(base_pitch, pitch))
+                return audio, sr, bounds, counts
             except Exception as e:  # coupure réseau, service changé… : voix locale pour toute la vidéo
                 log.warning("Voix Edge indisponible (%s), voix locale Piper à la place.", e)
                 failed.append(e)
-        return piper(text)
+                edge.engine = "piper"  # type: ignore[attr-defined]
+        return piper(text, rate, pitch)
 
     edge.failed = failed  # type: ignore[attr-defined]
+    edge.expressive = True  # type: ignore[attr-defined]
+    edge.engine = voice  # type: ignore[attr-defined]
     return edge
 
 
 def speak(sentences: list[str], out_wav: Path, synth=None, speed: float | None = None, kind: str = "news",
-          gap: float | None = None) -> list[Spoken]:
+          gap: float | None = None, voice: str | None = None, chapters: list[str] | None = None,
+          expressive: bool | None = None, info: dict | None = None) -> list[Spoken]:
     """Lit les phrases à la suite dans out_wav (mono 16 bits). synth(text) -> (audio float, sr[, instants des
-    mots]) remplaçable (tests). speed : débit (défaut NEWS_VOICE_SPEED). Renvoie le minutage de chaque phrase
-    et de chaque mot."""
+    mots[, mots lus par mot affiché]]) remplaçable (tests). speed : débit (défaut NEWS_VOICE_SPEED).
+    voice : voix Edge. chapters : partie du récit de chaque phrase (pause plus longue quand elle change).
+    expressive : intonation et pauses selon la phrase (défaut NEWS_EXPRESSIVE). info : reçoit "engine" (voix
+    réellement utilisée). Renvoie le minutage de chaque phrase et de chaque mot."""
     if synth is None:
-        synth = default_synth(kind, speed)
+        synth = default_synth(kind, speed, voice)
     gap = GAP if gap is None else gap
+    if expressive is None:
+        expressive = get_settings().news_expressive
+    tone = prosody(sentences, kind, chapters) if expressive else [{"rate": 1.0, "pitch": 0, "pause": 1.0}] * len(
+        sentences)
     chunks, spoken, t, sr = [], [], 0.0, 22050
-    for text in sentences:
-        res = synth(text)
+    for text, how in zip(sentences, tone):
+        res = (synth(text, rate=how["rate"], pitch=how["pitch"]) if getattr(synth, "expressive", False)
+               else synth(text))
         audio, sr = res[0], res[1]
         bounds = res[2] if len(res) > 2 else None
+        counts = res[3] if len(res) > 3 else None
         a, b = trim_bounds(audio, sr)
         audio = np.array(audio[a:b], dtype=np.float32)
         if audio.size == 0:
@@ -230,10 +333,14 @@ def speak(sentences: list[str], out_wav: Path, synth=None, speed: float | None =
             audio[:ramp] *= fade
             audio[-ramp:] *= fade[::-1]
         dur = audio.size / sr
-        words = boundary_times(text, bounds, t, t + dur, lead=a / sr) if bounds else word_times(text, t, t + dur)
+        words = (boundary_times(text, bounds, t, t + dur, lead=a / sr, counts=counts) if bounds
+                 else word_times(text, t, t + dur))
         spoken.append(Spoken(text, round(t, 3), round(t + dur, 3), words))
-        chunks += [audio, np.zeros(int(gap * sr), dtype=np.float32)]
-        t += dur + gap
+        pause = gap * how["pause"]
+        chunks += [audio, np.zeros(int(pause * sr), dtype=np.float32)]
+        t += dur + pause
+    if info is not None:
+        info["engine"] = getattr(synth, "engine", "")
     if not chunks:
         raise RuntimeError("Voix off vide")
     pcm = (np.clip(np.concatenate(chunks), -1, 1) * 32767).astype(np.int16)

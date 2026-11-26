@@ -132,6 +132,11 @@ def pick_music(story: bool = False) -> Path | None:
     return random.choice(found) if found else None
 
 
+# Traitement « studio » de la voix off : grondements coupés, voix moins « boîte » dans le bas-médium, présence
+# vers 3-4 kHz (plus intelligible sur un téléphone), sifflantes adoucies, compression douce (niveau régulier)
+VOICE_FX = ("highpass=f=75,equalizer=f=280:t=q:w=1.2:g=-2,equalizer=f=3600:t=q:w=1.4:g=2.5,"
+            "deesser=i=0.35,acompressor=threshold=0.1:ratio=3:attack=6:release=90:makeup=1.6")
+
 TRANSITION = 0.28  # durée d'une transition (s)
 TRANSITIONS = ["zoomin", "smoothup", "slideleft", "circleopen", "hblur", "smoothleft", "slideup", "radial"]
 HEADER_IN = 0.45  # le titre glisse depuis le haut pendant ces secondes
@@ -158,7 +163,8 @@ def final_cmd(video: Path, voice: Path, header: str, ass_name: str, out: Path, t
     if codec.endswith("_vaapi"):
         vf += ",format=nv12,hwupload"
     vf += "[v]"
-    af = f"[1:a]aresample=48000,aformat=channel_layouts=stereo,apad=whole_dur={total:.2f}"
+    fx_voice = VOICE_FX + "," if s.news_voice_fx else ""
+    af = f"[1:a]aresample=48000,{fx_voice}aformat=channel_layouts=stereo,apad=whole_dur={total:.2f}"
     extra = []
     if music:
         cmd += ["-stream_loop", "-1", "-i", str(music)]
@@ -360,7 +366,9 @@ def build(shots: list, spoken: list[Spoken], voice: Path, hook: str, source: str
     sfx = None
     if fx and s.news_sfx_volume > 0 and len(cuts) > 1:
         cut_times = [c[1] + TRANSITION / 2 for c in cuts[1:]]
-        sfx = anim.whoosh_track(cut_times, total, work / "whoosh.wav")
+        # « boum » grave à l'ouverture et quand arrive la question finale (temps forts du montage)
+        hits = [0.05] + ([spoken[-1].start] if len(spoken) > 2 and spoken[-1].text.rstrip().endswith("?") else [])
+        sfx = anim.whoosh_track(cut_times, total, work / "whoosh.wav", hits=hits)
     out.parent.mkdir(parents=True, exist_ok=True)
     if fx:  # habillage complet dessiné image par image
         look = dict(look or {})

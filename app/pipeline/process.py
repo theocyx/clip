@@ -13,7 +13,7 @@ from pathlib import Path
 
 from sqlmodel import select
 
-from .. import db, learning
+from .. import db, experiments, learning
 from ..config import get_settings
 from ..models import Clip, Post, Source, Video, now
 from . import chat, dedupe, engage, facecam, highlights, hook, llm, media, render, sponsor, subtitles, transcribe
@@ -312,6 +312,9 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
         top = render.split_top(s.split_cam_height) if cam else 0
         if not m.features.get("question"):  # analyse faite avant cette version
             m.features["question"] = engage.fallback_question(m.features.get("text", ""), m.title)
+        exp = experiments.choose("clip")  # versions du montage (amélioration continue)
+        keywords = experiments.on(exp, "keywords")
+        pop = experiments.on(exp, "pop")
         tease = None
         if use_teaser(tun):
             tease = highlights.teaser(segments, m.features.get("peak"), parts[0][0], m.end, s.teaser_seconds)
@@ -336,14 +339,14 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                                                   min_len=s.clip_min) if s.cut_silences else [(a, b)])
                 end_text = (engage.end_card(m.features.get("question", ""), i, len(parts))
                             if s.end_card and s.end_question else "")
-                punch = punch_windows(m.features.get("peak"), body, t_i) if s.punch_zoom else None
+                punch = punch_windows(m.features.get("peak"), body, t_i) if experiments.on(exp, "zoom") else None
                 try:
                     pieces = ([t_i] if t_i else []) + body
                     ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook_text, s.hook_seconds,
                                               hook_in_ass=not png, top=top,
                                               pieces=pieces if len(pieces) > 1 else None,
                                               end_text=end_text, end_seconds=s.end_seconds,
-                                              keywords=s.sub_keywords)
+                                              keywords=keywords, pop=pop)
                     render.render(src, a, b, ass, out, png, s.hook_seconds, cam, t_i, body if len(body) > 1 else None,
                                   punch, s.progress_bar)
                 except RuntimeError as e:
@@ -353,7 +356,7 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                     t_i, body, punch = None, [(a, b)], None
                     ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook_text, s.hook_seconds,
                                               hook_in_ass=not png, top=top, end_text=end_text,
-                                              end_seconds=s.end_seconds, keywords=s.sub_keywords)
+                                              end_seconds=s.end_seconds, keywords=keywords, pop=pop)
                     render.render(src, a, b, ass, out, png, s.hook_seconds, cam)
             except Exception as e:
                 log.exception("Rendu échoué")
@@ -371,7 +374,9 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                                                   "part": i, "part_count": len(parts),
                                                   "teaser": bool(t_i) if status == "ready" else False,
                                                   "cuts": len(body) - 1 if status == "ready" else 0,
-                                                  "punch": bool(punch) if status == "ready" else False})
+                                                  "punch": bool(punch) if status == "ready" else False,
+                                                  "exp": {**exp, "zoom": "on" if punch else "off"}
+                                                  if status == "ready" else {}})
                 if status == "ready":
                     created += 1
                     if s.auto_publish:

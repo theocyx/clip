@@ -194,7 +194,39 @@ def outline(title: str, facts: str, source: str, kind: str, model: str = "") -> 
     return data if data["faits"] else {}
 
 
-def narrate(title: str, plan: dict, facts: str, kind: str, words: float, model: str = "") -> list[str]:
+def learned(kind: str) -> dict:
+    """Meilleures / pires vidéos de ce type d'après nos stats (vide tant qu'il n'y en a pas assez)."""
+    try:
+        from .. import experiments
+
+        return experiments.examples(kind)
+    except Exception as e:  # base pas prête, stats illisibles : on écrit sans exemples
+        log.debug("Exemples tirés des stats indisponibles : %s", e)
+        return {"top": [], "flop": []}
+
+
+def guide(ex: dict, field: str) -> str:
+    """Texte ajouté au prompt : exemples de nos vidéos qui ont le mieux / le moins marché (amélioration continue).
+    field : "opening" (1re phrase, pour le récit) ou "title" (titre + accroche, pour la mise en forme)."""
+    def show(e: dict) -> str:
+        if field == "title":
+            return f"« {e['title']} »" + (f" / accroche « {e['hook']} »" if e.get("hook") else "")
+        return f"« {e['opening']} »"
+
+    top = [show(e) for e in ex.get("top") or [] if e.get(field)]
+    if not top:
+        return ""
+    what = "titres et accroches" if field == "title" else "premières phrases"
+    lines = ["", f"Appris de nos statistiques : {what} de nos vidéos qui ont le plus marché (inspire-toi du ton et "
+             "de la construction, sans recopier) :"] + [f"- {x}" for x in top]
+    flop = [show(e) for e in ex.get("flop") or [] if e.get(field)]
+    if flop:
+        lines += ["Et de celles qui ont le moins marché (à ne pas imiter) :"] + [f"- {x}" for x in flop]
+    return "\n".join(lines)
+
+
+def narrate(title: str, plan: dict, facts: str, kind: str, words: float, model: str = "",
+            extra: str = "") -> list[str]:
     s = get_settings()
     lines = plan.get("faits") or []
     head = []
@@ -206,7 +238,7 @@ def narrate(title: str, plan: dict, facts: str, kind: str, words: float, model: 
     seconds = s.story_target_seconds if kind == "story" else s.news_target_seconds
     try:
         text = llm._ask_ollama(tpl.format(words=int(words), seconds=int(seconds), title=title, outline=listed,
-                                          unknown=str(plan.get("inconnu") or "rien de particulier")),
+                                          unknown=str(plan.get("inconnu") or "rien de particulier")) + extra,
                                timeout=s.news_llm_timeout, max_tokens=int(words * 2.6) + 200, num_ctx=8192,
                                model=model, json_mode=False, temperature=0.7)
     except Exception as e:
@@ -215,14 +247,14 @@ def narrate(title: str, plan: dict, facts: str, kind: str, words: float, model: 
     return split_sentences(text)
 
 
-def dress(sentences: list[str], title: str, kind: str) -> Script:
+def dress(sentences: list[str], title: str, kind: str, extra: str = "") -> Script:
     """Mise en forme (mots-clés d'image, titres à l'écran, chapitres, titre, accroche…) par le modèle rapide."""
     s = get_settings()
     numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(sentences))
     data: dict = {}
     try:
         raw = llm._ask_ollama(META_PROMPT.format(what="« histoire vraie »" if kind == "story" else "d'actualité",
-                                                 title=title, numbered=numbered),
+                                                 title=title, numbered=numbered) + extra,
                               timeout=s.news_llm_timeout, max_tokens=400 + 70 * len(sentences), num_ctx=8192)
         m = re.search(r"\{.*\}", raw or "", re.S)
         data = json.loads(m.group(0)) if m else {}
@@ -260,10 +292,11 @@ def write_steps(title: str, facts: str, source: str, kind: str = "news") -> Scri
     plan = outline(title, facts, source, kind, model)
     log.info("Script : %d faits retenus, écriture du récit%s…", len(plan.get("faits") or []),
              f" ({model})" if model else "")
-    sentences = narrate(title, plan, facts, kind, words, model)
+    ex = learned(kind)
+    sentences = narrate(title, plan, facts, kind, words, model, extra=guide(ex, "opening"))
     if len(sentences) < 3:
         return None
-    return dress(sentences, title, kind)
+    return dress(sentences, title, kind, extra=guide(ex, "title"))
 
 
 _NUM = re.compile(r"\d+(?:[.,]\d+)?")
