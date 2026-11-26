@@ -53,8 +53,25 @@ def normalize_channel_url(url: str) -> str:
     return url
 
 
+class _YdlLog:
+    """Messages de yt-dlp. « Pas en live » est la réponse normale quand on vérifie si une chaîne diffuse :
+    ce n'est pas une erreur (des dizaines de lignes rouges par minute dans les journaux sinon)."""
+    QUIET = ("not currently live", "will begin in", "Premieres in", "This live event will begin")
+
+    def debug(self, msg: str) -> None:
+        pass
+
+    info = warning = debug
+
+    def error(self, msg: str) -> None:
+        if any(q in msg for q in self.QUIET):
+            log.debug("yt-dlp : %s", msg)
+        else:
+            log.warning("yt-dlp : %s", msg)
+
+
 def _ydl(extra: dict | None = None) -> yt_dlp.YoutubeDL:
-    opts = {"quiet": True, "no_warnings": True, "skip_download": True, "ignoreerrors": True}
+    opts = {"quiet": True, "no_warnings": True, "skip_download": True, "ignoreerrors": True, "logger": _YdlLog()}
     opts.update(extra or {})
     return yt_dlp.YoutubeDL(opts)
 

@@ -256,3 +256,49 @@ def test_story_from_english_article_keeps_french_title_and_sentences(monkeypatch
     script.sanitize(sc, facts, "Bête du Gévaudan")
     assert len(sc.sentences) == 3 and "beast" not in sc.text.lower()
     assert sc.chapters == ["LES FAITS", "LE MYSTÈRE", "ET TOI ?"] and sc.topic == ""
+
+
+def test_only_publishable_moments_are_rendered(monkeypatch):
+    """Monter des clips qui ne partiront jamais coûte du temps et de la chaleur : seuil de montage relevé
+    à 1 point sous le seuil de publication (appris ou réglé)."""
+    from app.pipeline import process
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "clip_min_llm", 6)
+    monkeypatch.setattr(cfg, "publish_min_llm", 7)
+    assert process.render_floor({"min_llm": 8}) == 7  # seuil appris 8 : notes 7+ montées
+    assert process.render_floor({}) == 6
+    monkeypatch.setattr(cfg, "clip_min_llm", 0)
+    assert process.render_floor({"min_llm": 8}) == 0  # coupé
+
+
+def test_logs_kept_in_data_folder(tmp_path, monkeypatch):
+    import logging
+
+    from app import logs
+    monkeypatch.setattr(get_settings(), "data_dir", tmp_path)
+    root = logging.getLogger()
+    before = list(root.handlers)
+    try:
+        logs.setup("worker")
+        logs.setup("worker")  # une seule fois
+        added = [h for h in root.handlers if h not in before]
+        assert len(added) == 1
+        logging.getLogger("app.test").warning("trace gardée")
+        added[0].flush()
+        assert "trace gardée" in (tmp_path / "logs" / "worker.log").read_text(encoding="utf-8")
+    finally:
+        for h in root.handlers[:]:
+            if h not in before:
+                root.removeHandler(h)
+                h.close()
+
+
+def test_not_live_is_not_an_error(caplog):
+    import logging
+    lg = sources._YdlLog()
+    with caplog.at_level(logging.DEBUG, logger="app.pipeline.sources"):
+        lg.error("ERROR: [youtube] UC123: The channel is not currently live")
+        lg.error("ERROR: [twitch:vod] 1: Unable to download JSON metadata")
+    levels = {r.getMessage(): r.levelno for r in caplog.records}
+    assert levels["yt-dlp : ERROR: [youtube] UC123: The channel is not currently live"] == logging.DEBUG
+    assert levels["yt-dlp : ERROR: [twitch:vod] 1: Unable to download JSON metadata"] == logging.WARNING

@@ -77,6 +77,8 @@ _stop = threading.Event()
 
 @app.on_event("startup")
 def _startup():
+    from .. import logs
+    logs.setup("web")
     db.get_engine()
     crashed = health.started("web")
     if crashed:

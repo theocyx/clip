@@ -63,9 +63,11 @@ def cleanup() -> int:
                 v.path = ""
                 ss.add(v)
 
-        # fichiers des clips dont toutes les publications sont terminées depuis plus de N jours
-        if s.clip_keep_days > 0:
-            limit = now() - timedelta(days=s.clip_keep_days)
+        # fichiers des clips publiés depuis plus de CLIP_KEEP_DAYS jours, et des clips jamais publiés (retirés par
+        # le tri) depuis plus de UNPUBLISHED_KEEP_DAYS jours : sinon ~6 Go de plus chaque jour (constaté le 26/11)
+        days = [d for d in (s.clip_keep_days, s.unpublished_keep_days) if d > 0]
+        if days:
+            limit = now() - timedelta(days=min(days))
             for c in ss.exec(select(Clip).where(Clip.status != "deleted", Clip.created_at < limit)).all():
                 p = Path(c.path) if c.path else None
                 if not p or not p.exists():
@@ -73,8 +75,15 @@ def cleanup() -> int:
                 posts = ss.exec(select(Post).where(Post.clip_id == c.id)).all()
                 if any(x.status in ("pending", "publishing") for x in posts):
                     continue
-                if not any(x.status == "published" for x in posts) and c.status == "ready":
-                    continue  # jamais publié : on garde le fichier (publication manuelle possible)
+                age = now() - c.created_at
+                if any(x.status in ("published", "manual") for x in posts) or c.status != "ready":
+                    if s.clip_keep_days <= 0 or age < timedelta(days=s.clip_keep_days):
+                        continue
+                elif s.unpublished_keep_days <= 0 or age < timedelta(days=s.unpublished_keep_days):
+                    continue  # jamais publié, encore récent : on garde le fichier (publication manuelle possible)
+                else:
+                    c.status = "deleted"  # plus proposé à l'envoi manuel : le fichier n'existe plus
+                    ss.add(c)
                 for f in p.parent.glob(f"{p.stem}*"):  # le clip et son image d'accroche
                     freed += _size(f)
                     f.unlink(missing_ok=True)

@@ -81,6 +81,7 @@ def test_backup_rotation(monkeypatch):
 
 def test_cleanup(monkeypatch):
     cfg = get_settings()
+    monkeypatch.setattr(cfg, "unpublished_keep_days", 60)
     old = now() - timedelta(days=30)
     with db.session() as s:
         done = Video(key="cl:1", url="u", status="done", updated_at=old)
@@ -112,3 +113,9 @@ def test_cleanup(monkeypatch):
     assert not files["done"].exists() and files["busy"].exists()
     assert not paths["pub"].exists() and not (cdir / "pub_p1_hook.png").exists()
     assert paths["pending"].exists() and paths["never"].exists()
+    # jamais publié depuis plus de UNPUBLISHED_KEEP_DAYS jours : fichier supprimé, plus proposé à l'envoi manuel
+    monkeypatch.setattr(cfg, "unpublished_keep_days", 5)
+    assert maintenance.cleanup() > 0
+    assert not paths["never"].exists() and paths["pending"].exists()
+    with db.session() as s:
+        assert s.get(Clip, clips["never"].id).status == "deleted"
