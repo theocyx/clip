@@ -119,7 +119,7 @@ def _synth(text):
 
 def test_speak_timings(tmp_path):
     sents = ["Phrase numéro un, assez courte.", "Et voici la deuxième phrase du script ?"]
-    spoken = tts.speak(sents, tmp_path / "v.wav", synth=_synth)
+    spoken = tts.speak(sents, tmp_path / "v.wav", synth=_synth, expressive=False)
     assert len(spoken) == 2 and spoken[0].start == 0
     assert spoken[1].start == pytest.approx(spoken[0].end + tts.GAP, abs=0.01)  # silences retirés + petit blanc
     w = spoken[1].words
@@ -706,5 +706,6 @@ def test_script_in_three_steps_and_edge_word_timings(monkeypatch, tmp_path):
     monkeypatch.setattr(tts_mod, "edge_synth", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("hors ligne")))
     monkeypatch.setattr(tts_mod, "_voice", lambda name: "piper")
     monkeypatch.setattr(tts_mod, "_synth", lambda voice, text, speed=None: _synth(text))
-    spoken = tts.speak(["Bonjour à tous.", "Deuxième phrase."], tmp_path / "v.wav", kind="story", gap=0.3)
+    spoken = tts.speak(["Bonjour à tous.", "Deuxième phrase."], tmp_path / "v.wav", kind="story", gap=0.3,
+                       expressive=False)
     assert len(spoken) == 2 and spoken[1].start - spoken[0].end == pytest.approx(0.3, abs=0.01)

@@ -36,6 +36,16 @@ EMPHASIS = {
     "catastrophe", "terrible", "magnifique", "parfait", "légendaire", "choqué", "hallucine", "gta", "gta6",
 }
 _TOKEN = re.compile(r"[\wàâäéèêëïîôöùûüç']+", re.I)
+# Petits mots qui ne doivent pas finir un groupe à l'écran (« LE » seul en fin de ligne se lit mal) :
+# ils passent au groupe suivant, avec le mot qu'ils annoncent
+GLUE = {"le", "la", "les", "l'", "un", "une", "des", "de", "du", "d'", "à", "au", "aux", "en", "et", "ou", "mais",
+        "que", "qu'", "qui", "ce", "cet", "cette", "ces", "mon", "ma", "mes", "ton", "ta", "tes", "son", "sa", "ses",
+        "notre", "votre", "leur", "leurs", "je", "j'", "tu", "il", "elle", "on", "ils", "elles", "nous", "vous",
+        "pour", "par", "sur", "dans", "avec", "sans", "chez", "vers", "ne", "n'", "se", "s'", "c'", "très", "plus"}
+
+
+def is_glue(word: str) -> bool:
+    return word.strip(".,;:!?«»\"").lower() in GLUE
 NL = r"\N"  # retour à la ligne ASS
 
 
@@ -92,9 +102,13 @@ def group_words(words: list[dict], max_words: int = 3, max_chars: int = 18, max_
             text_len = sum(len(x["word"]) + 1 for x in cur) + len(w["word"])
             pause = w["start"] - cur[-1]["end"]
             ends = cur[-1]["word"].endswith((".", "!", "?", ","))
-            if len(cur) >= max_words or text_len > max_chars or pause > max_pause or ends:
+            if ends or pause > max_pause:
                 groups.append(cur)
                 cur = []
+            elif len(cur) >= max_words or text_len > max_chars:
+                carry = [cur.pop()] if len(cur) > 1 and is_glue(cur[-1]["word"]) else []
+                groups.append(cur)
+                cur = carry
         cur.append(w)
     if cur:
         groups.append(cur)
@@ -118,7 +132,18 @@ def hook_lines(text: str, per_line: int = 18, max_lines: int = 2) -> list[str]:
     return lines
 
 
-def _word_text(word: str, active: bool, keywords: bool = True) -> str:
+POP_MS = 110  # durée du rebond quand un groupe de mots apparaît
+
+
+def _word_text(word: str, active: bool, keywords: bool = True, pop: bool = False) -> str:
+    """pop : 1re image du groupe, chaque mot grandit de 80 % à sa taille en POP_MS (effet « rebond »)."""
+    if pop:
+        grow = rf"\t(0,{POP_MS},\fscx{{to}}\fscy{{to}})"
+        if active:
+            return (r"{\c&H00E5FF&\fscx90\fscy90" + grow.format(to=115) + "}" + _escape(word)
+                    + r"{\c&HFFFFFF&}")
+        color = r"\c&H3CFF5A&" if keywords and is_keyword(word) else r"\c&HFFFFFF&"
+        return "{" + color + r"\fscx80\fscy80" + grow.format(to=100) + "}" + _escape(word) + r"{\c&HFFFFFF&}"
     if active:
         return HIGHLIGHT + _escape(word) + RESET
     if keywords and is_keyword(word):
@@ -129,13 +154,14 @@ def _word_text(word: str, active: bool, keywords: bool = True) -> str:
 def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: str = "",
               hook: str = "", hook_seconds: float = 0, hook_in_ass: bool = True, top: int = 0,
               pieces: list[tuple[float, float]] | None = None, end_text: str = "",
-              end_seconds: float = 3.5, keywords: bool = True) -> str:
+              end_seconds: float = 3.5, keywords: bool = True, pop: bool = False) -> str:
     """hook_in_ass=False : l'accroche est rendue à part en image (emojis couleur), on garde juste la place.
 
     top : décalage vers le bas de l'accroche et de « Partie x/y » (format split : sous la facecam).
     pieces : morceaux de la source montés bout à bout (extrait d'ouverture + clip) ; par défaut [(a, b)].
     end_text : question / appel à commenter affiché au milieu de l'écran pendant les `end_seconds` dernières s.
-    keywords : mots forts en vert (sinon seul le mot prononcé change de couleur)."""
+    keywords : mots forts en vert (sinon seul le mot prononcé change de couleur).
+    pop : chaque groupe de mots apparaît avec un petit rebond."""
     pieces = pieces or [(a, b)]
     dur = sum(y - x for x, y in pieces)
     hl = hook_lines(hook) if hook else []
@@ -160,6 +186,6 @@ def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: s
             end = g[i + 1]["start"] if i + 1 < len(g) else g_end
             if end <= start:
                 end = start + 0.05
-            text = " ".join(_word_text(x["word"], j == i, keywords) for j, x in enumerate(g))
+            text = " ".join(_word_text(x["word"], j == i, keywords, pop=pop and i == 0) for j, x in enumerate(g))
             lines.append(f"Dialogue: 0,{ts(start)},{ts(min(end, dur))},Sub,,0,0,0,,{text}")
     return "\n".join(lines) + "\n"

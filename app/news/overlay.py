@@ -218,14 +218,20 @@ def draw_title(frame: np.ndarray, text: str, style: int, angle: float, since: fl
 
 def sub_groups(words: list[dict], max_chars: int = 26, max_words: int = 5) -> list[list[dict]]:
     """Groupes de mots affichés ensemble (coupés aux fins de phrase et aux pauses)."""
+    from ..pipeline.subtitles import is_glue
+
     groups, cur = [], []
     for w in words:
         if cur:
             length = sum(len(x["word"]) + 1 for x in cur) + len(w["word"])
-            if length > max_chars or len(cur) >= max_words or cur[-1]["word"].endswith((".", "!", "?")) \
-                    or w["start"] - cur[-1]["end"] > 0.5:
+            if cur[-1]["word"].endswith((".", "!", "?")) or w["start"] - cur[-1]["end"] > 0.5:
                 groups.append(cur)
                 cur = []
+            elif length > max_chars or len(cur) >= max_words:
+                # « LE », « DE »… ne finissent pas un groupe : ils passent avec le mot qu'ils annoncent
+                carry = [cur.pop()] if len(cur) > 1 and is_glue(cur[-1]["word"]) else []
+                groups.append(cur)
+                cur = carry
         cur.append(w)
     if cur:
         groups.append(cur)
@@ -273,6 +279,9 @@ def sub_sprite(words: tuple[str, ...], active: int) -> np.ndarray:
     return _rgba(img)
 
 
+POP_IN = 0.14  # s : durée du rebond d'un groupe de sous-titres qui apparaît (0 = aucun)
+
+
 def draw_subs(frame: np.ndarray, groups: list[list[dict]], t: float) -> None:
     for gi, g in enumerate(groups):
         end = groups[gi + 1][0]["start"] if gi + 1 < len(groups) else g[-1]["end"] + 0.6
@@ -283,6 +292,13 @@ def draw_subs(frame: np.ndarray, groups: list[list[dict]], t: float) -> None:
                 if t >= w["start"]:
                     active = k
             sp = sub_sprite(tuple(w["word"] for w in g), active)
+            since = t - g[0]["start"] + 0.05
+            if POP_IN > 0 and since < POP_IN and get_settings().sub_pop:  # le groupe arrive avec un rebond
+                import cv2
+
+                k = 0.8 + 0.2 * ease_out_back(clamp(since / POP_IN))
+                sp = cv2.resize(sp, (max(2, int(sp.shape[1] * k)), max(2, int(sp.shape[0] * k))),
+                                interpolation=cv2.INTER_LINEAR)
             paste(frame, sp, (W - sp.shape[1]) // 2, SUB_Y - sp.shape[0] // 2)
             return
 

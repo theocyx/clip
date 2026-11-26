@@ -37,7 +37,7 @@ def test_two_pass_audio_filter():
     assert "measured_I=-23.8" in f and "linear=true" in f
     cmd = render.build_cmd(render.Path("s.mp4"), 0, 10, "a.ass", render.Path("o.mp4"), "libx264", loud=m)
     af = cmd[cmd.index("-af") + 1]
-    assert af.endswith(f) and af.startswith(render.SYNC)  # son calé sur l'image, puis normalisé
+    assert af.endswith(render.loud_chain(f)) and af.startswith(render.SYNC)  # son calé sur l'image, puis normalisé
 
 
 def test_measure_loudness_never_raises(monkeypatch):
@@ -113,4 +113,51 @@ def test_gaps_in_live_recording_keep_sound_in_sync(tmp_path):
            "Style: Sub,Arial,74\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, "
            "Effect, Text\n")
     out = render.render(live, 7, 19, ass, tmp_path / "clip.mp4", cuts=[(7, 9), (17, 19)])
-    assert beeps(out) == [1.0, 3.0]
+    assert [round(abs(x - y), 2) <= 0.1 for x, y in zip(beeps(out), [1.0, 3.0])] == [True, True]  # pas de 0,1 s
+
+
+def test_live_cuts_are_frame_exact_and_in_sync(tmp_path, monkeypatch):
+    """Live en MPEG-TS (sans index, image clé toutes les 2 s) : un « -ss » direct tombait après l'image clé,
+    d'où image figée au début du clip, vidéo qui débordait après chaque morceau et son décalé / troué après
+    chaque coupure de blanc. Chaque flash blanc doit tomber en même temps que son bip, au bon endroit, et la
+    vidéo doit durer exactement la somme des morceaux."""
+    import subprocess
+
+    import numpy as np
+
+    src = tmp_path / "live.ts"
+    flashes = "+".join(f"between(t,{k},{k}+0.3)" for k in (4.5, 8.5, 13.5))
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                    f"color=c=black:s=160x120:r=30:d=16,drawbox=c=white:t=fill:enable='{flashes}'",
+                    "-f", "lavfi", "-i", f"sine=f=1000:d=16:sample_rate=48000,volume='if({flashes},1,0)':eval=frame",
+                    "-f", "lavfi", "-i", "anoisesrc=d=16:c=pink:a=0.02:r=48000",  # fond sonore, comme un vrai live
+                    "-filter_complex", "[1:a][2:a]amix=inputs=2:normalize=0[a]", "-map", "0:v", "-map", "[a]",
+                    "-c:v", "libx264", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0", "-c:a", "aac",
+                    "-f", "mpegts", "-output_ts_offset", "1000", str(src)], check=True)
+    ass = ("[Script Info]\nPlayResX: 1080\nPlayResY: 1920\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize\n"
+           "Style: Sub,Arial,74\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, "
+           "Effect, Text\n")
+    cuts = [(3.3, 5.3), (7.7, 9.9), (12.6, 14.4)]  # débuts loin des images clés (0, 2, 4… s)
+    # loudnorm en mode dynamique, comme sur un vrai live (pics forts, volume moyen bas : le mode linéaire
+    # de la 2e passe est alors impossible et ffmpeg repasse en dynamique)
+    monkeypatch.setattr(render, "measure_loudness", lambda *a, **k: None)
+    out = render.render(src, 3.3, 14.4, ass, tmp_path / "clip.mp4", cuts=cuts)
+    x = np.abs(np.frombuffer(subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-f", "f32le", "-ac", "1",
+                                             "-ar", "8000", "-"], capture_output=True).stdout, np.float32))
+    env = np.array([x[i:i + 40].max() for i in range(0, len(x), 40)])  # pas de 5 ms
+    sound = [i * 0.005 for i in range(4, len(env)) if env[i] > 0.2 and env[i - 4:i].max() <= 0.2]
+    y = np.frombuffer(subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-vf", "scale=16:16", "-f", "rawvideo",
+                                      "-pix_fmt", "gray", "-"], capture_output=True).stdout, np.uint8)
+    y = y.reshape(-1, 256).mean(axis=1)
+    image = [i / 30 for i in range(1, len(y)) if y[i] > 100 and y[i - 1] <= 100]
+    expected = [1.2, 2.0 + 0.8, 2.0 + 2.2 + 0.9]  # 4,5 s, 8,5 s et 13,5 s dans le clip monté
+    assert len(sound) == 3 and len(image) == 3
+    assert all(abs(a - e) <= 0.06 for a, e in zip(image, expected)), image
+    assert all(abs(a - v) <= 0.05 for a, v in zip(sound, image)), (sound, image)  # son calé sur l'image
+    assert abs(len(y) / 30 - sum(b - a for a, b in cuts)) <= 0.05  # pas de débordement de la vidéo
+    # instants des paquets de son réguliers : loudnorm après le recollage les tassait au début (son haché puis
+    # trou de 2,4 s dans un lecteur qui respecte les instants, invisible en décodant le son brut)
+    pts = [int(line.split(",")[1]) for line in subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "packet=pts", "-of", "csv", str(out)],
+        capture_output=True, text=True).stdout.split() if line.startswith("packet,")]
+    assert len(pts) > 100 and all(b - a == 1024 for a, b in zip(pts, pts[1:]))

@@ -296,8 +296,20 @@ def make(video_id: int, item: feeds.Item) -> int | None:
     (work / "script.json").write_text(json.dumps(sc.__dict__, ensure_ascii=False))
     _set(video_id, progress=15)
     log.info("%s : script prêt (%d phrases, note %g/10), voix off et images…", what, len(sc.sentences), sc.score)
-    speed = s.story_voice_speed if story else None
-    spoken = tts.speak(sc.sentences, work / "voice.wav", speed=speed, kind=item.kind, gap=0.34 if story else None)
+    from .. import experiments
+
+    exp = experiments.choose(item.kind if story else "news")  # voix et débit (amélioration continue)
+    base = (s.story_voice_speed if story else s.news_voice_speed) * experiments.pace(exp)
+    voice = exp.get("voice")
+    engine: dict = {}
+
+    def say(speed: float, gap: float | None = None):
+        return tts.speak(sc.sentences, work / "voice.wav", speed=speed, kind=item.kind,
+                         gap=gap if gap is not None else (0.34 if story else None), voice=voice,
+                         chapters=sc.chapters, info=engine)
+
+    speed = base
+    spoken = say(speed)
     floor = script.min_seconds(item.kind)
     for _ in range(2):  # voix plus rapide que prévu : on rallonge le script d'après la durée réellement lue
         if spoken[-1].end >= floor:
@@ -306,15 +318,13 @@ def make(video_id: int, item: feeds.Item) -> int | None:
         goal = rate * script.target_seconds(item.kind)
         log.info("%s : voix off de %.0f s (minimum %.0f s), on rallonge le script…", what, spoken[-1].end, floor)
         script.grow(sc, item.title, facts + " " + item.title, item.source, item.kind, goal_words=goal, tries=2)
-        spoken = tts.speak(sc.sentences, work / "voice.wav", speed=speed, kind=item.kind, gap=0.34 if story else None)
+        spoken = say(speed)
     if floor * 0.85 <= spoken[-1].end < floor:
         # presque assez long (55-59 s pour 60) : voix un peu plus posée plutôt que d'écarter le sujet
-        base = s.story_voice_speed if story else s.news_voice_speed
         slower = max(0.9, base * spoken[-1].end / floor * 0.97)
         log.info("%s : voix off de %.0f s, débit ralenti à %.2f pour atteindre %.0f s", what, spoken[-1].end, slower,
                  floor)
-        spoken = tts.speak(sc.sentences, work / "voice.wav", speed=slower, kind=item.kind,
-                           gap=0.34 if story else 0.26)
+        spoken = say(slower, 0.34 if story else 0.26)
     if spoken[-1].end < floor:
         _set(video_id, status="skipped", progress=0,
              error=f"Trop court ({spoken[-1].end:.0f} s, minimum {floor:.0f} s) : pas assez de faits dans l'article")
@@ -336,7 +346,9 @@ def make(video_id: int, item: feeds.Item) -> int | None:
     info = {"kind": "news", "story": story, "text": sc.text, "title": sc.title, "hook": hook_text, "question": sc.question,
             "llm": sc.score, "polished": True, "hashtags": sc.hashtags, "source": item.source,
             "source_url": item.link, "credits": credits, "duration": total, "shots": len(shots),
-            "layout": "news"}
+            "layout": "news", "voice": engine.get("engine", ""),
+            # versions réellement utilisées (voix Edge tombée en panne → Piper : l'essai de voix ne compte pas)
+            "exp": {k: v for k, v in exp.items() if k != "voice" or engine.get("engine") == v}}
     with db.session() as ss:
         clip = Clip(video_id=video_id, group=uuid.uuid4().hex[:10], start=0, end=total,
                     score=clip_score(sc.score), title=sc.title, path=str(out), status="ready")
