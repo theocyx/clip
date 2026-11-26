@@ -242,6 +242,8 @@ class Settings(BaseSettings):
     backup_keep: int = 7  # nombre de sauvegardes quotidiennes gardées (0 = pas de sauvegarde)
     source_keep_days: int = 3  # vidéos sources (échecs, lives enregistrés) supprimées après N jours
     clip_keep_days: int = 14  # fichiers des clips déjà publiés supprimés après N jours (0 = jamais)
+    # fichiers des clips jamais publiés (retirés par le tri, pas postés à la main) supprimés après N jours (0 = jamais)
+    unpublished_keep_days: int = 5
 
     youtube_client_id: str = ""
     youtube_client_secret: str = ""

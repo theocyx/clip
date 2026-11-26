@@ -202,6 +202,18 @@ def process(video_id: int) -> int:
     return render_moments(video, src, segments, moments)
 
 
+def render_floor(tun: dict) -> float:
+    """Note de l'IA minimum pour monter un clip : CLIP_MIN_LLM, relevée à 1 point sous le seuil de publication
+    (PUBLISH_MIN_LLM ou le seuil appris des stats). Monter des clips qui ne partiront jamais coûte du temps, de la
+    chaleur et du disque (le 26/11 : 161 clips montés pour une dizaine publiés par jour, des morceaux de live
+    abandonnés faute de temps)."""
+    s = get_settings()
+    if s.clip_min_llm <= 0:
+        return 0.0
+    publish = max(s.publish_min_llm, float(tun.get("min_llm") or 0)) if s.publish_min_llm > 0 else 0.0
+    return max(s.clip_min_llm, publish - 1)
+
+
 def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
     """Choisit et note les moments à découper."""
     s = get_settings()
@@ -263,12 +275,12 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
                           dedupe_text=text[:dedupe.TEXT_CHARS],
                           abs_start=dedupe.abs_time(video.created_at, video.is_live, m.start),
                           abs_end=dedupe.abs_time(video.created_at, video.is_live, m.end))
-    kept, weak = [], 0
+    kept, weak, floor = [], 0, render_floor(tun)
     for m in sorted(moments, key=lambda m: -m.score):
         if len(kept) >= n or m.score < s.min_score:
             break
         note = m.features.get("llm")
-        if s.clip_min_llm > 0 and note is not None and note < s.clip_min_llm:
+        if floor > 0 and note is not None and note < floor:
             weak += 1  # pas assez bon pour être publié : inutile de le monter (une vidéo médiocre peut donner 0 clip)
             continue
         stop_if_stopping()
@@ -277,7 +289,7 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
         kept.append(m)
     moments = kept
     if weak:
-        log.info("%d moment(s) jugé(s) trop faibles par l'IA (< %g/10) : pas montés", weak, s.clip_min_llm)
+        log.info("%d moment(s) jugé(s) trop faibles par l'IA (< %g/10) : pas montés", weak, floor)
     if not moments:
         log.info("Vidéo « %s » : aucun moment assez bon, 0 clip", video.title)
     for m in moments:

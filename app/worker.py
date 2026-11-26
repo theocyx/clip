@@ -931,6 +931,8 @@ def supervised(f, retry_s: float = 30):
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    from . import logs
+    logs.setup("worker")
     db.get_engine()
     reset_interrupted()
     signal.signal(signal.SIGTERM, shutdown)
