@@ -174,6 +174,11 @@ class Settings(BaseSettings):
     news_edge_voice: str = "fr-FR-HenriNeural"  # voix d'actu (fr-FR-DeniseNeural, fr-FR-VivienneMultilingualNeural…)
     story_edge_voice: str = "fr-FR-RemyMultilingualNeural"  # voix de conteur pour les histoires
     story_edge_pitch: str = "-2Hz"  # un peu plus grave pour les histoires
+    # Voix essayées par l'amélioration continue (la meilleure d'après les stats devient la voix habituelle)
+    news_voices: str = "fr-FR-HenriNeural,fr-FR-RemyMultilingualNeural,fr-FR-VivienneMultilingualNeural"
+    story_voices: str = "fr-FR-RemyMultilingualNeural,fr-FR-HenriNeural"
+    news_expressive: bool = True  # intonation, débit et pauses qui changent selon la phrase (accroche, question…)
+    news_voice_fx: bool = True  # traitement « studio » de la voix : grave nettoyé, présence, sifflantes, compression
     news_voice: str = "fr_FR-tom-medium"  # voix Piper (fr_FR-siwis-medium, fr_FR-upmc-medium, fr_FR-gilles-low…)
     news_voice_speed: float = 1.12  # débit de la voix (1 = normal) : un peu rapide, comme les comptes d'actu
     # Histoires vraies envoûtantes (voir app/news/stories.py) : faits tirés de Wikipédia, même chaîne de montage
@@ -258,6 +263,12 @@ class Settings(BaseSettings):
     review_age_hours: float = 24  # chaque Short est analysé (et signalé) une fois cet âge atteint
     burst_minutes: float = 20  # Short publié moins de N min après le précédent : « rafale », écarté de l'apprentissage
     explore: float = 0.15  # variation aléatoire de la durée visée (±15 %) pour continuer à tester
+    # Amélioration continue : une part des vidéos essaie une autre version d'UN réglage de montage (voix, débit,
+    # zoom, sous-titres…) ; la version qui fait les meilleures stats devient la version par défaut
+    experiments: bool = True
+    experiment_rate: float = 0.25  # part des vidéos qui essaient une autre version
+    experiment_min: int = 4  # vidéos mesurées par version avant de pouvoir la déclarer meilleure
+    sub_pop: bool = True  # sous-titres qui apparaissent avec un petit effet de rebond
 
     @property
     def db_path(self) -> Path:

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Red
 from fastapi.templating import Jinja2Templates
 from sqlmodel import col, func, select
 
-from .. import curate, db, discovery, gta6, health, learning, notify, platforms, worker
+from .. import curate, db, discovery, experiments, gta6, health, learning, notify, platforms, worker
 from ..config import get_settings
 from ..models import Clip, DiscoverIgnore, Post, PostStat, Source, Video, now
 from ..news import generate as news
@@ -713,7 +713,9 @@ def stats_page(request: Request, refreshing: bool = False):
         "yt_connected": creds.load("youtube") is not None, "tt_stats": get_settings().tiktok_stats,
         "refreshing": refreshing, "counts": counts, "verdicts": learning.VERDICTS,
         "burst_effect": learning.burst_effect(revs), "bar": curate.score_bar(), "min_llm": curate.min_llm(),
-        "top_pct": get_settings().publish_top_pct})
+        "top_pct": get_settings().publish_top_pct, "experiments": experiments.summary(perf),
+        "exp_on": get_settings().experiments, "exp_rate": get_settings().experiment_rate,
+        "exp_min": get_settings().experiment_min})
 
 
 @app.post("/stats/refresh")

@@ -719,12 +719,31 @@ def map_fly(lon: float, lat: float, label: str, n: int, fetch, accent: tuple[int
 
 # ---------- son ----------
 
-def whoosh_track(times: list[float], total: float, out: Path, sr: int = 44100, gain: float = 0.5) -> Path:
-    """Piste de « whoosh » (souffle filtré qui monte puis redescend) calée sur les transitions."""
+def hit(sr: int = 44100, dur: float = 0.7) -> np.ndarray:
+    """« Boum » de bande-annonce : basse qui descend (115 → 55 Hz) et s'éteint, avec un petit claquement.
+    L'harmonique 2 le rend audible même sur un haut-parleur de téléphone (qui ne sort pas les très graves)."""
+    t = np.arange(int(dur * sr)) / sr
+    freq = 55 + 60 * np.exp(-t * 7)
+    phase = 2 * math.pi * np.cumsum(freq) / sr
+    y = (np.sin(phase) + 0.4 * np.sin(2 * phase)) * np.exp(-t * 5.5)
+    click = np.random.default_rng(3).standard_normal(len(t)) * np.exp(-t * 90) * 0.25
+    y = (y + click).astype(np.float32)
+    return y / max(1e-6, float(np.abs(y).max()))
+
+
+def whoosh_track(times: list[float], total: float, out: Path, sr: int = 44100, gain: float = 0.5,
+                 hits: list[float] | None = None) -> Path:
+    """Piste de « whoosh » (souffle filtré qui monte puis redescend) calée sur les transitions,
+    + « boum » graves aux instants `hits` (ouverture, question finale)."""
     import wave
 
     rng = np.random.default_rng(7)
     track = np.zeros(int(total * sr) + sr, np.float32)
+    boom = hit(sr) if hits else None
+    for t0 in hits or []:
+        a = int(max(0.0, t0) * sr)
+        if a < len(track):
+            track[a:a + len(boom)] += boom[:len(track) - a] * gain * 1.2
     dur = 0.42
     m = int(dur * sr)
     for t0 in times:

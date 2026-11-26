@@ -24,6 +24,22 @@
   {% if not tt_stats %}<p class="mut">Vues TikTok : ajoute le scope <code>video.list</code> à l'app TikTok, mets <code>TIKTOK_STATS=true</code> dans .env puis reconnecte TikTok.</p>{% endif %}
 </div>
 <div class="card">
+  <h3>Amélioration continue du montage</h3>
+  {% if exp_on %}
+  <p>Chaque vidéo utilise la meilleure version connue de chaque réglage. <b>{{ (exp_rate*100)|round|int }} %</b> des vidéos essaient une autre version d'<b>un seul</b> réglage ; dès qu'une version fait nettement mieux sur au moins {{ exp_min }} vidéos mesurées, elle devient la version utilisée. Les meilleures et les pires actus / histoires servent aussi d'exemples à l'IA qui écrit les suivantes.</p>
+  {% else %}<p class="err">Désactivée (EXPERIMENTS=false) : les réglages du .env s'appliquent toujours.</p>{% endif %}
+  <table>
+    <tr><th>Type</th><th>Réglage</th><th>Version</th><th>Vidéos mesurées</th><th>Perf. moyenne</th><th></th></tr>
+    {% for r in experiments %}
+    <tr>
+      <td>{{ r.kind }}</td><td>{{ r.factor }}</td><td>{{ r.variant }}</td><td>{{ r.n }}</td>
+      <td>{% if r.perf is not none %}{{ (r.perf*100)|round|int }} %{% else %}–{% endif %}</td>
+      <td>{% if r.used %}✅ utilisée{% if not r.default %} (a battu le défaut){% endif %}{% else %}<span class="mut">en essai</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+<div class="card">
   <h3>Seuil de publication</h3>
   <p>Ne partent tout seuls que les clips notés au moins <b>{{ min_llm|round|int }}/10</b> par l'IA (avant et après relecture){% if top_pct %} et dans les <b>{{ top_pct|round|int }} % meilleurs</b> de la semaine{% if bar is not none %} (score ≥ {{ '%.2f'|format(bar) }}){% else %} (seuil relatif actif dès qu'il y a assez de clips pour comparer){% endif %}{% endif %}. Les autres restent dans <a href="/clips">Clips</a>, publiables à la main.</p>
   <p>Bilan de chaque Short après sa publication : {% for k, label in verdicts.items() %}{{ label }} {{ counts[k] }}{% if not loop.last %} · {% endif %}{% endfor %}</p>

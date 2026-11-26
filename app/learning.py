@@ -230,7 +230,8 @@ def _pct(x: float) -> str:
 def learn(force: bool = False) -> dict:
     """Met à jour les réglages si de nouveaux clips ont été mesurés. Renvoie un résumé."""
     cfg = get_settings()
-    rows = _clip_rows(performances())
+    perf = performances()
+    rows = _clip_rows(perf)
     n = len(rows)
     prev_t = latest()
     if n < cfg.learn_min_clips:
@@ -333,7 +334,15 @@ def learn(force: bool = False) -> dict:
     if effect:
         insights.append(effect + " Les rafales sont écartées de l'apprentissage.")
 
-    # 9. Exemples + règles écrites par l'IA locale
+    # 9. Versions du montage essayées (voix, débit, zoom, sous-titres…) qui ont fait mieux que le défaut
+    try:
+        from . import experiments
+
+        insights += experiments.insights(perf)
+    except Exception:
+        log.exception("Bilan des essais de montage impossible")
+
+    # 10. Exemples + règles écrites par l'IA locale
     ordered = sorted(rows, key=lambda r: -r["perf"])
     pick = lambda r: {"title": r["title"], "hook": r.get("hook", ""), "text": r.get("text", ""),  # noqa: E731
                       "perf": round(r["perf"], 2)}
