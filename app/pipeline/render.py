@@ -117,6 +117,16 @@ AUDIO_ARGS = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
 COLOR_ARGS = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
 
 
+# Autour de loudnorm : flux remis à 48 kHz et instants recalculés d'après le nombre d'échantillons (le son monté
+# est continu depuis 0). Sans ça, sur un clip en plusieurs morceaux (blancs coupés, donc presque tous),
+# loudnorm ressortait ses 3 premières secondes de réserve avec des instants tassés (« Non-monotonic DTS ») :
+# ~0,6 s de son haché puis ~2,4 s de trou au début du clip, et plus loin un saut de quelques dizaines de ms.
+CLEAN_TS = "aresample=48000,asetpts=N/SR/TB"
+
+
+def loud_chain(afilter: str) -> str:
+    return f"{CLEAN_TS},{afilter},{CLEAN_TS}"
+
 FADE = 0.02  # s de fondu à chaque raccord : pas de « clic » quand un blanc est coupé au milieu d'une onde
 SYNC = "aresample=async=1:first_pts=0"  # trous du son remplis de silence : son et image restent calés
 
@@ -265,12 +275,12 @@ def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, cod
     if overlay:
         cmd += ["-i", overlay]
     if n > 1:
-        cmd += ["-filter_complex", vf + f"[v];[ca]{afilter}[a]", "-map", "[v]", "-map", "[a]"]
+        cmd += ["-filter_complex", vf + f"[v];[ca]{loud_chain(afilter)}[a]", "-map", "[v]", "-map", "[a]"]
     else:
         cmd += ["-filter_complex", vf + "[v]",
                 "-map", "[v]", "-map", "0:a:0?"]
     cmd += video_args(codec)
-    cmd += AUDIO_ARGS + ([] if n > 1 else ["-af", piece_audio(*pieces[0]) + "," + afilter])
+    cmd += AUDIO_ARGS + ([] if n > 1 else ["-af", f"{piece_audio(*pieces[0])},{loud_chain(afilter)}"])
     cmd += ["-movflags", "+faststart", str(out)]
     return cmd
 

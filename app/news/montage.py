@@ -189,7 +189,7 @@ def final_cmd(video: Path, voice: Path, header: str, ass_name: str, out: Path, t
         af += voice_label + "".join(extra) + f"amix=inputs={1 + len(extra)}:duration=first:normalize=0,"
     else:
         af += voice_label + "anull,"
-    af += render.AUDIO + "[a]"
+    af += render.loud_chain(render.AUDIO) + "[a]"  # instants du son recalés autour de loudnorm
     cmd += ["-filter_complex", vf + ";" + af, "-map", "[v]", "-map", "[a]", "-t", f"{total:.2f}"]
     cmd += render.video_args(codec)
     cmd += ["-r", str(FPS)] + render.AUDIO_ARGS + ["-movflags", "+faststart", str(out)]
