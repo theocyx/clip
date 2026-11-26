@@ -121,9 +121,44 @@ FADE = 0.02  # s de fondu à chaque raccord : pas de « clic » quand un blanc e
 SYNC = "aresample=async=1:first_pts=0"  # trous du son remplis de silence : son et image restent calés
 
 
-def piece_audio(dur: float) -> str:
-    """Traitement du son d'un morceau avant le recollage : calé sur l'image, fondus très courts aux deux bouts."""
-    return f"{SYNC},afade=t=in:d={FADE},afade=t=out:st={max(0.0, dur - FADE):.3f}:d={FADE}"
+# Les lives sont enregistrés en MPEG-TS, un format sans index : un « -ss » posé pile au début du morceau tombe
+# souvent APRÈS l'image clé précédente, et la durée « -t » est alors comptée depuis la 1re image décodable.
+# Résultat : image figée au début du clip (jusqu'à 2 s sur Twitch), vidéo qui déborde après la fin du morceau
+# pendant que le son s'arrête (trou de son à chaque coupure de blanc, le son ne colle plus à l'image), et
+# décodeur audio relancé sans son contexte (son abîmé sur les premiers instants).
+# On ouvre donc la source PREROLL s plus tôt (et un peu plus longtemps), puis trim / atrim découpent le morceau
+# exact d'après les instants des images et des échantillons.
+PREROLL = 4.0
+TAIL_MARGIN = 2.0
+
+
+def preroll(a: float) -> float:
+    return round(min(PREROLL, max(0.0, a)), 3)
+
+
+def seek_args(src: Path, a: float, b: float) -> list[str]:
+    """Entrée ffmpeg du morceau [a, b] de la source : ouverte preroll(a) s plus tôt et lue un peu plus loin,
+    le morceau exact étant découpé ensuite par trim_video / trim_audio."""
+    p = preroll(a)
+    return ["-ss", f"{a - p:.3f}", "-t", f"{b - a + p + TAIL_MARGIN:.3f}", "-i", str(src)]
+
+
+def trim_video(a: float, b: float) -> str:
+    p = preroll(a)
+    return f"trim=start={p:.3f}:end={p + b - a:.3f},setpts=PTS-STARTPTS"
+
+
+def trim_audio(a: float, b: float) -> str:
+    p = preroll(a)
+    return f"atrim=start={p:.3f}:end={p + b - a:.3f},asetpts=PTS-STARTPTS"
+
+
+def piece_audio(a: float, b: float) -> str:
+    """Son d'un morceau [a, b] de la source : calé sur l'image (trous remplis de silence), découpé à l'échantillon
+    près, fondus très courts aux deux bouts (pas de « clic » aux raccords)."""
+    dur = b - a
+    return (f"{SYNC},{trim_audio(a, b)},"
+            f"afade=t=in:d={FADE},afade=t=out:st={max(0.0, dur - FADE):.3f}:d={FADE}")
 
 
 def video_args(codec: str) -> list[str]:
@@ -162,10 +197,11 @@ def measure_loudness(src: Path, pieces: list[tuple[float, float]]) -> dict | Non
     try:
         cmd = ["ffmpeg", "-hide_banner", "-nostats"]
         for a, b in pieces:
-            cmd += ["-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(src)]
+            cmd += seek_args(src, a, b)
         n = len(pieces)
-        chain = ("".join(f"[{i}:a]{SYNC}[m{i}];" for i in range(n)) + "".join(f"[m{i}]" for i in range(n))
-                 + f"concat=n={n}:v=0:a=1," if n > 1 else f"[0:a]{SYNC},")
+        heads = [f"{SYNC},{trim_audio(a, b)}" for a, b in pieces]
+        chain = ("".join(f"[{i}:a]{h}[m{i}];" for i, h in enumerate(heads)) + "".join(f"[m{i}]" for i in range(n))
+                 + f"concat=n={n}:v=0:a=1," if n > 1 else f"[0:a]{heads[0]},")
         cmd += ["-filter_complex", chain + AUDIO + ":print_format=json[a]", "-map", "[a]", "-f", "null", "-"]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         found = re.findall(r"\{[^{}]*\}", proc.stderr or "")
@@ -202,9 +238,13 @@ def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, cod
     vf = ""
     src_v = "[0:v]"
     if n > 1:  # morceaux bout à bout (extrait d'ouverture, clip sans les blancs), son calé et raccords sans clic
-        vf = "".join(f"[{i}:a]{piece_audio(b - a)}[pa{i}];" for i, (a, b) in enumerate(pieces))
-        vf += "".join(f"[{i}:v][pa{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[cv][ca];"
+        vf = "".join(f"[{i}:a]{piece_audio(a, b)}[pa{i}];" for i, (a, b) in enumerate(pieces))
+        vf += "".join(f"[{i}:v]{trim_video(a, b)}[pv{i}];" for i, (a, b) in enumerate(pieces))
+        vf += "".join(f"[pv{i}][pa{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[cv][ca];"
         src_v = "[cv]"
+    else:
+        vf = f"[0:v]{trim_video(*pieces[0])}[sv];"
+        src_v = "[sv]"
     vf += layout_filter(cam, s.split_cam_height, src_v, punch)
     if teaser:  # court flash blanc pour marquer le retour au début
         t0 = teaser[1] - teaser[0]
@@ -221,7 +261,7 @@ def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, cod
         cmd += ["-vaapi_device", s.vaapi_device or "/dev/dri/renderD128"]
         vf += ",format=nv12,hwupload"
     for a, b in pieces:
-        cmd += ["-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(src)]
+        cmd += seek_args(src, a, b)
     if overlay:
         cmd += ["-i", overlay]
     if n > 1:
@@ -230,7 +270,7 @@ def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, cod
         cmd += ["-filter_complex", vf + "[v]",
                 "-map", "[v]", "-map", "0:a:0?"]
     cmd += video_args(codec)
-    cmd += AUDIO_ARGS + ([] if n > 1 else ["-af", piece_audio(total) + "," + afilter])
+    cmd += AUDIO_ARGS + ([] if n > 1 else ["-af", piece_audio(*pieces[0]) + "," + afilter])
     cmd += ["-movflags", "+faststart", str(out)]
     return cmd
 
