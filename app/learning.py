@@ -168,8 +168,14 @@ def is_burst(gap: float | None) -> bool:
     return m > 0 and gap is not None and gap < m
 
 
-def performances() -> dict[int, float]:
-    """{clip_id: performance 0-1}, comparée aux autres clips de la même plateforme."""
+def interaction_rate(st: PostStat) -> float:
+    """Interactions pour 1 vue : un commentaire vaut 2 likes, un partage 3 (plus rares, plus forts pour la
+    diffusion et pour la chaîne)."""
+    return (st.likes + 2 * st.comments + 3 * st.shares) / max(st.views, 1)
+
+
+def _rows_at_age() -> dict[str, list[tuple[int, PostStat]]]:
+    """{plateforme: [(clip_id, relevé à LEARN_AGE_HOURS)]} des Shorts publiés hors rafale."""
     cfg = get_settings()
     with db.session() as s:
         posts = s.exec(select(Post).where(Post.status == "published", Post.published_at != None,  # noqa: E711
@@ -179,7 +185,7 @@ def performances() -> dict[int, float]:
     for st in stats:
         by_post.setdefault(st.post_id, []).append(st)
     burst = {pid for pid, g in gaps(posts).items() if is_burst(g)}
-    per_clip: dict[int, list[float]] = {}
+    out: dict[str, list[tuple[int, PostStat]]] = {}
     for platform in SHORTS:
         rows = []
         for p in posts:
@@ -187,12 +193,36 @@ def performances() -> dict[int, float]:
                 continue
             if p.platform == platform and (snap := snapshot_at_age(p, by_post.get(p.id, []), cfg.learn_age_hours)):
                 rows.append((p.clip_id, snap))
+        out[platform] = rows
+    return out
+
+
+def engagement() -> dict[int, float]:
+    """{clip_id: 0-1} : taux d'interaction (likes, commentaires, partages pour 1 vue) comparé aux autres Shorts
+    de la plateforme. Sert à juger les essais faits pour les interactions (question, appel à l'écran)."""
+    per_clip: dict[int, list[float]] = {}
+    for rows in _rows_at_age().values():
+        rows = [(cid, st) for cid, st in rows if st.views >= 20]  # trop peu de vues : taux sans valeur
+        if len(rows) < 3:
+            continue
+        rate = np.array([interaction_rate(st) for _, st in rows])
+        if rate.std() < 1e-9:
+            continue
+        for (cid, _), r in zip(rows, _rank01(rate)):
+            per_clip.setdefault(cid, []).append(float(r))
+    return {cid: sum(v) / len(v) for cid, v in per_clip.items()}
+
+
+def performances() -> dict[int, float]:
+    """{clip_id: performance 0-1}, comparée aux autres clips de la même plateforme."""
+    per_clip: dict[int, list[float]] = {}
+    for rows in _rows_at_age().values():
         if len(rows) < 3:
             continue
         views = np.array([st.views for _, st in rows], float)
         if views.std() < 1e-9:  # toutes privées ou à 0 vue : rien à apprendre
             continue
-        eng = np.array([(st.likes + st.comments + st.shares) / max(st.views, 1) for _, st in rows])
+        eng = np.array([interaction_rate(st) for _, st in rows])
         ret = np.array([st.avg_view_pct if st.avg_view_pct is not None else np.nan for _, st in rows])
         score = 0.6 * _z(np.log1p(views)) + 0.25 * _z(eng)
         if np.isfinite(ret).sum() >= 3:  # la rétention décide de la diffusion des Shorts : elle compte autant

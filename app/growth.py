@@ -157,7 +157,10 @@ def by_kind(days: float | None = None, min_age_h: float | None = None) -> dict[s
                      "ret": float(np.mean(rets)) if rets else None,
                      "subs": int(sum(subs)) if subs else None,
                      "subs_1k": (1000 * sum(subs) / total) if subs and total else None,
-                     "minutes": float(sum(st.minutes or 0 for st in sts))}
+                     "minutes": float(sum(st.minutes or 0 for st in sts)),
+                     "likes": int(sum(st.likes for st in sts)), "comments": int(sum(st.comments for st in sts)),
+                     "shares": int(sum(st.shares for st in sts)),
+                     "eng_1k": (1000 * sum(st.likes + st.comments + st.shares for st in sts) / total) if total else None}
     return out
 
 

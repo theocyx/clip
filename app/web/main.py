@@ -286,7 +286,8 @@ def gta6_mode(mode: str = Form(...)):
 def accounts_status() -> dict:
     return {
         "youtube": {"configured": youtube.configured(), "account": creds.account("youtube"),
-                    "connected": creds.load("youtube") is not None, "expired": youtube.auth_error()},
+                    "connected": creds.load("youtube") is not None, "expired": youtube.auth_error(),
+                    "comments": youtube.can_comment()},
         "tiktok": {"configured": tiktok.configured(), "account": creds.account("tiktok"),
                    "connected": creds.load("tiktok") is not None},
     }
@@ -720,7 +721,8 @@ def stats_page(request: Request, refreshing: bool = False):
         "exp_on": get_settings().experiments, "exp_rate": get_settings().experiment_rate,
         "exp_min": get_settings().experiment_min, "growth": growth.progress(), "kinds": growth.by_kind(),
         "mix": growth.mix(), "mix_on": get_settings().growth_mix, "mix_days": get_settings().mix_days,
-        "compil": compil.status(), "sub_url": growth.subscribe_url()})
+        "compil": compil.status(), "sub_url": growth.subscribe_url(), "can_comment": youtube.can_comment(),
+        "comments_on": get_settings().first_comment})
 
 
 @app.post("/compil")

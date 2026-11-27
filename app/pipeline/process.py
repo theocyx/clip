@@ -297,7 +297,8 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
     return moments
 
 
-CTA_TEXT = "ABONNE-TOI POUR PLUS DE GTA 6"  # appel à s'abonner en fin de clip (essai « cta »)
+# appel à l'écran en fin de clip (essai « cta », jugé sur les interactions)
+CTA_TEXTS = {"abonne": "ABONNE-TOI POUR PLUS DE GTA 6", "partage": "ENVOIE ÇA À UN POTE QUI JOUE À GTA"}
 
 
 def render_moments(video: Video, src: Path, segments: list[dict], moments: list) -> int:
@@ -330,7 +331,8 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
         exp = experiments.choose("clip")  # versions du montage (amélioration continue)
         keywords = experiments.on(exp, "keywords")
         pop = experiments.on(exp, "pop")
-        cta = CTA_TEXT if experiments.on(exp, "cta") else ""
+        cta = CTA_TEXTS.get(experiments.value(exp, "cta"), "")
+        ask = experiments.on(exp, "ask")
         tease = None
         if use_teaser(tun):
             tease = highlights.teaser(segments, m.features.get("peak"), parts[0][0], m.end, s.teaser_seconds)
@@ -354,7 +356,7 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                 body = (highlights.cut_silences(segments, a, b, s.silence_min, max_frac=s.silence_max_pct / 100,
                                                   min_len=s.clip_min) if s.cut_silences else [(a, b)])
                 end_text = (engage.end_card(m.features.get("question", ""), i, len(parts))
-                            if s.end_card and s.end_question else "")
+                            if ask and s.end_question else "")
                 punch = punch_windows(m.features.get("peak"), body, t_i) if experiments.on(exp, "zoom") else None
                 try:
                     pieces = ([t_i] if t_i else []) + body

@@ -15,7 +15,8 @@ from zoneinfo import ZoneInfo
 
 from sqlmodel import col, select
 
-from . import compile as compil, curate, db, discovery, growth, gta6, health, learning, maintenance, notify, platforms
+from . import compile as compil, curate, db, discovery, growth, gta6, health, interact, learning, maintenance, notify, \
+    platforms
 from .config import get_settings
 from .models import Clip, ClipInfo, Post, Source, Video, now
 from .news import generate as news
@@ -462,9 +463,9 @@ def description(clip: Clip, video: Video) -> tuple[str, list[str]]:
     ask = clip_question(clip)
     if ask:
         lines += [ask, ""]
-    sub = growth.subscribe_line("clip")
-    if sub:
-        lines += [sub, ""]
+    extra = [x for x in (interact.share_line("clip"), growth.subscribe_line("clip")) if x]
+    if extra:
+        lines += extra + [""]
     if name:
         lines += [f"🎮 Streamer : {name}", f"👉 Sa chaîne : {channel}", ""]
     lines += [f"Extrait de : {video.title}", video.url, "", " ".join("#" + t for t in tags_)]
@@ -855,6 +856,10 @@ def publish_loop():
                 publish_once(platform)
             except Exception:
                 log.exception("Erreur de publication")
+        try:
+            interact.run()  # 1er commentaire de la chaîne sous les vidéos qui viennent de partir
+        except Exception:
+            log.exception("1er commentaire impossible")
         stop.wait(60)
 
 

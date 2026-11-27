@@ -193,10 +193,12 @@ def texts(kind: str, items: list[dict], starts: list[float], at: datetime | None
         title = f"L'actu de la semaine en {n} vidéos (semaine du {monday})"
         intro = f"Les {n} infos de la semaine du {monday}, résumées en 1 minute chacune."
         tags = ["actu", "actualité", "info", "news"]
+    from . import interact
+
     lines = [intro, ""]
-    sub = growth.subscribe_line(kind)
-    if sub:
-        lines += [sub, ""]
+    extra = [x for x in (interact.share_line("compil" if kind == "clip" else kind), growth.subscribe_line(kind)) if x]
+    if extra:
+        lines += extra + [""]
     lines.append("Chapitres :")
     for i, (x, t0) in enumerate(zip(items, starts)):
         who = f"{x['streamer']} : " if kind == "clip" and x["streamer"] and x["streamer"].lower() not in \

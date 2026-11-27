@@ -180,8 +180,9 @@ def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: s
         lines.append(f"Dialogue: 3,{ts(dur - end_seconds)},{ts(dur)},Ask,,0,0,0,,"
                      rf"{{\fad(150,0)\t(0,180,\fscx108\fscy108)\t(180,320,\fscx100\fscy100)}}{ask}")
     if cta and dur > cta_seconds + 5:
+        txt = NL.join(_escape(x) for x in hook_lines(cta, per_line=20, max_lines=2))
         lines.append(f"Dialogue: 4,{ts(dur - cta_seconds)},{ts(dur)},Cta,,0,0,0,,"
-                     rf"{{\fad(120,0)\t(0,160,\fscx112\fscy112)\t(160,300,\fscx100\fscy100)}}{_escape(cta)}")
+                     rf"{{\fad(120,0)\t(0,160,\fscx112\fscy112)\t(160,300,\fscx100\fscy100)}}{txt}")
     groups = [g for ws in words_in_pieces(segments, pieces) for g in group_words(ws)]
     for gi, g in enumerate(groups):
         g_end = g[-1]["end"]

@@ -33,8 +33,9 @@ Règles pour être vu au maximum sur TikTok et YouTube Shorts (style des clips G
 - Accroche (affichée en gros sur la vidéo pendant tout le clip) : 7 à 10 mots qui décrivent CETTE situation au
   présent, ton oral et drôle, avec {name_hook} et « GTA 6 » si ça colle. Jamais un résumé plat, une promesse
   fausse, ni une lettre à la place d'un nom.
-- Question : une question courte (8 mots max) sur CE moment, à laquelle tout le monde a envie de répondre en
-  commentaire (avis, choix, pronostic : « Il aurait dû fuir ou se rendre ? », « Tu lui pardonnes ? »).
+- Question : une question courte (8 mots max) sur CE moment, qui oblige à choisir son camp et à laquelle on
+  répond en un mot dans les commentaires (deux options, oui ou non, pronostic : « Il aurait dû fuir ou se
+  rendre ? », « Tu lui pardonnes ? »). Jamais un simple « ton avis ? ».
 Réponds UNIQUEMENT en JSON : {{"pub": <true|false>, "score": <entier 1-10>, "title": "<titre en français, 60 caractères max, sans hashtag>", "hook": "<accroche affichée sur la vidéo, 7 à 10 mots, terminée par 1 emoji en lien avec le contenu (ex. 😭 💀 😂 🤯 😱), sans hashtag>", "question": "<question courte pour les commentaires>"}}"""
 
 
@@ -169,7 +170,8 @@ Accroche affichée en haut de la vidéo : « {hook} »
 2. Améliore le titre : 30 à 60 caractères, ce qui se passe vraiment, à l'oral comme un pote qui raconte
    (le streamer + ce qu'il fait ou sa réaction + « GTA 6 »), curiosité sans dévoiler la fin, sans hashtag, sans « live » ni « stream », sans guillemets, jamais vulgaire
    ni trompeur (ne promets rien qui n'est pas dans l'extrait). Garde le titre actuel s'il est déjà excellent.{recent}
-3. Une question courte (8 mots max) sur CE moment, qui donne envie de répondre en commentaire.
+3. Une question courte (8 mots max) sur CE moment, qui oblige à choisir son camp et se répond en un mot
+   dans les commentaires (deux options, oui ou non, ou un pronostic). Jamais un simple « ton avis ? ».
 Réponds UNIQUEMENT en JSON : {{"score": <entier 1-10>, "title": "<titre>", "question": "<question>"}}"""
 
 

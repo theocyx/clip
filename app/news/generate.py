@@ -495,10 +495,11 @@ def description(clip: Clip, info: dict, hashtags_default: list[str], question_li
     lines = [clip.title, ""]
     if question_line:
         lines += [question_line, ""]
-    from .. import growth
-    sub = growth.subscribe_line("story" if info.get("story") else "news")
-    if sub:
-        lines += [sub, ""]
+    from .. import growth, interact
+    kind = "story" if info.get("story") else "news"
+    extra = [x for x in (interact.share_line(kind), growth.subscribe_line(kind)) if x]
+    if extra:
+        lines += extra + [""]
     if info.get("source"):
         lines += [f"📰 Source : {info['source']}", info.get("source_url", ""), ""]
     for c in info.get("credits") or []:
