@@ -946,6 +946,10 @@ def compil_loop():
     compil.loop(stop)
 
 
+def community_loop():
+    interact.community_loop(stop)
+
+
 def shutdown(*_):
     """Arrêt demandé (docker compose up --build, restart…) : on termine proprement."""
     if stop.is_set():
@@ -994,7 +998,7 @@ def main():
     crashed = health.started("worker")
     threads = [threading.Thread(target=supervised(f), daemon=True, name=f.__name__)
                for f in (poll_loop, record_loop, download_loop, process_loop, publish_loop, stats_loop, maintenance_loop,
-                         discover_loop, news_loop, compil_loop)]
+                         discover_loop, news_loop, compil_loop, community_loop)]
     for t in threads:
         t.start()
     threading.Thread(target=sponsor_purge, daemon=True, name="sponsor_purge").start()

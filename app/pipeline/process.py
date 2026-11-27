@@ -231,7 +231,7 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
     use_llm = which != "none"
     # réglages appris des clips déjà publiés, avec une petite variation pour continuer à tester
     tun = learning.current()
-    target = tun["clip_target"] * random.uniform(1 - s.explore, 1 + s.explore)
+    target = tun["clip_target"] * random.uniform(1 - s.duration_explore, 1 + s.duration_explore)
     max_len = learning.max_len()
     target = min(max(target, s.clip_min), max_len)
     guidance = learning.guidance(tun) if use_llm else ""
@@ -274,6 +274,8 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
         recent.insert(0, m.title)
         question = engage.clean_question(rated[3]) if rated and len(rated) > 3 else ""
         m.features["question"] = question or engage.fallback_question(text, m.title)
+        m.features["quote"] = engage.pick_quote(rated[4] if rated and len(rated) > 4 else "", text)
+        m.features["streamer"] = streamer
         m.features.update(heur=round(heur, 3), llm=rated[0] if rated else None, target=round(target, 1),
                           tuning_id=tun.get("tuning_id"), text=text[:400],
                           dedupe_text=text[:dedupe.TEXT_CHARS],
@@ -439,6 +441,20 @@ def make_thumbnail(video: Video, src: Path, out: Path, m, cam, text: str, a: flo
 CTA_TEXTS = {"abonne": "ABONNE-TOI POUR PLUS DE GTA 6", "partage": "ENVOIE ÇA À UN POTE QUI JOUE À GTA"}
 
 
+def citation_title(video: Video, m, exp: dict) -> str:
+    """Essai du style de titre : « citation » (« Streamer : « phrase culte » 😭 ») remplace le titre du clip quand
+    une phrase marquante a été dite. Renvoie le style réellement utilisé (action sans citation possible)."""
+    if experiments.value(exp, "title") != "citation":
+        return "action"
+    quote = m.features.get("quote") or engage.pick_quote("", m.features.get("text", ""))
+    title = engage.tidy_title(engage.quote_title(quote, m.features.get("streamer") or streamer_name(video), m.hook))
+    if not title or engage.too_close(title, video.title, engage.recent_titles()) or engage.bad_title(title):
+        return "action"
+    m.features["title_action"] = m.title
+    m.title = title
+    return "citation"
+
+
 def render_moments(video: Video, src: Path, segments: list[dict], moments: list) -> int:
     s = get_settings()
     video_id = video.id
@@ -469,6 +485,7 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
         if not m.features.get("question"):  # analyse faite avant cette version
             m.features["question"] = engage.fallback_question(m.features.get("text", ""), m.title)
         exp = experiments.choose("clip")  # versions du montage (amélioration continue)
+        exp["title"] = citation_title(video, m, exp)
         keywords = experiments.on(exp, "keywords")
         pop = experiments.on(exp, "pop")
         cta = CTA_TEXTS.get(experiments.value(exp, "cta"), "")

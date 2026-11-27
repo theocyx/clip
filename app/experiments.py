@@ -26,7 +26,8 @@ log = logging.getLogger(__name__)
 KINDS = {"clip": "Clips", "news": "Actus", "story": "Histoires"}
 PACE = {"posee": 0.94, "normale": 1.0, "rapide": 1.07}  # multiplicateur du débit de la voix
 LABELS = {"on": "avec", "off": "sans", "posee": "posée", "normale": "normale", "rapide": "rapide",
-          "abonne": "« Abonne-toi »", "partage": "« Envoie ça à un pote »"}
+          "abonne": "« Abonne-toi »", "partage": "« Envoie ça à un pote »",
+          "action": "« Streamer fait X »", "citation": "« citation » du streamer"}
 ALIASES = {("cta", "on"): "abonne"}  # anciennes valeurs enregistrées (PR #57 : « cta » = on/off)
 MARGIN = 0.05  # écart de performance (0-1) nécessaire pour détrôner la version par défaut
 
@@ -51,6 +52,10 @@ def factors(kind: str) -> dict[str, dict]:
                     "default": onoff(s.end_card), "metric": "eng"},
             "cta": {"label": "Appel à l'écran en fin de clip", "variants": ["off", "abonne", "partage"],
                     "default": "abonne" if s.clip_cta else "off", "metric": "eng"},
+            # titre : jugé sur les vues ; testé sur TITLE_TEST_SHARE des clips tant qu'il n'est pas tranché
+            "title": {"label": "Style du titre", "variants": ["action", "citation"],
+                      "default": s.clip_title_style if s.clip_title_style in ("action", "citation") else "action",
+                      "ab": s.title_test_share},
         }
     if (s.news_tts or "").lower() != "edge":  # voix Piper locale : une seule voix, seul le débit varie
         return {"pace": {"label": "Débit de la voix", "variants": list(PACE), "default": "normale"}}
@@ -159,6 +164,15 @@ def choose(kind: str, rng: random.Random | None = None, perf: dict[int, float] |
         log.debug("Résultats des essais illisibles : %s", e)
         table = {}
     out = {f: winner(spec, table.get(f, {})) for f, spec in specs.items()}
+    need = max(1, s.experiment_min)
+    for f, spec in specs.items():  # essai A/B rapide (moitié des vidéos) tant qu'une version manque de mesures
+        counts = {v: len(table.get(f, {}).get(v, [])) for v in spec["variants"]}
+        if spec.get("ab") and s.experiment_rate > 0 and min(counts.values()) < need and rng.random() < spec["ab"]:
+            others = [v for v in spec["variants"] if v != out[f]]
+            least = min(counts[v] for v in others)
+            out[f] = rng.choice([v for v in others if counts[v] == least])
+            log.info("Essai A/B (%s) : « %s » = %s", KINDS.get(kind, kind), spec["label"], label(out[f]))
+            return out
     testable = [f for f, spec in specs.items() if len(spec["variants"]) > 1]
     if testable and rng.random() < s.experiment_rate:
         f = rng.choice(testable)

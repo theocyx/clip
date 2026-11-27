@@ -41,10 +41,11 @@ class Settings(BaseSettings):
     # Clips
     clips_per_video: int = 3  # nombre max de clips par vidéo d'une heure (proportionnel à la durée)
     clips_max_per_video: int = 10
-    # Durée calquée sur les TikTok GTA 6 de la chaîne qui marchent le mieux (60 à 68 s, de 40 à 84 s)
-    clip_target: float = 62.0  # durée visée (s)
-    clip_min: float = 35.0
-    clip_max: float = 75.0  # au-delà, coupé en parties si ALLOW_PARTS, sinon le clip est limité à cette durée
+    # Durée calquée sur les Shorts GTA 6 de @cyprienlefute (35 à 52 s) : un Short court est regardé jusqu'au bout
+    # et revu en boucle (chaque relecture compte comme une vue). La durée apprise des stats part de là.
+    clip_target: float = 45.0  # durée visée (s)
+    clip_min: float = 30.0
+    clip_max: float = 58.0  # au-delà, coupé en parties si ALLOW_PARTS, sinon le clip est limité à cette durée
     part_max: float = 90.0  # durée max d'une partie
     allow_parts: bool = False  # « partie 1/2, 2/2 » : la partie 2 n'est presque jamais vue en Shorts
     min_score: float = 0.0
@@ -277,11 +278,15 @@ class Settings(BaseSettings):
     learn_age_hours: float = 72  # âge auquel on compare les clips entre eux
     review_age_hours: float = 24  # chaque Short est analysé (et signalé) une fois cet âge atteint
     burst_minutes: float = 20  # Short publié moins de N min après le précédent : « rafale », écarté de l'apprentissage
-    explore: float = 0.15  # variation aléatoire de la durée visée (±15 %) pour continuer à tester
+    explore: float = 0.15  # part des clips qui testent l'autre choix appris (teaser)
+    # variation aléatoire de la durée visée (±30 % : de ~32 à ~58 s autour de 45 s) pour mesurer ce qui marche
+    duration_explore: float = 0.3
     # Amélioration continue : une part des vidéos essaie une autre version d'UN réglage de montage (voix, débit,
     # zoom, sous-titres…) ; la version qui fait les meilleures stats devient la version par défaut
     experiments: bool = True
     experiment_rate: float = 0.25  # part des vidéos qui essaient une autre version
+    clip_title_style: str = "action"  # action (« Streamer fait X GTA 6 ») ou citation (« Streamer : « phrase » 😭 »)
+    title_test_share: float = 0.5  # part des clips qui testent l'autre style de titre tant qu'il n'est pas tranché
     experiment_min: int = 4  # vidéos mesurées par version avant de pouvoir la déclarer meilleure
     sub_pop: bool = True  # sous-titres qui apparaissent avec un petit effet de rebond
 
@@ -306,6 +311,11 @@ class Settings(BaseSettings):
     # Interactions (app/interact.py) : 0 commentaire sur les 189 premiers Shorts (27/11)
     first_comment: bool = True  # la chaîne pose la question du clip en 1er commentaire (reconnexion YouTube requise)
     first_comment_delay: float = 3  # minutes après l'envoi (le temps que YouTube enregistre la vidéo)
+    comment_replies: bool = True  # la chaîne répond aux commentaires des spectateurs (IA locale)
+    reply_per_run: int = 4
+    reply_per_day: int = 40  # 50 unités de quota YouTube par réponse
+    playlists: bool = True  # chaque vidéo rangée dans une playlist par streamer (« Squeezie GTA 6 : … »)
+    community_every: float = 15  # minutes entre deux tours (réponses, playlists)
     share_line: bool = True  # « 📤 Envoie-le à un pote… » dans les descriptions YouTube
     # Compilations longues hebdomadaires (app/compile.py) : les seules vidéos qui font des heures de visionnage
     compil: bool = True  # réglable aussi depuis la page Statistiques
@@ -313,7 +323,7 @@ class Settings(BaseSettings):
     compil_day: int = 6  # jour de publication (0 = lundi … 6 = dimanche)
     compil_hour: int = 18  # heure de Paris à partir de laquelle la compilation est montée puis publiée
     compil_days: float = 7  # meilleurs Shorts des N derniers jours
-    compil_max: int = 15  # Shorts au plus dans une compilation
+    compil_max: int = 20  # Shorts au plus dans une compilation (~45 s chacun : 8 min et plus = pubs au milieu)
     compil_min: int = 6  # en dessous, pas de compilation cette semaine
     compil_min_seconds: float = 300  # 5 min au moins (sous 3 min, YouTube la prendrait pour un Short)
     compil_category: str = "20"  # 20 = Gaming (histoires : 24 = Divertissement)

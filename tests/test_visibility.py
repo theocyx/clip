@@ -117,7 +117,7 @@ def test_style_defaults():
     from app.config import Settings
     d = Settings(_env_file=None)
     assert not d.teaser and not d.punch_zoom and not d.progress_bar and not d.end_card
-    assert 60 <= d.clip_target <= 68 and d.tiktok_max_hashtags == 2
+    assert 40 <= d.clip_target <= 50 and d.clip_max < 60 and d.tiktok_max_hashtags == 2
 
 
 def test_rate_prompt_names_streamer(monkeypatch):
