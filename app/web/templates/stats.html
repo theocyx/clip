@@ -1,6 +1,44 @@
 {% extends "base.html" %}{% block content %}
 {% if refreshing %}<div class="card ok">Relevé et analyse lancés en arrière-plan, recharge la page dans une minute.</div>{% endif %}
 <div class="card">
+  <h3>Croissance de la chaîne</h3>
+  {% if growth.subs is not none %}
+  <p><b>{{ growth.subs }}</b> abonnés sur {{ growth.sub_goal }}{% if growth.rate is not none %} · <b>{{ '%+.1f'|format(growth.rate) }}</b> par jour (7 derniers jours){% if growth.eta_days %} · 1000 dans ~{{ growth.eta_days }} jours à ce rythme{% endif %}{% endif %}</p>
+  <div class="bar"><i style="width:{{ growth.sub_pct|round(1) }}%"></i></div>
+  {% else %}<p class="mut">Abonnés relevés au prochain relevé des stats (bouton « Relever les stats » plus bas).</p>{% endif %}
+  <p style="margin-top:10px">Vues de nos Shorts sur 90 jours : <b>{{ '{:,}'.format(growth.shorts_views).replace(',', ' ') }}</b> / 10 M <span class="mut">(YouTube ne compte que les vues « qualifiées », un peu moins)</span></p>
+  <div class="bar"><i style="width:{{ [growth.shorts_pct, 0.5]|max|round(1) }}%"></i></div>
+  <p style="margin-top:10px">Heures de visionnage des vidéos longues (12 mois) : <b>{{ growth.hours|round(1) }} h</b> / 4000 h <span class="mut">(les Shorts n'en font pas : seules les compilations comptent)</span></p>
+  <div class="bar"><i style="width:{{ [growth.hours_pct, 0.5]|max|round(1) }}%"></i></div>
+  {% if sub_url %}<p class="mut" style="margin-top:10px">Lien « abonne-toi » ajouté aux descriptions : <a href="{{ sub_url }}" target="_blank">{{ sub_url }}</a></p>{% endif %}
+
+  <h4>Par format <span class="mut">(Shorts YouTube des {{ mix_days|round|int }} derniers jours, publiés depuis au moins 24 h)</span></h4>
+  <table>
+    <tr><th>Format</th><th>Vidéos</th><th>Vues médianes</th><th>Vues totales</th><th>Regardé</th><th>Abonnés gagnés</th><th>Abonnés / 1000 vues</th></tr>
+    {% for k, v in kinds.items() %}
+    <tr><td>{{ v.label }}</td><td>{{ v.n }}</td><td>{{ v.median|round|int }}</td><td>{{ v.total }}</td>
+      <td>{{ (v.ret|round|int ~ ' %') if v.ret is not none else '–' }}</td>
+      <td>{{ v.subs if v.subs is not none else '–' }}</td>
+      <td>{{ ('%.1f'|format(v.subs_1k)) if v.subs_1k is not none else '–' }}</td></tr>
+    {% else %}<tr><td colspan="7" class="mut">Pas encore de Short mesuré.</td></tr>{% endfor %}
+  </table>
+  <p class="mut">Abonnés gagnés par vidéo : fournis par YouTube Analytics (1 à 2 jours de retard).</p>
+
+  <h4>On double ce qui marche</h4>
+  {% if mix_on %}
+  <ul>{% for r in mix.reasons %}<li>{{ r }}</li>{% else %}<li class="mut">Rien à changer pour l'instant.</li>{% endfor %}</ul>
+  <p>Production du jour : <b>{{ mix.per_day.news }}</b> actu(s) et <b>{{ mix.per_day.story }}</b> histoire(s) par jour{% if mix.per_day.news == 0 or mix.per_day.story == 0 %} (0 = un essai tous les quelques jours seulement){% endif %}. Les clips GTA juste sous le seuil restent en réserve et partent quand la file serait vide.</p>
+  {% else %}<p class="mut">Désactivé (GROWTH_MIX=false) : NEWS_PER_DAY / STORY_PER_DAY du .env s'appliquent.</p>{% endif %}
+
+  <h4>Compilations longues (heures de visionnage)</h4>
+  <p>Chaque {{ compil.when }} : les Shorts les plus vus de la semaine ({{ compil.kinds|join(', ') }}) remontés en une vidéo 16:9 de 5 à 15 min, avec chapitres et crédits, publiée comme une vidéo normale. {% if not compil.on %}<b class="err">En pause.</b>{% endif %}</p>
+  {% for v in compil.last %}<div class="mut">{{ v.created_at|local }} · {{ v.title }} · {{ v.status }}{% if v.url %} · <a href="{{ v.url }}" target="_blank">voir</a>{% endif %}{% if v.error %} · {{ v.error }}{% endif %}</div>{% endfor %}
+  <form method="post" action="/compil" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+    <button name="action" value="now">Monter la compilation maintenant</button>
+    {% if compil.on %}<button name="action" value="off" class="sec">Mettre en pause</button>{% else %}<button name="action" value="on">Réactiver</button>{% endif %}
+  </form>
+</div>
+<div class="card">
   <h3>Ce que l'outil a appris</h3>
   {% if not learning_on %}<p class="err">Apprentissage désactivé (LEARNING=false).</p>{% endif %}
   {% if tuned_at %}
@@ -52,7 +90,7 @@
     {% for r in rows %}
     <tr>
       <td>{{ r.clip.title if r.clip else '?' }}<div class="mut">{{ r.post.published_at|local if r.post.published_at }}</div></td>
-      <td>{{ 'YouTube' if r.post.platform=='youtube' else 'TikTok' }}</td>
+      <td>{{ {'youtube': 'YouTube', 'tiktok': 'TikTok', 'youtube_long': 'YouTube (vidéo longue)'}.get(r.post.platform, r.post.platform) }}</td>
       {% if r.stat %}
       <td>{{ r.stat.views }}</td><td>{{ r.stat.likes }}</td><td>{{ r.stat.comments }}</td>
       <td>{{ (r.stat.avg_view_pct|round|int ~ ' %') if r.stat.avg_view_pct is not none else '–' }}</td>

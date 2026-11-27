@@ -8,7 +8,7 @@ os.environ.setdefault("GTA6_MODE", "off")
 for k, v in {"POST_GAP_FLOOR": "0", "DAILY_CAP": "0", "QUIET_HOURS": "", "SPREAD_POSTS": "false",
              "TOPIC_ONLY": "false", "PUBLISH_MIN_LLM": "0", "QUEUE_MAX_HOURS": "0",
              "PUBLISH_TOP_PCT": "0", "POLISH": "false", "NEWS_MAP": "false", "BURST_MINUTES": "0", "CLIP_MIN_LLM": "0",
-             "NEWS_AI_GAP": "0"}.items():
+             "NEWS_AI_GAP": "0", "RESERVE": "false", "COMPIL": "false"}.items():
     os.environ.setdefault(k, v)  # sinon le mode s'active selon la vraie date et fausse les tests
 
 import pytest

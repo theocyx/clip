@@ -95,7 +95,9 @@ class Settings(BaseSettings):
     hashtags: str = "#shorts #clip #fr"
     # Qualité plutôt que quantité : une chaîne qui publie en rafale voit chaque Short beaucoup moins poussé.
     post_gap_floor: int = 40  # écart minimum imposé entre deux envois, même si l'interface dit moins (0 = non)
-    daily_cap: int = 8  # envois max par 24 h et par plateforme, quels que soient les autres réglages (0 = aucun)
+    # envois max par jour et par plateforme, quels que soient les autres réglages (0 = aucun). 10 : les clips GTA
+    # isolés font ~400 vues chacun depuis le 23/11 ; ce sont les rafales (100/jour) qui faisaient 0 vue
+    daily_cap: int = 10
     spread_posts: bool = True  # répartit les envois restants du jour sur les heures qui restent
     quiet_hours: str = "1-8"  # jamais d'envoi à ces heures (heure de Paris), même en mode GTA 6. Vide = aucune
     publish_min_llm: float = 7  # clips notés sous ce score (sur 10) par l'IA : pas publiés automatiquement
@@ -271,6 +273,32 @@ class Settings(BaseSettings):
     experiment_rate: float = 0.25  # part des vidéos qui essaient une autre version
     experiment_min: int = 4  # vidéos mesurées par version avant de pouvoir la déclarer meilleure
     sub_pop: bool = True  # sous-titres qui apparaissent avec un petit effet de rebond
+
+    # Croissance de la chaîne (app/growth.py) : on double ce qui marche, on coupe ce qui ne marche pas
+    subscribe_link: bool = True  # lien « abonne-toi » en un clic dans les descriptions YouTube
+    growth_mix: bool = True  # le format qui fait le plus de vues passe devant, et est produit plus souvent
+    mix_days: float = 7  # Shorts des N derniers jours comparés par format (clips GTA, actus, histoires)
+    mix_min: int = 4  # Shorts mesurés par format avant de changer quoi que ce soit
+    mix_test_days: float = 3  # format qui ne marche pas : plus produit qu'une fois tous les N jours (pour retester)
+    news_max_per_day: int = 5  # au plus, quand les actus marchent mieux que le reste
+    story_max_per_day: int = 4
+    # Réserve : un clip GTA juste sous le seuil appris (note IA, top %) n'est plus jeté ; il part quand la file
+    # serait vide (le 27/11 : 87 % des clips retirés, plus un seul clip GTA en file, des créneaux perdus)
+    reserve: bool = True
+    reserve_max: int = 20  # clips gardés en réserve au plus (les mieux notés)
+    # Les streamers dont les clips marchent le mieux sont enregistrés et traités en premier
+    source_priority: bool = True
+    clip_cta: bool = False  # appel « abonne-toi » à l'écran en fin de clip (testé par l'amélioration continue)
+    # Compilations longues hebdomadaires (app/compile.py) : les seules vidéos qui font des heures de visionnage
+    compil: bool = True  # réglable aussi depuis la page Statistiques
+    compil_kinds: str = "clip"  # clip (meilleurs moments GTA), story (histoires), news, séparés par des virgules
+    compil_day: int = 6  # jour de publication (0 = lundi … 6 = dimanche)
+    compil_hour: int = 18  # heure de Paris à partir de laquelle la compilation est montée puis publiée
+    compil_days: float = 7  # meilleurs Shorts des N derniers jours
+    compil_max: int = 15  # Shorts au plus dans une compilation
+    compil_min: int = 6  # en dessous, pas de compilation cette semaine
+    compil_min_seconds: float = 300  # 5 min au moins (sous 3 min, YouTube la prendrait pour un Short)
+    compil_category: str = "20"  # 20 = Gaming (histoires : 24 = Divertissement)
 
     @property
     def db_path(self) -> Path:

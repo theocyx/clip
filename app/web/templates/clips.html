@@ -31,7 +31,7 @@
     <div style="margin:8px 0">
       {% for p in posts.get(c.id, []) %}{% set k, r = st.get(p.platform, (p.status, None)) %}
         <span class="badge {{ 'ok' if k in ('published','manual','today') else 'err' if k in ('failed','todo') else '' }}" title="{{ p.error }}">
-          {{ 'YouTube' if p.platform=='youtube' else 'TikTok' }} :
+          {{ {'youtube': 'YouTube', 'tiktok': 'TikTok', 'youtube_long': 'YouTube (vidéo longue)'}.get(p.platform, p.platform) }} :
           {% if k == 'today' %}auto aujourd'hui (n°{{ r }}){% elif k == 'todo' %}à poster à la main{% else %}{{ {'publishing':'envoi…','published':'publié auto','manual':'posté à la main','failed':'échec','cancelled':'annulé'}.get(k, k) }}{% endif %}</span>
       {% endfor %}
     </div>

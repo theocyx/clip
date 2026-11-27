@@ -297,6 +297,9 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
     return moments
 
 
+CTA_TEXT = "ABONNE-TOI POUR PLUS DE GTA 6"  # appel à s'abonner en fin de clip (essai « cta »)
+
+
 def render_moments(video: Video, src: Path, segments: list[dict], moments: list) -> int:
     s = get_settings()
     video_id = video.id
@@ -327,6 +330,7 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
         exp = experiments.choose("clip")  # versions du montage (amélioration continue)
         keywords = experiments.on(exp, "keywords")
         pop = experiments.on(exp, "pop")
+        cta = CTA_TEXT if experiments.on(exp, "cta") else ""
         tease = None
         if use_teaser(tun):
             tease = highlights.teaser(segments, m.features.get("peak"), parts[0][0], m.end, s.teaser_seconds)
@@ -358,7 +362,7 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                                               hook_in_ass=not png, top=top,
                                               pieces=pieces if len(pieces) > 1 else None,
                                               end_text=end_text, end_seconds=s.end_seconds,
-                                              keywords=keywords, pop=pop)
+                                              keywords=keywords, pop=pop, cta=cta)
                     render.render(src, a, b, ass, out, png, s.hook_seconds, cam, t_i, body if len(body) > 1 else None,
                                   punch, s.progress_bar)
                 except RuntimeError as e:
@@ -368,7 +372,7 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                     t_i, body, punch = None, [(a, b)], None
                     ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook_text, s.hook_seconds,
                                               hook_in_ass=not png, top=top, end_text=end_text,
-                                              end_seconds=s.end_seconds, keywords=keywords, pop=pop)
+                                              end_seconds=s.end_seconds, keywords=keywords, pop=pop, cta=cta)
                     render.render(src, a, b, ass, out, png, s.hook_seconds, cam)
             except Exception as e:
                 log.exception("Rendu échoué")

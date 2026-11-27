@@ -103,6 +103,8 @@ class PostStat(SQLModel, table=True):
     shares: int = 0
     avg_view_pct: Optional[float] = None  # rétention moyenne (% du clip regardé), YouTube seulement
     avg_view_s: Optional[float] = None
+    subs: Optional[int] = None  # abonnés gagnés grâce à cette vidéo (YouTube Analytics)
+    minutes: Optional[float] = None  # minutes regardées au total (heures de visionnage, YouTube Analytics)
 
 
 class Tuning(SQLModel, table=True):

@@ -99,14 +99,33 @@ def in_hours(at: datetime | None = None) -> bool:
     return not ranges or _in_ranges(ranges, at or _local_now())
 
 
-def due() -> bool:
+def made_since(hours: float, kind: str = "news") -> int:
+    with db.session() as s:
+        keys = s.exec(select(Video.key).where(col(Video.key).startswith(PREFIX), Video.status == "done",
+                                              Video.created_at >= now() - timedelta(hours=hours))).all()
+    return sum(1 for k in keys if (k or "").startswith(STORY_PREFIX) == (kind == "story"))
+
+
+def quota(kind: str = "news") -> int:
+    """Vidéos à faire aujourd'hui : NEWS_PER_DAY / STORY_PER_DAY, ajusté par les stats (growth.mix). Un format
+    qui ne marche pas tombe à 0, avec un essai tous les MIX_TEST_DAYS jours pour voir si ça change."""
+    from .. import growth
+
     s = get_settings()
-    return enabled() and in_hours() and made_today() < s.news_per_day
+    if (s.news_per_day if kind == "news" else s.story_per_day) <= 0:
+        return 0
+    n = growth.per_day(kind)
+    if n > 0:
+        return n
+    return 1 if made_since(24 * max(1.0, get_settings().mix_test_days), kind) == 0 else 0
+
+
+def due() -> bool:
+    return enabled() and in_hours() and made_today() < quota("news")
 
 
 def story_due() -> bool:
-    s = get_settings()
-    return stories_enabled() and in_hours() and made_today("story") < s.story_per_day
+    return stories_enabled() and in_hours() and made_today("story") < quota("story")
 
 
 # ---------- choix du sujet ----------
@@ -476,6 +495,10 @@ def description(clip: Clip, info: dict, hashtags_default: list[str], question_li
     lines = [clip.title, ""]
     if question_line:
         lines += [question_line, ""]
+    from .. import growth
+    sub = growth.subscribe_line("story" if info.get("story") else "news")
+    if sub:
+        lines += [sub, ""]
     if info.get("source"):
         lines += [f"📰 Source : {info['source']}", info.get("source_url", ""), ""]
     for c in info.get("credits") or []:
@@ -506,8 +529,8 @@ def status() -> dict:
         pending = ss.exec(select(Post.id).join(Clip, Clip.id == Post.clip_id).join(Video, Video.id == Clip.video_id)
                           .where(col(Video.key).startswith(PREFIX), Post.status == "pending")).all()
     from . import stories
-    return {"on": enabled(), "today": made_today(), "per_day": s.news_per_day, "topic": s.news_topic,
-            "stories_on": stories_enabled(), "stories_today": made_today("story"), "story_per_day": s.story_per_day,
+    return {"on": enabled(), "today": made_today(), "per_day": quota("news"), "topic": s.news_topic,
+            "stories_on": stories_enabled(), "stories_today": made_today("story"), "story_per_day": quota("story"),
             "stories_left": stories.left(), "ai_images": s.news_ai_images,
             "hours": s.news_hours, "pexels": bool(s.pexels_api_key), "publish": s.news_publish and s.auto_publish,
             "last": last, "pending": len(pending),
