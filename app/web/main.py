@@ -11,7 +11,8 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import col, func, select
 
@@ -25,7 +26,10 @@ from ..publish import creds, tiktok, youtube
 from . import mfa
 
 # Pages accessibles sans connexion (exigées par TikTok / Google, et la connexion elle-même).
-PUBLIC_PATHS = {"/conditions", "/confidentialite", "/privacy", "/terms", "/login", "/mfa/setup", "/healthz"}
+PUBLIC_PATHS = {"/conditions", "/confidentialite", "/privacy", "/terms", "/login", "/mfa/setup", "/healthz",
+                # appli écran d'accueil : Safari lit ces fichiers sans le cookie de connexion
+                "/manifest.webmanifest", "/sw.js", "/offline", "/apple-touch-icon.png",
+                "/apple-touch-icon-precomposed.png", "/favicon.ico"}
 log = logging.getLogger(__name__)
 VERIFY_FILE = re.compile(r"^/[A-Za-z0-9_-]{1,100}\.txt$")
 
@@ -46,6 +50,8 @@ def auth(request: Request):
 
 app = FastAPI(title="Clip", dependencies=[Depends(auth)])
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")  # icônes (publiques)
 
 
 def _local_time(dt, fmt: str = "%d/%m %H:%M") -> str:
@@ -97,6 +103,84 @@ def _shutdown():
 @app.get("/healthz", response_class=PlainTextResponse)
 def healthz():
     return "ok"
+
+
+# ---------- Appli sur l'écran d'accueil (iPhone : Safari > Partager > « Sur l'écran d'accueil ») ----------
+
+THEME = "#0f1115"
+MANIFEST = {
+    "id": "/", "name": "Clip", "short_name": "Clip", "lang": "fr", "dir": "ltr",
+    "description": "Clips verticaux automatiques pour YouTube Shorts et TikTok",
+    "start_url": "/", "scope": "/", "display": "standalone",
+    "background_color": THEME, "theme_color": THEME,
+    "icons": [
+        {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
+        {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
+        {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+    ],
+    "shortcuts": [
+        {"name": "Clips à poster", "url": "/clips?vue=manuel"},
+        {"name": "Stats", "url": "/stats"},
+    ],
+}
+
+# Service worker minimal : ne garde en cache que la page « serveur injoignable » (jamais les pages de l'outil),
+# pour qu'on puisse réessayer depuis l'appli quand le PC est éteint (pas de bouton recharger en plein écran).
+SERVICE_WORKER = """const CACHE = 'clip-v1';
+const OFFLINE = '/offline';
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll([OFFLINE, '/static/icon-192.png'])).then(() => self.skipWaiting()));
+});
+self.addEventListener('activate', e => {
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))
+    .then(() => self.clients.claim()));
+});
+self.addEventListener('fetch', e => {
+  const r = e.request;
+  if (r.method !== 'GET' || r.mode !== 'navigate') return;
+  e.respondWith(fetch(r).then(res => (res.status >= 502 && res.status <= 504) ? caches.match(OFFLINE).then(o => o || res) : res)
+    .catch(() => caches.match(OFFLINE)));
+});
+"""
+
+OFFLINE_PAGE = f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="{THEME}"><title>Clip</title>
+<style>html,body{{height:100%;margin:0;background:{THEME};color:#e8e8ea;font:16px/1.5 system-ui,sans-serif}}
+body{{display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;box-sizing:border-box}}
+img{{width:72px;height:72px;border-radius:16px}}p{{color:#9aa0aa;max-width:320px}}
+button{{background:#ffd23f;color:#111;border:0;padding:12px 22px;border-radius:10px;font:600 16px system-ui}}</style>
+</head><body><div><img src="/static/icon-192.png" alt=""><h2>Serveur injoignable</h2>
+<p>Le PC de Clip est peut-être éteint, en veille ou sans connexion. Nouvel essai automatique toutes les 15 s.</p>
+<button onclick="location.reload()">Réessayer</button></div>
+<script>setTimeout(function () {{ location.reload(); }}, 15000);</script></body></html>"""
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return JSONResponse(MANIFEST, media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+def service_worker():
+    return PlainTextResponse(SERVICE_WORKER, media_type="text/javascript",
+                             headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/offline", response_class=HTMLResponse)
+def offline_page():
+    return OFFLINE_PAGE
+
+
+@app.get("/apple-touch-icon.png")
+@app.get("/apple-touch-icon-precomposed.png")
+def apple_touch_icon():
+    return FileResponse(STATIC_DIR / "apple-touch-icon.png", media_type="image/png")
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return FileResponse(STATIC_DIR / "icon-192.png", media_type="image/png")
 
 
 # ---------- Connexion (mot de passe + code MFA) ----------

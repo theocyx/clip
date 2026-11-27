@@ -12,7 +12,7 @@
   <p class="mut">Les vidéos déjà publiées sur la chaîne sont ignorées : seules les nouvelles sont clippées. Tu peux en traiter une ancienne depuis « Vidéos » (afficher tout → Traiter) ou en collant son lien.</p>
 </div>
 <div class="card">
-  <table>
+  <table class="list">
     <tr><th>Nom</th><th>Plateforme</th><th>Options</th><th>Dernière vérif.</th><th></th></tr>
     {% for s in sources %}
     <tr>
@@ -41,7 +41,7 @@
   <p>{% if discover.env_on %}<form class="inline" method="post" action="/sources/discover/toggle"><button class="sec">{{ 'Désactiver' if discover.on else 'Activer' }}</button></form>{% else %}<span class="mut">Désactivée dans .env (DISCOVER=false).</span>{% endif %}
     <form class="inline" method="post" action="/sources/discover"><button>Chercher maintenant</button></form></p>
   {% if auto_sources %}
-  <table>
+  <table class="list">
     <tr><th>Ajoutée automatiquement</th><th>Plateforme</th><th>Vue en live GTA</th><th></th></tr>
     {% for s in auto_sources %}
     <tr>
@@ -61,7 +61,7 @@
 <div class="card">
   <h3>Streamers français suggérés (spécial GTA 6)</h3>
   <p class="mut">« Suivre » ajoute la chaîne avec le filtre <b>GTA</b> : seuls les lives et vidéos dont le titre parle de GTA sont clippés. Évite d'en suivre trop d'un coup : chaque live enregistré occupe le PC.</p>
-  <table>
+  <table class="list">
     <tr><th>Nom</th><th>Plateforme</th><th></th></tr>
     {% for c in suggestions %}
     <tr>

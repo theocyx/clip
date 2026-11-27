@@ -15,6 +15,7 @@
   {% elif accounts.youtube.configured %}
     <a class="btn" href="/auth/youtube">Connecter ma chaîne YouTube</a>
   {% else %}<p class="mut">Renseigne YOUTUBE_CLIENT_ID et YOUTUBE_CLIENT_SECRET dans .env (voir README).</p>{% endif %}
+  <p class="mut sa-only">Depuis l'appli de l'écran d'accueil, si la connexion à YouTube ou TikTok bloque, fais-la depuis Safari.</p>
   <p class="mut">URI de redirection à déclarer dans Google Cloud : <code>{{ yt_redirect }}</code></p>
 </div>
 <div class="card">

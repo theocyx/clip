@@ -24,7 +24,7 @@
 {% for c in clips %}
   {% set st = state[c.id] %}
   <div class="card">
-    {% if c.status == 'ready' %}<video src="/clips/{{ c.id }}/video" controls preload="none"></video>
+    {% if c.status == 'ready' %}<video src="/clips/{{ c.id }}/video" controls playsinline preload="none"></video>
     {% else %}<p class="err">Rendu échoué : {{ c.description[:200] }}</p>{% endif %}
     <form method="post" action="/clips/{{ c.id }}/title"><input type="text" name="title" value="{{ c.title }}" style="min-width:0;width:100%;margin:8px 0"></form>
     <div class="mut">{{ (c.end - c.start)|round|int }} s · score {{ '%.2f'|format(c.score) }}{% if c.part_count > 1 %} · partie {{ c.part }}/{{ c.part_count }}{% endif %}</div>
@@ -36,7 +36,8 @@
       {% endfor %}
     </div>
     {% if c.status == 'ready' %}
-    <a href="/clips/{{ c.id }}/download"><button class="sec" type="button">⬇ Télécharger</button></a>
+    <a class="dl" href="/clips/{{ c.id }}/download"><button class="sec" type="button">⬇ Télécharger</button></a>
+    <button class="sec" type="button" data-share="/clips/{{ c.id }}/download" data-name="clip-{{ c.id }}.mp4" hidden>📲 Enregistrer / partager</button>
     <details style="margin:8px 0"><summary>Textes à copier</summary>
       {% set t = texts[c.id] %}
       {% for label, val in [('Titre', t.title), ('Description YouTube', t.desc), ('Légende TikTok', t.tiktok), ('Hashtags', t.tags)] %}
