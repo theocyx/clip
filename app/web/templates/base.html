@@ -1,19 +1,30 @@
 <!doctype html>
 <html lang="fr">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Clip</title>
+<meta name="theme-color" content="#0f1115">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Clip"><meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="/static/icon-192.png">
 <style>
-:root{--bg:#0f1115;--card:#181b22;--fg:#e8e8ea;--mut:#9aa0aa;--acc:#ffd23f;--ok:#3ecf8e;--err:#ff5c5c;--bd:#2a2f3a}
-*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
-nav{display:flex;gap:18px;padding:14px 20px;border-bottom:1px solid var(--bd);flex-wrap:wrap}
-nav a{color:var(--fg);text-decoration:none;font-weight:600}nav a.logo{color:var(--acc)}
+:root{--bg:#0f1115;--card:#181b22;--fg:#e8e8ea;--mut:#9aa0aa;--acc:#ffd23f;--ok:#3ecf8e;--err:#ff5c5c;--bd:#2a2f3a;color-scheme:dark}
+[hidden]{display:none!important}*{box-sizing:border-box}html{background:var(--bg);-webkit-text-size-adjust:100%}
+body{margin:0;font:15px/1.5 system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);-webkit-tap-highlight-color:transparent}
+.top{display:flex;gap:18px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--bd);flex-wrap:wrap}
+.top a{color:var(--fg);text-decoration:none;font-weight:600}.top a.logo{color:var(--acc)}
+.tabs{display:flex;gap:18px;flex-wrap:wrap}.tabs svg{display:none}.tabs a.on{color:var(--acc)}
+.top .sp{flex:1}.reload{display:none}
 main{max-width:1100px;margin:0 auto;padding:20px 16px}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:16px}
 table{width:100%;border-collapse:collapse}td,th{padding:8px;border-bottom:1px solid var(--bd);text-align:left;vertical-align:top}
 th{color:var(--mut);font-weight:500}
-input[type=text],input[type=url],input[type=password]{background:#0b0d11;border:1px solid var(--bd);color:var(--fg);padding:8px 10px;border-radius:6px;min-width:260px}
-button,.btn{background:var(--acc);color:#111;border:0;padding:7px 12px;border-radius:6px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
+input[type=text],input[type=url],input[type=password],input[type=number],textarea{background:#0b0d11;border:1px solid var(--bd);color:var(--fg);padding:8px 10px;border-radius:6px}
+input[type=text],input[type=url],input[type=password]{min-width:260px}
+button,.btn{background:var(--acc);color:#111;border:0;padding:7px 12px;border-radius:6px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;touch-action:manipulation}
 button.sec{background:#2a2f3a;color:var(--fg)}button.danger{background:var(--err);color:#fff}
 form.inline{display:inline}.mut{color:var(--mut)}.ok{color:var(--ok)}.err{color:var(--err)}
 .badge{display:inline-block;padding:1px 8px;border-radius:99px;background:#2a2f3a;font-size:12px}
@@ -28,10 +39,83 @@ video{width:100%;aspect-ratio:9/16;background:#000;border-radius:8px}
 .step.done .bar i{background:var(--ok)}.step.live .bar i{width:100%!important;background:repeating-linear-gradient(90deg,var(--err) 0 8px,#2a2f3a 8px 16px)}
 @media(max-width:700px){.steps{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .stats{display:flex;gap:16px;flex-wrap:wrap}.stat{flex:1;min-width:140px}.stat b{font-size:28px;display:block}
+.sa-only{display:none}.standalone .sa-only{display:block}.standalone .reload{display:inline-block}
+.standalone.can-share .dl{display:none}
+/* Téléphone : barre d'onglets en bas comme une appli, zones sûres de l'iPhone (encoche, barre d'accueil) */
+@media(max-width:700px){
+  .top{position:sticky;top:0;z-index:20;gap:10px;background:var(--bg);
+    padding:calc(10px + env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) 10px max(14px,env(safe-area-inset-left))}
+  .top a.logo{font-size:18px}
+  .tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;display:grid;grid-template-columns:repeat(6,1fr);gap:0;
+    padding:6px max(4px,env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(4px,env(safe-area-inset-left));
+    background:rgba(15,17,21,.94);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-top:1px solid var(--bd)}
+  .tabs a{display:flex;flex-direction:column;align-items:center;gap:2px;padding:2px 0;font-size:10.5px;font-weight:500;color:var(--mut)}
+  .tabs svg{display:block;width:24px;height:24px}
+  main{padding:14px max(12px,env(safe-area-inset-right)) calc(86px + env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+  .card{padding:14px;border-radius:14px;margin-bottom:12px}
+  h3{margin:0 0 8px}
+  button,.btn{padding:10px 14px;border-radius:9px;margin:3px 0}
+  .top button{padding:7px 11px;margin:0}
+  input,textarea,select{font-size:16px!important}/* sinon Safari zoome à chaque saisie */
+  input[type=text],input[type=url],input[type=password]{min-width:0;width:100%;margin:3px 0;padding:10px 12px}
+  input[type=number]{padding:8px 10px}
+  .grid{grid-template-columns:1fr;gap:12px}
+  video{max-height:72vh}
+  table:not(.list){display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table.list tr:has(th){display:none}
+  table.list tr{display:block;border-bottom:1px solid var(--bd);padding:8px 0}
+  table.list td{display:block;border:0;padding:2px 0}
+  .stat{min-width:calc(50% - 8px)}.stat b{font-size:24px}
+}
 </style>
 </head>
 <body>
-<nav><a class="logo" href="/">✂ Clip</a><a href="/sources">Sources</a><a href="/videos">Vidéos</a><a href="/clips">Clips</a><a href="/stats">Stats</a><a href="/accounts">Comptes</a>{% block logout %}<form class="inline" method="post" action="/logout" style="margin-left:auto"><button class="sec">Déconnexion</button></form>{% endblock %}</nav>
+{% set path = request.url.path %}
+<header class="top"><a class="logo" href="/">✂ Clip</a>
+{% block tabs %}<nav class="tabs">
+{% for href, label, icon in [
+  ('/', 'Accueil', '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>'),
+  ('/sources', 'Sources', '<circle cx="12" cy="12" r="2"/><path d="M16.2 7.8a6 6 0 0 1 0 8.4M7.8 16.2a6 6 0 0 1 0-8.4M19.1 4.9a10 10 0 0 1 0 14.2M4.9 19.1a10 10 0 0 1 0-14.2"/>'),
+  ('/videos', 'Vidéos', '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9l5 3-5 3z"/>'),
+  ('/clips', 'Clips', '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/>'),
+  ('/stats', 'Stats', '<path d="M4 20h16M7 16v-4M12 16V8M17 16V5"/>'),
+  ('/accounts', 'Comptes', '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'),
+] %}<a href="{{ href }}"{% if path == href or (href != '/' and path.startswith(href ~ '/')) %} class="on" aria-current="page"{% endif %}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{{ icon|safe }}</svg>{{ label }}</a>{% endfor %}
+</nav>{% endblock %}
+<span class="sp"></span>
+<button type="button" class="sec reload" onclick="location.reload()" aria-label="Recharger la page">↻</button>
+{% block logout %}<form class="inline" method="post" action="/logout"><button class="sec">Déconnexion</button></form>{% endblock %}</header>
 <main>{% block content %}{% endblock %}</main>
+<script>
+(function () {
+  // Ouvert depuis l'écran d'accueil (plein écran, sans barre Safari) ?
+  var html = document.documentElement;
+  if (navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)) html.classList.add('standalone');
+  if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/sw.js').catch(function () {});
+  // Bouton « Enregistrer / partager » : feuille de partage de l'iPhone (Enregistrer la vidéo, TikTok, YouTube…)
+  var canShare = false;
+  try { canShare = !!(navigator.canShare && navigator.canShare({files: [new File([''], 'c.mp4', {type: 'video/mp4'})]})); } catch (e) {}
+  if (!canShare) return;
+  html.classList.add('can-share');
+  document.querySelectorAll('[data-share]').forEach(function (b) {
+    var file = null, busy = false, label = b.textContent;
+    b.hidden = false;
+    function share() {
+      navigator.share({files: [file]}).then(function () { b.textContent = label; }).catch(function (e) {
+        // Safari refuse parfois le partage après un long téléchargement : un 2e appui suffit
+        b.textContent = e && e.name === 'AbortError' ? label : '📲 Prêt : touche pour partager';
+      });
+    }
+    b.addEventListener('click', function () {
+      if (file) return share();
+      if (busy) return;
+      busy = true; b.textContent = 'Préparation…';
+      fetch(b.dataset.share, {credentials: 'same-origin'}).then(function (r) { if (!r.ok) throw r; return r.blob(); })
+        .then(function (blob) { file = new File([blob], b.dataset.name || 'clip.mp4', {type: 'video/mp4'}); busy = false; share(); })
+        .catch(function () { busy = false; b.textContent = 'Échec, réessaie'; });
+    });
+  });
+})();
+</script>
 </body>
 </html>

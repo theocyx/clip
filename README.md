@@ -71,6 +71,17 @@ Sur le tableau de bord (et la page **Comptes**), un bouton par plateforme met la
 
 Les envois du jour vont aux clips **les mieux notés**. La limite par défaut est de 100 envois/jour (quota « Video Uploads per day » de YouTube) ; tu peux en fixer une par plateforme dans **Clips** (0 = aucune). Si YouTube refuse un envoi pour quota atteint, les envois reprennent tout seuls le lendemain (minuit heure du Pacifique) et tu es notifié. Le quota réel se voit dans la console Google (YouTube Data API v3 › Quotas) (en mode GTA 6, les plus récents comptent plus). La page **Clips** affiche les envois utilisés et prévus d'ici minuit, et trie les clips en onglets : **À poster à la main** (ceux qui ne passeront pas aujourd'hui), **Prévus aujourd'hui** (avec leur ordre), **Déjà publiés** (auto ou à la main). Les **heures d'envoi** et l'écart minimum entre deux envois se changent aussi ici (ou dans **Comptes**), sans toucher au `.env`. Pour chaque clip : **Télécharger** le MP4, **Textes à copier** (titre, description, légende TikTok, hashtags), puis **✅ Posté sur YouTube/TikTok** pour qu'il ne parte pas en double.
 
+## Sur iPhone, comme une appli
+
+Ouvre l'adresse https de Clip dans **Safari**, touche **Partager** puis **« Sur l'écran d'accueil »**. L'icône Clip s'ouvre ensuite en plein écran, sans barre Safari, avec des onglets en bas (Accueil, Sources, Vidéos, Clips, Stats, Comptes). Il faut se connecter une fois dans l'appli (elle ne partage pas la connexion de Safari).
+
+- **↻** en haut recharge la page (pas de « tirer pour rafraîchir » en plein écran).
+- Dans **Clips**, **📲 Enregistrer / partager** ouvre la feuille de partage de l'iPhone : « Enregistrer la vidéo » (dans Photos), TikTok, YouTube… Si Safari demande un 2e appui après le téléchargement, c'est normal.
+- PC éteint ou injoignable : une page « Serveur injoignable » réessaie toute seule toutes les 15 s.
+- Connexion YouTube / TikTok (page **Comptes**) : si elle bloque depuis l'appli, fais-la depuis Safari.
+
+Les icônes sont dans `app/web/static` (régénérer : `python -m app.web.icons`).
+
 ## Apprendre de ce qui marche (page **Stats**)
 
 Toutes les 6 h, Clip relève les vues, likes, commentaires (et la rétention YouTube) de chaque clip publié, puis compare les clips entre eux à 3 jours d'âge. Dès 10 clips mesurés, il ajuste tout seul, doucement :
