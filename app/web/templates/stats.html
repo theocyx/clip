@@ -10,6 +10,15 @@
   <div class="bar"><i style="width:{{ [growth.shorts_pct, 0.5]|max|round(1) }}%"></i></div>
   <p style="margin-top:10px">Heures de visionnage des vidéos longues (12 mois) : <b>{{ growth.hours|round(1) }} h</b> / 4000 h <span class="mut">(les Shorts n'en font pas : seules les compilations comptent)</span></p>
   <div class="bar"><i style="width:{{ [growth.hours_pct, 0.5]|max|round(1) }}%"></i></div>
+  <h4>Estimation : quand la chaîne peut gagner de l'argent</h4>
+  <ul>
+    <li>Abonnés : {% if fc.sub_rate is not none %}<b>{{ '%+.1f'|format(fc.sub_rate) }} par jour</b>{% if fc.sub_eta == 0 %} · objectif atteint{% elif fc.sub_date %} → 1000 abonnés vers le <b>{{ fc.sub_date }}</b> (dans ~{{ fc.sub_eta }} jours){% else %} → pas de progression en ce moment{% endif %}{% else %}<span class="mut">pas encore mesuré</span>{% endif %}</li>
+    <li>Vues des Shorts : {% if fc.views_day %}<b>~{{ '{:,}'.format(fc.views_day|round|int).replace(',', ' ') }} par jour</b>, soit ~{{ '{:,}'.format(fc.views_90|round|int).replace(',', ' ') }} sur 90 jours{% if fc.shorts_ok %} : assez pour les 10 M{% else %} ; il en faudrait ~{{ '{:,}'.format(fc.shorts_need|round|int).replace(',', ' ') }} par jour (<b>×{{ fc.shorts_factor|round|int }}</b>){% endif %}{% else %}<span class="mut">pas encore mesuré</span>{% endif %}</li>
+    <li>Heures de visionnage (vidéos longues) : {% if fc.hours_week > 0 %}<b>~{{ fc.hours_week|round(1) }} h par semaine</b>{% if fc.hours_eta %} → 4000 h dans ~{{ fc.hours_eta }} jours{% endif %}{% else %}<span class="mut">pas encore de compilation mesurée (1re le dimanche)</span>{% endif %}</li>
+    <li><b>Monétisation possible :</b> {% if fc.date %}vers le <b>{{ fc.date }}</b> (dans ~{{ fc.eta }} jours){% else %}pas encore estimable à ce rythme : il faut à la fois 1000 abonnés et (10 M vues Shorts sur 90 jours ou 4000 h). La date se resserre à chaque relevé.{% endif %}</li>
+    <li><b>Revenus estimés :</b> si la chaîne était monétisée aujourd'hui, ~<b>{{ '%.0f'|format(fc.month_now) }} € par mois</b> (entre {{ '%.0f'|format(fc.month_now/2) }} et {{ '%.0f'|format(fc.month_now*2) }} €) ; au seuil des 10 M vues Shorts sur 90 jours, ~<b>{{ '%.0f'|format(fc.month_goal) }} € par mois</b> (entre {{ '%.0f'|format(fc.month_goal/2) }} et {{ '%.0f'|format(fc.month_goal*2) }} €).</li>
+  </ul>
+  <p class="mut">Hypothèses : rythme actuel constant, {{ fc.rpm_shorts }} € pour 1000 vues de Short et {{ fc.rpm_long }} € pour 1000 vues de vidéo longue (moyennes gaming FR, réglables : RPM_SHORTS, RPM_LONG). Ordre de grandeur, pas une promesse : YouTube ne compte que les vues « qualifiées », et vérifie chaque chaîne à l'inscription. Une chaîne de clips d'autres streamers peut être refusée pour « contenu réutilisé » sans apport personnel (montage, titres, commentaires) ni accord des streamers.</p>
   {% if sub_url %}<p class="mut" style="margin-top:10px">Lien « abonne-toi » ajouté aux descriptions : <a href="{{ sub_url }}" target="_blank">{{ sub_url }}</a></p>{% endif %}
 
   <h4>Par format <span class="mut">(Shorts YouTube des {{ mix_days|round|int }} derniers jours, publiés depuis au moins 24 h)</span></h4>

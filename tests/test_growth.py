@@ -362,6 +362,37 @@ def test_stats_page_shows_growth(monkeypatch):
     r = client.get("/stats")
     assert r.status_code == 200 and "Croissance de la chaîne" in r.text and "<b>9</b> abonnés" in r.text
     assert "sub_confirmation=1" in r.text and "Actus : 12 vues" in r.text and "Compilations longues" in r.text
+    assert "quand la chaîne peut gagner de l'argent" in r.text and "€ par mois" in r.text
     r = client.post("/compil", data={"action": "now"}, follow_redirects=False)
     assert r.status_code in (302, 303) and platforms._get(compil.NOW_KEY) == "clip"
+    _cleanup()
+
+
+def test_monetization_forecast(monkeypatch):
+    _cleanup()
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "rpm_shorts", 0.04)
+    monkeypatch.setattr(cfg, "rpm_long", 1.5)
+    with db.session() as s:
+        v = _video(s, "fc:shorts")
+        c = Clip(video_id=v.id, group="g", start=0, end=30, score=0.5, title="A", path=__file__)
+        s.add(c)
+        s.commit()
+        s.add(Post(clip_id=c.id, platform="youtube", status="published", remote_id="yt1",
+                   published_at=now() - timedelta(days=30)))
+        s.commit()
+    # 7 jours : +7 abonnés, +14 000 vues => 1 abonné et 2000 vues par jour
+    platforms._put(growth.HIST_KEY, json.dumps({"2026-11-20": {"subs": 2, "views": 5000, "videos": 150},
+                                                "2026-11-27": {"subs": 9, "views": 19000, "videos": 189}}))
+    f = growth.forecast()
+    assert f["sub_rate"] == 1.0 and f["sub_eta"] == 992 and f["views_day"] == 2000
+    assert round(f["shorts_factor"]) == 56 and not f["shorts_ok"]
+    assert f["eta"] is None and f["date"] is None  # ni 10 M vues Shorts ni heures : pas estimable
+    assert round(f["month_now"], 1) == 2.4  # 60 000 vues/mois × 0,04 €
+    assert round(f["month_goal"]) == 133  # 3,3 M vues Shorts/mois au seuil
+    # assez de vues Shorts : la date dépend des abonnés
+    platforms._put(growth.HIST_KEY, json.dumps({"2026-11-20": {"subs": 900, "views": 0, "videos": 150},
+                                                "2026-11-27": {"subs": 970, "views": 1_050_000, "videos": 189}}))
+    f = growth.forecast()
+    assert f["shorts_ok"] and f["sub_eta"] == 4 and f["eta"] == 90 and f["date"]
     _cleanup()

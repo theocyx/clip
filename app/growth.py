@@ -348,6 +348,72 @@ def progress() -> dict:
             "shorts_pct": min(100.0, 100 * shorts_views / SHORTS_GOAL), "history": [(d, hist[d]) for d in days[-30:]]}
 
 
+def _first_short() -> datetime | None:
+    with db.session() as s:
+        return s.exec(select(Post.published_at).where(Post.platform == "youtube", Post.status == "published",
+                                                      Post.published_at != None)  # noqa: E711
+                      .order_by(col(Post.published_at))).first()
+
+
+def _views_per_day(hist: dict[str, dict], age_days: float) -> float | None:
+    """Vues par jour : progression du compteur de la chaîne sur 3 à 14 jours, sinon moyenne depuis le 1er Short."""
+    days = sorted(hist)
+    if len(days) >= 2:
+        last = datetime.fromisoformat(days[-1])
+        old = [d for d in days if 3 <= (last - datetime.fromisoformat(d)).days <= 14]
+        if old:
+            span = (last - datetime.fromisoformat(old[0])).days
+            return max(0.0, (hist[days[-1]]["views"] - hist[old[0]]["views"]) / span)
+    with db.session() as s:
+        posts = s.exec(select(Post.id).where(Post.platform == "youtube", Post.status == "published")).all()
+    last_st = _latest_stats(list(posts))
+    total = sum(st.views for st in last_st.values())
+    return total / age_days if total and age_days > 0 else None
+
+
+def forecast(p: dict | None = None) -> dict:
+    """Date estimée d'éligibilité à la monétisation et revenus estimés, au rythme actuel.
+
+    Hypothèses (affichées) : rythme constant ; RPM_SHORTS / RPM_LONG € pour 1000 vues ; YouTube ne compte que les
+    vues « qualifiées » et peut refuser une chaîne de contenu réutilisé : c'est un ordre de grandeur, pas une promesse."""
+    cfg = get_settings()
+    p = progress() if p is None else p
+    first = _first_short()
+    age = max(1.0, (now() - first).total_seconds() / 86400) if first else 0.0
+    subs = p.get("subs")
+    sub_rate = p.get("rate")
+    if sub_rate is None and subs is not None and age:
+        sub_rate = subs / age  # une seule mesure : moyenne depuis le 1er Short
+    views_day = _views_per_day(history(), age) if age else None
+    since = now() - timedelta(days=28)
+    longs = [(x, k) for x, k in _posts(28, (LONG,))]
+    last_l = _latest_stats([x.id for x, _ in longs])
+    long_days = max(1.0, min(28.0, (now() - min((x.published_at for x, _ in longs), default=since))
+                             .total_seconds() / 86400))
+    hours_day = sum((last_l[x.id].minutes or 0) for x, _ in longs if x.id in last_l) / 60 / long_days
+    long_views_day = sum(last_l[x.id].views for x, _ in longs if x.id in last_l) / long_days
+
+    sub_eta = 0 if subs is not None and subs >= SUB_GOAL else (
+        int((SUB_GOAL - subs) / sub_rate) + 1 if subs is not None and sub_rate and sub_rate > 0 else None)
+    shorts_need = SHORTS_GOAL / 90
+    shorts_ok = bool(views_day and views_day >= shorts_need)
+    hours_eta = 0 if p.get("hours", 0) >= HOURS_GOAL else (
+        int((HOURS_GOAL - p.get("hours", 0)) / hours_day) + 1 if hours_day > 0 else None)
+    path = [x for x in ((90 if shorts_ok else None), hours_eta) if x is not None]
+    path_eta = min(path) if path else None
+    eta = max(sub_eta, path_eta) if sub_eta is not None and path_eta is not None else None
+    today = datetime.now(ZoneInfo(cfg.timezone)).date()
+    month_now = ((views_day or 0) * 30 / 1000 * cfg.rpm_shorts) + long_views_day * 30 / 1000 * cfg.rpm_long
+    month_goal = SHORTS_GOAL / 3 / 1000 * cfg.rpm_shorts  # au seuil : 10 M vues Shorts sur 90 jours
+    return {"sub_rate": sub_rate, "sub_eta": sub_eta,
+            "sub_date": (today + timedelta(days=sub_eta)).strftime("%d/%m/%Y") if sub_eta is not None else None,
+            "views_day": views_day, "views_90": (views_day or 0) * 90, "shorts_need": shorts_need,
+            "shorts_factor": (shorts_need / views_day) if views_day else None, "shorts_ok": shorts_ok,
+            "hours_week": hours_day * 7, "hours_eta": hours_eta,
+            "eta": eta, "date": (today + timedelta(days=eta)).strftime("%d/%m/%Y") if eta is not None else None,
+            "month_now": month_now, "month_goal": month_goal, "rpm_shorts": cfg.rpm_shorts, "rpm_long": cfg.rpm_long}
+
+
 def run() -> dict:
     """Appelé à chaque relevé de stats : chaîne relevée, puis mix des formats recalculé."""
     try:

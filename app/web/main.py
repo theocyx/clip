@@ -719,7 +719,8 @@ def stats_page(request: Request, refreshing: bool = False):
         "burst_effect": learning.burst_effect(revs), "bar": curate.score_bar(), "min_llm": curate.min_llm(),
         "top_pct": get_settings().publish_top_pct, "experiments": experiments.summary(perf),
         "exp_on": get_settings().experiments, "exp_rate": get_settings().experiment_rate,
-        "exp_min": get_settings().experiment_min, "growth": growth.progress(), "kinds": growth.by_kind(),
+        "exp_min": get_settings().experiment_min, "growth": (gp := growth.progress()), "fc": growth.forecast(gp),
+        "kinds": growth.by_kind(),
         "mix": growth.mix(), "mix_on": get_settings().growth_mix, "mix_days": get_settings().mix_days,
         "compil": compil.status(), "sub_url": growth.subscribe_url(), "can_comment": youtube.can_comment(),
         "comments_on": get_settings().first_comment})

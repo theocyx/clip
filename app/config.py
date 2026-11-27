@@ -289,6 +289,9 @@ class Settings(BaseSettings):
     # Les streamers dont les clips marchent le mieux sont enregistrés et traités en premier
     source_priority: bool = True
     clip_cta: bool = False  # appel « abonne-toi » à l'écran en fin de clip (testé par l'amélioration continue)
+    # Estimation des revenus une fois monétisée (€ pour 1000 vues, part du créateur, chaîne FR ; fourchette ×0,5-×2)
+    rpm_shorts: float = 0.04  # Shorts : quelques centimes pour 1000 vues
+    rpm_long: float = 1.5  # vidéos longues (compilations) gaming FR
     # Interactions (app/interact.py) : 0 commentaire sur les 189 premiers Shorts (27/11)
     first_comment: bool = True  # la chaîne pose la question du clip en 1er commentaire (reconnexion YouTube requise)
     first_comment_delay: float = 3  # minutes après l'envoi (le temps que YouTube enregistre la vidéo)
