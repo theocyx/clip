@@ -25,6 +25,14 @@ _log_lock = threading.Lock()
 _loggers: dict[int, "ChatLogger"] = {}
 
 
+def nick_of(line: str) -> str:
+    """Pseudo de l'auteur d'une ligne IRC « :pseudo!pseudo@pseudo.tmi.twitch.tv PRIVMSG #chaine :texte »."""
+    if line.startswith(":") and "!" in line:
+        nick = line[1:line.index("!")]
+        return nick if re.fullmatch(r"\w{2,25}", nick) else ""
+    return ""
+
+
 def twitch_channel(url: str) -> str:
     m = re.search(r"twitch\.tv/([A-Za-z0-9_]+)", url or "")
     return m.group(1).lower() if m and m.group(1).lower() != "videos" else ""
@@ -69,7 +77,7 @@ class ChatLogger(threading.Thread):
                         sock.sendall(("PONG" + line[4:] + "\r\n").encode())
                     elif " PRIVMSG #" in line:
                         text = line.split(" :", 1)[1] if " :" in line else ""
-                        f.write(f"{time.time():.2f}\t{text.replace(chr(9), ' ')}\n")
+                        f.write(f"{time.time():.2f}\t{text.replace(chr(9), ' ')}\t{nick_of(line)}\n")
                 f.flush()
 
 
@@ -110,6 +118,7 @@ def activity(work: Path, n: int, delay: float = 6.0) -> np.ndarray | None:
     count = 0
     for line in chat.read_text(encoding="utf-8", errors="replace").splitlines():
         ts, _, text = line.partition("\t")
+        text = text.split("\t", 1)[0]  # 3e colonne : pseudo (depuis l'habillage « magazine »)
         try:
             i = int(float(ts) - t0 - delay)
         except ValueError:
@@ -118,3 +127,25 @@ def activity(work: Path, n: int, delay: float = 6.0) -> np.ndarray | None:
             out[i] += 1 + 2 * len(HYPE.findall(text)[:3])
             count += 1
     return out if count >= 20 else None
+
+
+def messages(work: Path, a: float, b: float, delay: float = 0.0) -> list[tuple[float, str, str]]:
+    """Messages du chat écrits entre les secondes `a` et `b` de la vidéo (décalés de `delay` s) :
+    [(seconde, pseudo, texte)]. Vide si pas de chat exploitable (même règle que `activity`)."""
+    chat, starts = work / "chat.tsv", work / "rec_starts.txt"
+    if not chat.exists() or not starts.exists():
+        return []
+    marks = [ln for ln in starts.read_text().split() if ln.strip()]
+    if len(marks) != 1:
+        return []
+    t0 = float(marks[0])
+    out = []
+    for line in chat.read_text(encoding="utf-8", errors="replace").splitlines():
+        parts = line.split("\t")
+        try:
+            t = float(parts[0]) - t0 - delay
+        except (ValueError, IndexError):
+            continue
+        if a <= t <= b and len(parts) >= 2:
+            out.append((t, parts[2].strip() if len(parts) > 2 else "", parts[1].strip()))
+    return out

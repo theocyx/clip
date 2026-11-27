@@ -146,7 +146,7 @@ def test_bad_source_gives_zero_clips(monkeypatch, tmp_path):
     monkeypatch.setattr(media, "extract_audio", lambda a, b: None)
     monkeypatch.setattr(media, "loudness_per_second", lambda w: np.random.default_rng(1).normal(-30, 3, 600))
     monkeypatch.setattr(transcribe, "transcribe", lambda *a: make_segments(600))
-    monkeypatch.setattr(render, "render", lambda *a: None)
+    monkeypatch.setattr(render, "render", lambda *a, **k: None)
     monkeypatch.setattr(get_settings(), "auto_publish", False)
     monkeypatch.setattr(get_settings(), "clip_min_llm", 6)
     monkeypatch.setattr(llm, "provider", lambda: "ollama")

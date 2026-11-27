@@ -184,6 +184,9 @@ Analyser des vidéos modèles (planches d'images + rythme du montage, rangées d
 | `MIN_MINUTES_BETWEEN_POSTS` / `MAX_POSTS_PER_DAY` | rythme de publication (0 = pas de limite, réglable aussi dans **Clips**) | 90 / 100 |
 | `HASHTAGS` | hashtags ajoutés | `#shorts #clip #fr` |
 | `HOOK_TITLE` / `HOOK_SECONDS` | accroche en haut de la vidéo / durée (0 = tout le clip) | true / 0 |
+| `CLIP_STYLE` | habillage : `magazine` (jeu en haut, facecam en bas, titre 4 s, ligne de source, message du chat, crédit de fin, miniature dessinée) ou `tiktok` (ancien style) | magazine |
+| `MAG_CAM_HEIGHT` / `TITLE_SECONDS` / `CREDIT_SECONDS` | facecam en bas (px) / durée du titre / durée du crédit | 730 / 4 / 3 |
+| `SOURCE_LINE` / `CHAT_CARD` / `CREDIT_CARD` / `SHORT_THUMBNAIL` | éléments du style magazine | true |
 | `TEASER` / `TEASER_SECONDS` | ouverture choc : le passage le plus fort montré en premier, puis le clip depuis le début (gardée ou non selon les stats) | false / 2.5 |
 | `CUT_SILENCES` / `SILENCE_MIN` / `SILENCE_MAX_PCT` | coupe les longs blancs (plus de X s) entre deux phrases, au plus N % du clip et jamais sous `CLIP_MIN` | true / 3 / 15 |
 | `PUNCH_ZOOM` | zoom rapide sur la réaction (facecam en format split) au moment fort | false |

@@ -839,7 +839,26 @@ def publish_once(platform: str) -> bool:
         s.commit()
     if status == "published":
         notify.published(platform, clip.title, remote)
+        if platform == "youtube":
+            send_thumbnail(clip, remote)
     return status == "published"
+
+
+_thumb_refused_at = 0.0  # YouTube refuse les miniatures tant que la chaîne n'est pas validée : on réessaie 1 fois/jour
+
+
+def send_thumbnail(clip: Clip, remote: str) -> bool:
+    """Miniature dessinée du Short (style magazine) envoyée après la mise en ligne. Jamais bloquant."""
+    global _thumb_refused_at
+    path = clip_data(clip).get("thumb") or ""
+    if not (get_settings().short_thumbnail and remote and path and Path(path).exists()):
+        return False
+    if time.time() - _thumb_refused_at < 86400:
+        return False
+    ok = youtube.set_thumbnail(remote, path)
+    if not ok:
+        _thumb_refused_at = time.time()
+    return ok
 
 
 def publish_loop():

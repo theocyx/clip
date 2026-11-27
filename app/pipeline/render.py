@@ -19,6 +19,17 @@ W = 1080
 _gpu_broken = False  # passe à True si l'encodage GPU échoue : on reste ensuite sur le CPU
 
 
+def magazine() -> bool:
+    """Habillage « magazine » (app/pipeline/style.py) : jeu en haut, facecam en bas, cartes PNG."""
+    return (get_settings().clip_style or "").strip().lower() == "magazine"
+
+
+def cam_height() -> int:
+    """Hauteur de la facecam dans le format split : en bas en style magazine, en haut sinon."""
+    s = get_settings()
+    return s.mag_cam_height if magazine() else s.split_cam_height
+
+
 def split_top(cam_h: int) -> int:
     """Décalage de l'accroche en format split : juste sous la facecam."""
     return cam_h - 150
@@ -51,9 +62,10 @@ def sharpen(amount: float | None = None) -> str:
     return f",unsharp=5:5:{a:.2f}:5:5:0" if a > 0 else ""
 
 
-def layout_filter(cam=None, cam_h: int = 0, src: str = "[0:v]", punch=None) -> str:
+def layout_filter(cam=None, cam_h: int = 0, src: str = "[0:v]", punch=None, cam_bottom: bool = False) -> str:
     """punch : fenêtres (début, fin) en temps du clip final où l'on zoome sur la réaction
     (sur la facecam en format split, sur toute l'image sinon).
+    cam_bottom : facecam en bas, jeu en haut (style magazine) ; sinon facecam en haut.
     Agrandissements en lanczos (plus net que le bicubique par défaut), fond flou en bilinéaire rapide."""
     if cam is not None:
         cam = _inset(cam)
@@ -90,7 +102,7 @@ def layout_filter(cam=None, cam_h: int = 0, src: str = "[0:v]", punch=None) -> s
         top + "[top];"
         f"[b]scale={W}:{game_h}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{game_h}:{gx}:0,setsar=1"
         + sharpen(get_settings().sharpen * 0.6) + "[bot];"
-        "[top][bot]vstack=inputs=2,fps=30"
+        + ("[bot][top]" if cam_bottom else "[top][bot]") + "vstack=inputs=2,fps=30"
     )
 
 
@@ -108,6 +120,7 @@ def _inset(cam, margin: float = 0.006):
 
 
 BAR_H = 10
+SLIDE = 0.2  # s : durée de l'arrivée des cartes PNG (style magazine)
 
 
 AUDIO = "loudnorm=I=-14:TP=-1.5:LRA=11"
@@ -230,14 +243,16 @@ def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, cod
               overlay: str = "", overlay_seconds: float = 0, cam=None,
               teaser: tuple[float, float] | None = None, cuts: list[tuple[float, float]] | None = None,
               punch: list[tuple[float, float]] | None = None, bar: bool = False,
-              loud: dict | None = None) -> list[str]:
+              loud: dict | None = None, extras: list | None = None) -> list[str]:
     """overlay : image PNG 1080 px de large (accroche avec emojis) posée en haut, sur `overlay_seconds` s (0 = tout).
 
     cam : zone de la facecam (facecam.Box) pour le format split, None = format classique.
     teaser : (début, fin) d'un court extrait montré en ouverture, avant le clip (« cold open »).
     cuts : morceaux du clip gardés (blancs coupés), par défaut [(start, end)].
     punch : fenêtres de zoom (temps du clip final). bar : barre de progression en haut.
-    loud : mesure du volume (measure_loudness) pour une normalisation en 2 passes."""
+    loud : mesure du volume (measure_loudness) pour une normalisation en 2 passes.
+    extras : cartes PNG 1080 px de large (titre, message du chat, crédit…) [(chemin, y, début, fin)], centrées,
+    qui arrivent en glissant de quelques pixels vers le haut."""
     s = get_settings()
     codec = resolve_codec(codec)
     afilter = audio_filter(loud)
@@ -255,13 +270,20 @@ def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, cod
     else:
         vf = f"[0:v]{trim_video(*pieces[0])}[sv];"
         src_v = "[sv]"
-    vf += layout_filter(cam, s.split_cam_height, src_v, punch)
+    mag = magazine()
+    vf += layout_filter(cam, cam_height(), src_v, punch, cam_bottom=mag)
     if teaser:  # court flash blanc pour marquer le retour au début
         t0 = teaser[1] - teaser[0]
         vf += f",drawbox=c=white@0.7:t=fill:enable='between(t,{t0:.2f},{t0 + 0.12:.2f})'"
     if overlay:
         enable = f":enable='lte(t,{overlay_seconds:.2f})'" if overlay_seconds > 0 else ""
-        vf += f"[base];[base][{n}:v]overlay=0:{hook_y(cam, s.split_cam_height)}:format=auto{enable}"
+        vf += f"[base];[base][{n}:v]overlay=0:{hook_y(cam, cam_height())}:format=auto{enable}"
+    extras = [e for e in (extras or []) if e and e[0] and e[3] > e[2]]
+    for k, (_, y, t0, t1) in enumerate(extras):
+        idx = n + (1 if overlay else 0) + k
+        ye = f"{int(y)}+36*max(0,1-(t-{t0:.2f})/{SLIDE})"
+        vf += (f"[x{k}];[x{k}][{idx}:v]overlay=x=(W-w)/2:y='{ye}':format=auto"
+               f":enable='between(t,{t0:.2f},{t1:.2f})'")
     if bar and total > 0:
         vf += (f"[pb];color=c=0x00E5FF:s={W}x{BAR_H}:r=30[bar];"
                f"[pb][bar]overlay=x='-W+W*t/{total:.2f}':y=0:shortest=1")
@@ -274,6 +296,8 @@ def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, cod
         cmd += seek_args(src, a, b)
     if overlay:
         cmd += ["-i", overlay]
+    for e in extras:
+        cmd += ["-i", str(e[0])]
     if n > 1:
         cmd += ["-filter_complex", vf + f"[v];[ca]{loud_chain(afilter)}[a]", "-map", "[v]", "-map", "[a]"]
     else:
@@ -287,7 +311,7 @@ def build_cmd(src: Path, start: float, end: float, ass_name: str, out: Path, cod
 
 def render(src: Path, start: float, end: float, ass_text: str, out: Path, overlay: str = "",
            overlay_seconds: float = 0, cam=None, teaser: tuple[float, float] | None = None,
-           cuts=None, punch=None, bar: bool = False) -> Path:
+           cuts=None, punch=None, bar: bool = False, extras: list | None = None) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     ass_name = out.stem + ".ass"
     (out.parent / ass_name).write_text(ass_text, encoding="utf-8")
@@ -297,7 +321,7 @@ def render(src: Path, start: float, end: float, ass_text: str, out: Path, overla
         codec = "libx264"
     pieces = ([teaser] if teaser else []) + list(cuts or [(start, end)])
     loud = measure_loudness(src.resolve(), pieces)
-    ov = (overlay, overlay_seconds, cam, teaser, cuts, punch, bar, loud)
+    ov = (overlay, overlay_seconds, cam, teaser, cuts, punch, bar, loud, extras)
     proc = _run(src, start, end, ass_name, out, codec, *ov)
     if proc.returncode != 0 and codec.endswith("_vaapi"):
         log.warning("Encodage GPU impossible, passage au CPU (libx264) : %s", proc.stderr.strip()[-300:])
@@ -309,8 +333,9 @@ def render(src: Path, start: float, end: float, ass_text: str, out: Path, overla
 
 
 def _run(src: Path, start: float, end: float, ass_name: str, out: Path, codec: str, overlay: str = "",
-         overlay_seconds: float = 0, cam=None, teaser=None, cuts=None, punch=None, bar=False, loud=None):
+         overlay_seconds: float = 0, cam=None, teaser=None, cuts=None, punch=None, bar=False, loud=None,
+         extras=None):
     cmd = build_cmd(src.resolve(), start, end, ass_name, out.resolve(), codec, overlay, overlay_seconds, cam, teaser,
-                    cuts, punch, bar, loud)
+                    cuts, punch, bar, loud, extras)
     return subprocess.run(cmd, cwd=out.parent,
                           capture_output=True, text=True)

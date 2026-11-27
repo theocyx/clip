@@ -37,7 +37,7 @@ def test_render_resumes_without_duplicates(monkeypatch, tmp_path):
     vid = setup(monkeypatch, tmp_path, "resume:render")
     calls = []
 
-    def stop_after_first(*a):
+    def stop_after_first(*a, **k):
         calls.append(a)
         process.stopping.set()  # arrêt demandé pendant le rendu du 1er clip
 
@@ -56,7 +56,7 @@ def test_render_resumes_without_duplicates(monkeypatch, tmp_path):
 
     # au redémarrage : l'analyse n'est pas refaite et le clip déjà rendu n'est pas recréé
     monkeypatch.setattr(media, "loudness_per_second", lambda w: (_ for _ in ()).throw(AssertionError("analyse refaite")))
-    monkeypatch.setattr(render, "render", lambda *a: calls.append(a))
+    monkeypatch.setattr(render, "render", lambda *a, **k: calls.append(a))
     n = process.process(vid)
     all_clips = clips(vid)
     assert n == len(all_clips) > 1

@@ -8,7 +8,10 @@ import threading
 import shutil
 import time
 import uuid
-from dataclasses import asdict
+import io
+import re
+import subprocess
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from sqlmodel import select
@@ -16,7 +19,8 @@ from sqlmodel import select
 from .. import db, experiments, learning
 from ..config import get_settings
 from ..models import Clip, Post, Source, Video, now
-from . import chat, dedupe, engage, facecam, highlights, hook, llm, media, render, sponsor, subtitles, transcribe
+from . import (chat, dedupe, engage, facecam, highlights, hook, llm, media, render, sponsor, style, subtitles,
+               transcribe)
 
 log = logging.getLogger(__name__)
 # Mis à vrai par le worker quand il s'arrête (mise à jour…) : le traitement s'interrompt proprement
@@ -122,7 +126,7 @@ def pick_layout(src: Path, start: float, end: float):
     mode = (s.layout or "auto").lower()
     if mode in ("classic", "classique", "blur"):
         return None
-    aspect = 1080 / s.split_cam_height
+    aspect = 1080 / render.cam_height()
     cam = facecam.detect(src, start, end, aspect)
     if cam is None and mode == "split":
         log.info("Pas de facecam trouvée : format classique.")
@@ -297,6 +301,140 @@ def analyze(video: Video, wav: Path, segments: list[dict], dur: float) -> list:
     return moments
 
 
+# ---------- Habillage « magazine » (app/pipeline/style.py) ----------
+
+@dataclass
+class Dressing:
+    extras: list = field(default_factory=list)  # cartes PNG [(chemin, y, début, fin)]
+    title: bool = False  # titre d'ouverture dessiné (sinon accroche ASS de secours)
+    source: str = ""
+    source_from: float = 0.0
+    sub_v: int = 540
+
+
+def grab_frame(src: Path, t: float):
+    """Image de la source à l'instant t (Pillow), None si impossible."""
+    from PIL import Image
+
+    try:
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{max(0.0, t):.2f}", "-i", str(src), "-frames:v", "1",
+                              "-f", "image2pipe", "-vcodec", "png", "-"], capture_output=True, timeout=60).stdout
+        return Image.open(io.BytesIO(raw)).convert("RGB") if raw else None
+    except Exception:
+        return None
+
+
+def cam_crop(frame, cam):
+    if frame is None or cam is None:
+        return None
+    w, h = frame.size
+    return frame.crop((int(cam.x * w), int(cam.y * h), int((cam.x + cam.w) * w), int((cam.y + cam.h) * h)))
+
+
+def video_source(video: Video) -> Source | None:
+    if not video.source_id:
+        return None
+    try:
+        with db.session() as s:
+            return s.get(Source, video.source_id)
+    except Exception:
+        return None
+
+
+def source_line(video_title: str, name: str) -> str:
+    """« titre du live » (stream Untel) : petite ligne de source en haut du clip."""
+    t = re.sub(r"#\w+|\[[^\]]*\]|\([^)]*\)|\b(live|en direct|stream)\b|\b\d+\s*h(eures?)?\b|[|•🔴]+", " ",
+               hook.strip_emojis(video_title or ""), flags=re.I)
+    t = re.sub(r"\s{2,}", " ", re.sub(r"([!?.])\1+", r"\1", t)).strip(" :,-–—!")
+    if len(t) > 48:
+        t = t[:47].rstrip(" ,;:-") + "…"
+    out = [f"« {t} »"] if t else []
+    if name:
+        out.append(f"(stream {name})")
+    return " ".join(out)
+
+
+def handle_of(src: Source | None, name: str) -> tuple[str, str]:
+    """(pseudo affiché, plateforme) pour la carte de crédit."""
+    if src is None:
+        return re.sub(r"\s+", "", name), ""
+    if src.platform == "twitch":
+        return chat.twitch_channel(src.url) or re.sub(r"\s+", "", name), "twitch"
+    m = re.search(r"youtube\.com/@([\w.\-]+)", src.url or "")
+    return (m.group(1) if m else re.sub(r"\s+", "", name)), "youtube"
+
+
+def dressing(video: Video, src: Path, out: Path, m, cam, body: list[tuple[float, float]], teaser,
+             hook_text: str) -> Dressing:
+    """Titre d'ouverture, ligne de source, message du chat au moment fort et crédit de fin (style magazine).
+    Chaque élément est facultatif : s'il échoue, le clip sort sans lui."""
+    s = get_settings()
+    d = Dressing(sub_v=render.cam_height() + 24 if cam is not None else 540)
+    off = (teaser[1] - teaser[0]) if teaser else 0.0
+    total = off + sum(b - a for a, b in body)
+    name = streamer_name(video)
+    tag = style.tag_for(m.title, m.features.get("text", ""), name)
+    title_end = min(s.title_seconds, total)
+    if hook_text and s.title_seconds > 0:
+        png = out.parent / f"{out.stem}_title.png"
+        try:
+            if style.title_png(hook_text, tag, png, s.font_name):
+                d.extras.append((str(png.resolve()), style.TITLE_Y, 0.0, title_end))
+                d.title = True
+        except Exception as e:
+            log.warning("Titre d'ouverture impossible (%s), accroche simple.", e)
+    if s.source_line:
+        d.source, d.source_from = source_line(video.title, name), (title_end if d.title else 0.0)
+    credit_from = total
+    if s.credit_card and s.credit_streamer and name and total > s.credit_seconds + 8:
+        try:
+            source = video_source(video)
+            handle, platform = handle_of(source, name)
+            avatar = style.twitch_avatar(handle, s.data_dir / "avatars") if platform == "twitch" else None
+            if avatar is None and cam is not None:  # photo prise sur la facecam
+                avatar = cam_crop(grab_frame(src, body[-1][1] - 1.0), cam)
+            png = out.parent / f"{out.stem}_credit.png"
+            if style.credit_png(name, handle, platform, avatar, png, s.font_name):
+                credit_from = total - s.credit_seconds
+                d.extras.append((str(png.resolve()), 300 if cam is not None else 110, credit_from, total))
+        except Exception as e:
+            log.warning("Carte de crédit impossible : %s", e)
+    peak = m.features.get("peak")
+    if s.chat_card and peak is not None:
+        try:
+            tc = highlights.out_time(body, peak)
+            t0 = max((tc if tc is not None else -1) + off, title_end + 0.3)
+            t1 = min(t0 + 3.2, credit_from - 0.2)
+            if tc is not None and t1 - t0 >= 2.0:
+                # les spectateurs voient la scène quelques secondes après (latence) puis écrivent
+                pick = style.pick_message(chat.messages(video_dir(video.id), peak + 2, peak + 14))
+                if pick:
+                    png = out.parent / f"{out.stem}_chat.png"
+                    if style.chat_card_png(pick[0], pick[1], png, s.font_name):
+                        d.extras.append((str(png.resolve()), 520 if cam is not None else 1400, t0, t1))
+        except Exception as e:
+            log.warning("Carte du chat impossible : %s", e)
+    return d
+
+
+def make_thumbnail(video: Video, src: Path, out: Path, m, cam, text: str, a: float, b: float) -> str:
+    """Miniature dessinée du Short (style magazine), "" si impossible."""
+    s = get_settings()
+    try:
+        peak = m.features.get("peak")
+        at = peak if peak is not None and a <= peak <= b else (a + b) / 2
+        frame = grab_frame(src, at)
+        if frame is None:
+            return ""
+        tag = style.tag_for(m.title, m.features.get("text", ""), streamer_name(video))
+        path = style.thumbnail(frame, cam_crop(frame, cam), text, tag, out.parent / f"{out.stem}_thumb.jpg",
+                               s.font_name)
+        return str(path) if path else ""
+    except Exception as e:
+        log.warning("Miniature impossible : %s", e)
+        return ""
+
+
 # appel à l'écran en fin de clip (essai « cta », jugé sur les interactions)
 CTA_TEXTS = {"abonne": "ABONNE-TOI POUR PLUS DE GTA 6", "partage": "ENVOIE ÇA À UN POTE QUI JOUE À GTA"}
 
@@ -325,7 +463,9 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
             parts = [(m.start, min(m.end, m.start + learning.max_len()))]
         cam = pick_layout(src, m.start, m.end)
         m.features["layout"] = "split" if cam else "classic"
-        top = render.split_top(s.split_cam_height) if cam else 0
+        mag = render.magazine()
+        m.features["style"] = "magazine" if mag else "tiktok"
+        top = render.split_top(render.cam_height()) if cam and not mag else 0
         if not m.features.get("question"):  # analyse faite avant cette version
             m.features["question"] = engage.fallback_question(m.features.get("text", ""), m.title)
         exp = experiments.choose("clip")  # versions du montage (amélioration continue)
@@ -344,10 +484,13 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
             label = f"Partie {i}/{len(parts)}" if len(parts) > 1 else ""
             out = s.clips_dir / str(video_id) / f"{group}_p{i}.mp4"
             t_i, body, punch = None, [(a, b)], None
+            thumb = ""
             try:
                 hook_text = (m.hook or m.title) if s.hook_title else ""
                 png = ""
-                if hook_text and s.hook_emojis:
+                if mag:  # titre d'ouverture dessiné à part (style.title_png), sans emoji à l'écran
+                    hook_text = hook.strip_emojis(hook_text)
+                elif hook_text and s.hook_emojis:
                     hook_text = hook.add_emojis(hook_text, m.title)
                     png = render_hook_png(hook_text, out)
                 if not png:
@@ -358,24 +501,32 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                 end_text = (engage.end_card(m.features.get("question", ""), i, len(parts))
                             if ask and s.end_question else "")
                 punch = punch_windows(m.features.get("peak"), body, t_i) if experiments.on(exp, "zoom") else None
+                dress = dressing(video, src, out, m, cam, body, t_i, hook_text) if mag else Dressing()
+                ass_hook = "" if dress.title else hook_text
+                hook_secs = s.title_seconds if mag else s.hook_seconds
                 try:
                     pieces = ([t_i] if t_i else []) + body
-                    ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook_text, s.hook_seconds,
+                    ass = subtitles.build_ass(segments, a, b, s.font_name, label, ass_hook, hook_secs,
                                               hook_in_ass=not png, top=top,
                                               pieces=pieces if len(pieces) > 1 else None,
                                               end_text=end_text, end_seconds=s.end_seconds,
-                                              keywords=keywords, pop=pop, cta=cta)
+                                              keywords=keywords, pop=pop, cta=cta, sub_v=dress.sub_v,
+                                              source=dress.source, source_from=dress.source_from)
                     render.render(src, a, b, ass, out, png, s.hook_seconds, cam, t_i, body if len(body) > 1 else None,
-                                  punch, s.progress_bar)
+                                  punch, s.progress_bar, extras=dress.extras)
                 except RuntimeError as e:
-                    if not (t_i or len(body) > 1 or punch or s.progress_bar):
+                    if not (t_i or len(body) > 1 or punch or s.progress_bar or len(dress.extras) > 1):
                         raise
                     log.warning("Montage dynamique impossible (%s), rendu simple.", str(e)[-200:])
                     t_i, body, punch = None, [(a, b)], None
-                    ass = subtitles.build_ass(segments, a, b, s.font_name, label, hook_text, s.hook_seconds,
+                    keep = dress.extras[:1] if dress.title else []  # seul le titre d'ouverture reste
+                    ass = subtitles.build_ass(segments, a, b, s.font_name, label, ass_hook, hook_secs,
                                               hook_in_ass=not png, top=top, end_text=end_text,
-                                              end_seconds=s.end_seconds, keywords=keywords, pop=pop, cta=cta)
-                    render.render(src, a, b, ass, out, png, s.hook_seconds, cam)
+                                              end_seconds=s.end_seconds, keywords=keywords, pop=pop, cta=cta,
+                                              sub_v=dress.sub_v, source=dress.source, source_from=dress.source_from)
+                    render.render(src, a, b, ass, out, png, s.hook_seconds, cam, extras=keep)
+                if mag and s.short_thumbnail and i == 1:
+                    thumb = make_thumbnail(video, src, out, m, cam, hook_text or m.title, a, b)
             except Exception as e:
                 log.exception("Rendu échoué")
                 status, err = "failed", str(e)
@@ -393,6 +544,7 @@ def render_moments(video: Video, src: Path, segments: list[dict], moments: list)
                                                   "teaser": bool(t_i) if status == "ready" else False,
                                                   "cuts": len(body) - 1 if status == "ready" else 0,
                                                   "punch": bool(punch) if status == "ready" else False,
+                                                  "thumb": thumb if status == "ready" else "",
                                                   "exp": {**exp, "zoom": "on" if punch else "off"}
                                                   if status == "ready" else {}})
                 if status == "ready":
