@@ -11,6 +11,7 @@ import logging
 import math
 import re
 from datetime import timedelta
+from pathlib import Path
 
 from sqlmodel import col, select
 
@@ -28,6 +29,36 @@ _PART = re.compile(r"\s*\(partie \d+/\d+\)$", re.I)
 
 def is_reserve(post: Post) -> bool:
     return post.status == "pending" and (post.error or "").startswith(RESERVE)
+
+
+RESCUE_KEY = "reserve_rescue_v1"
+RESCUABLE = ("Retiré : Note de l'IA trop basse", "Retiré : Pas dans les", "Retiré : Recalé à la relecture")
+
+
+def rescue_once() -> int:
+    """Une seule fois, à l'arrivée de la réserve : les clips YouTube retirés récemment pour un seuil trop strict
+    reviennent en file (le tri les remet en réserve, ou les retire s'ils sont vraiment trop faibles)."""
+    from . import platforms
+
+    cfg = get_settings()
+    if not cfg.reserve or platforms._get(RESCUE_KEY):
+        return 0
+    since = now() - timedelta(hours=cfg.queue_max_hours or 36)
+    n = 0
+    with db.session() as s:
+        rows = s.exec(select(Post, Clip).join(Clip, Clip.id == Post.clip_id).where(
+            Post.platform == "youtube", Post.status == "cancelled", Clip.status == "ready",
+            Clip.created_at >= since)).all()
+        for post, clip in rows:
+            if (post.error or "").startswith(RESCUABLE) and clip.path and Path(clip.path).is_file():
+                post.status, post.error = "pending", ""
+                s.add(post)
+                n += 1
+        s.commit()
+    platforms._put(RESCUE_KEY, now().isoformat(timespec="minutes"))
+    if n:
+        log.info("Réserve : %d clip(s) retiré(s) récemment remis en file pour être triés à nouveau", n)
+    return n
 
 
 def min_llm() -> float:
@@ -135,6 +166,7 @@ def run() -> dict:
     Les clips qui passent le seuil sont d'abord relus par l'IA (2e note, meilleur titre).
     Renvoie {"cancelled": n, "retitled": n, "polished": n}."""
     out = {"cancelled": 0, "retitled": 0, "polished": 0}
+    out["rescued"] = rescue_once()
     with db.session() as s:
         rows = s.exec(select(Post, Clip, Video).join(Clip, Clip.id == Post.clip_id)
                       .join(Video, Video.id == Clip.video_id)

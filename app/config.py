@@ -289,6 +289,10 @@ class Settings(BaseSettings):
     # Les streamers dont les clips marchent le mieux sont enregistrés et traités en premier
     source_priority: bool = True
     clip_cta: bool = False  # appel « abonne-toi » à l'écran en fin de clip (testé par l'amélioration continue)
+    # Interactions (app/interact.py) : 0 commentaire sur les 189 premiers Shorts (27/11)
+    first_comment: bool = True  # la chaîne pose la question du clip en 1er commentaire (reconnexion YouTube requise)
+    first_comment_delay: float = 3  # minutes après l'envoi (le temps que YouTube enregistre la vidéo)
+    share_line: bool = True  # « 📤 Envoie-le à un pote… » dans les descriptions YouTube
     # Compilations longues hebdomadaires (app/compile.py) : les seules vidéos qui font des heures de visionnage
     compil: bool = True  # réglable aussi depuis la page Statistiques
     compil_kinds: str = "clip"  # clip (meilleurs moments GTA), story (histoires), news, séparés par des virgules

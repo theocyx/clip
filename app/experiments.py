@@ -25,7 +25,9 @@ log = logging.getLogger(__name__)
 
 KINDS = {"clip": "Clips", "news": "Actus", "story": "Histoires"}
 PACE = {"posee": 0.94, "normale": 1.0, "rapide": 1.07}  # multiplicateur du débit de la voix
-LABELS = {"on": "avec", "off": "sans", "posee": "posée", "normale": "normale", "rapide": "rapide"}
+LABELS = {"on": "avec", "off": "sans", "posee": "posée", "normale": "normale", "rapide": "rapide",
+          "abonne": "« Abonne-toi »", "partage": "« Envoie ça à un pote »"}
+ALIASES = {("cta", "on"): "abonne"}  # anciennes valeurs enregistrées (PR #57 : « cta » = on/off)
 MARGIN = 0.05  # écart de performance (0-1) nécessaire pour détrôner la version par défaut
 
 
@@ -44,8 +46,11 @@ def factors(kind: str) -> dict[str, dict]:
             "keywords": {"label": "Mots forts en couleur (sous-titres)", "variants": ["off", "on"],
                          "default": onoff(s.sub_keywords)},
             "pop": {"label": "Sous-titres qui rebondissent", "variants": ["on", "off"], "default": onoff(s.sub_pop)},
-            "cta": {"label": "« Abonne-toi » à l'écran en fin de clip", "variants": ["off", "on"],
-                    "default": onoff(s.clip_cta)},
+            # essais faits pour les interactions : jugés sur les likes / commentaires / partages (metric « eng »)
+            "ask": {"label": "Question à l'écran en fin de clip", "variants": ["off", "on"],
+                    "default": onoff(s.end_card), "metric": "eng"},
+            "cta": {"label": "Appel à l'écran en fin de clip", "variants": ["off", "abonne", "partage"],
+                    "default": "abonne" if s.clip_cta else "off", "metric": "eng"},
         }
     if (s.news_tts or "").lower() != "edge":  # voix Piper locale : une seule voix, seul le débit varie
         return {"pace": {"label": "Débit de la voix", "variants": list(PACE), "default": "normale"}}
@@ -73,7 +78,7 @@ def kind_of(info: dict) -> str:
 
 
 def measured(kind: str, perf: dict[int, float] | None = None) -> list[tuple[float, dict]]:
-    """[(performance, infos du clip)] des vidéos mesurées de ce type."""
+    """[(performance, infos du clip + « _cid »)] des vidéos mesurées de ce type."""
     if perf is None:
         from . import learning
 
@@ -89,16 +94,34 @@ def measured(kind: str, perf: dict[int, float] | None = None) -> list[tuple[floa
         except ValueError:
             continue
         if kind_of(info) == kind:
-            out.append((perf[r.clip_id], info))
+            out.append((perf[r.clip_id], {**info, "_cid": r.clip_id}))
     return out
 
 
-def results(kind: str, perf: dict[int, float] | None = None) -> dict[str, dict[str, list[float]]]:
-    """{réglage: {version: [performances]}} des vidéos qui ont noté leurs versions."""
+def results(kind: str, perf: dict[int, float] | None = None,
+            eng: dict[int, float] | None = None) -> dict[str, dict[str, list[float]]]:
+    """{réglage: {version: [performances]}} des vidéos qui ont noté leurs versions. Les réglages faits pour les
+    interactions (metric « eng ») sont jugés sur le taux de likes / commentaires / partages."""
+    specs = factors(kind)
+    if eng is None and any(sp.get("metric") == "eng" for sp in specs.values()):
+        from . import learning
+
+        try:
+            eng = learning.engagement()
+        except Exception as e:  # base pas prête : on juge sur la performance générale
+            log.debug("Taux d'interaction illisible : %s", e)
+            eng = {}
     table: dict[str, dict[str, list[float]]] = {}
     for p, info in measured(kind, perf):
         for f, v in (info.get("exp") or {}).items():
-            table.setdefault(f, {}).setdefault(str(v), []).append(p)
+            v = ALIASES.get((f, str(v)), str(v))
+            if (specs.get(f) or {}).get("metric") == "eng":
+                if info["_cid"] not in (eng or {}):
+                    continue  # trop peu de vues pour juger les interactions
+                p_f = eng[info["_cid"]]
+            else:
+                p_f = p
+            table.setdefault(f, {}).setdefault(v, []).append(p_f)
     return table
 
 
@@ -150,6 +173,11 @@ def choose(kind: str, rng: random.Random | None = None, perf: dict[int, float] |
 
 def on(exp: dict, factor: str) -> bool:
     return exp.get(factor) == "on"
+
+
+def value(exp: dict, factor: str) -> str:
+    v = str(exp.get(factor, ""))
+    return ALIASES.get((factor, v), v)
 
 
 def pace(exp: dict) -> float:

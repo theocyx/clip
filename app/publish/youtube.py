@@ -17,8 +17,10 @@ from ..config import get_settings
 from . import creds
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly",
-          "https://www.googleapis.com/auth/yt-analytics.readonly"]  # rétention (statistiques détaillées)
+          "https://www.googleapis.com/auth/yt-analytics.readonly",  # rétention (statistiques détaillées)
+          "https://www.googleapis.com/auth/youtube.force-ssl"]  # 1er commentaire de la chaîne sous chaque vidéo
 ANALYTICS_SCOPE = SCOPES[2]
+COMMENT_SCOPE = SCOPES[3]
 # Google peut accorder moins de droits que demandés (cases décochées) : ne pas faire échouer la connexion.
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -118,6 +120,24 @@ def _credentials() -> Credentials:
 
 def has_analytics() -> bool:
     return ANALYTICS_SCOPE in ((creds.load("youtube") or {}).get("scopes") or [])
+
+
+def can_comment() -> bool:
+    """Autorisation « gérer les commentaires » accordée (demandée depuis la PR des interactions : reconnecter)."""
+    return COMMENT_SCOPE in ((creds.load("youtube") or {}).get("scopes") or [])
+
+
+def comment(video_id: str, text: str) -> str:
+    """Publie un commentaire de la chaîne sous la vidéo ; renvoie son id."""
+    yt = build("youtube", "v3", credentials=_credentials(), cache_discovery=False)
+    body = {"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": text[:500]}}}}
+    try:
+        resp = yt.commentThreads().insert(part="snippet", body=body).execute()
+    except RefreshError as e:
+        if is_auth_error(e):
+            raise _expired(e) from e
+        raise
+    return resp.get("id", "")
 
 
 def stats(video_ids: list[str]) -> dict[str, dict]:

@@ -14,14 +14,17 @@
 
   <h4>Par format <span class="mut">(Shorts YouTube des {{ mix_days|round|int }} derniers jours, publiés depuis au moins 24 h)</span></h4>
   <table>
-    <tr><th>Format</th><th>Vidéos</th><th>Vues médianes</th><th>Vues totales</th><th>Regardé</th><th>Abonnés gagnés</th><th>Abonnés / 1000 vues</th></tr>
+    <tr><th>Format</th><th>Vidéos</th><th>Vues médianes</th><th>Vues totales</th><th>Regardé</th><th>Likes · Comm. · Partages</th><th>Interactions / 1000 vues</th><th>Abonnés gagnés</th><th>Abonnés / 1000 vues</th></tr>
     {% for k, v in kinds.items() %}
     <tr><td>{{ v.label }}</td><td>{{ v.n }}</td><td>{{ v.median|round|int }}</td><td>{{ v.total }}</td>
       <td>{{ (v.ret|round|int ~ ' %') if v.ret is not none else '–' }}</td>
+      <td>{{ v.likes }} · {{ v.comments }} · {{ v.shares }}</td>
+      <td>{{ ('%.1f'|format(v.eng_1k)) if v.eng_1k is not none else '–' }}</td>
       <td>{{ v.subs if v.subs is not none else '–' }}</td>
       <td>{{ ('%.1f'|format(v.subs_1k)) if v.subs_1k is not none else '–' }}</td></tr>
-    {% else %}<tr><td colspan="7" class="mut">Pas encore de Short mesuré.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="9" class="mut">Pas encore de Short mesuré.</td></tr>{% endfor %}
   </table>
+  <p>1er commentaire de la chaîne sous chaque vidéo (la question du clip) : {% if not comments_on %}<span class="mut">coupé (FIRST_COMMENT=false)</span>{% elif can_comment %}<b class="ok">actif</b>{% else %}<b class="err">à activer</b> : <a href="/accounts">reconnecte YouTube</a> et accepte la gestion des commentaires{% endif %}. Les essais « question à l'écran » et « appel à l'écran » sont jugés sur les likes, commentaires et partages.</p>
   <p class="mut">Abonnés gagnés par vidéo : fournis par YouTube Analytics (1 à 2 jours de retard).</p>
 
   <h4>On double ce qui marche</h4>

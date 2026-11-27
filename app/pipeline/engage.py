@@ -245,10 +245,10 @@ QUESTIONS: list[tuple[str, list[str]]] = [
     (r"mort|tué|kill|perdu|rate|raté|fail",
      ["C'est de sa faute ou pas ?", "T'aurais survécu toi ?"]),
     (r"gta ?6|gta ?vi|trailer|sortie",
-     ["Tu vas acheter GTA 6 day one ?", "Ton avis sur GTA 6 ?"]),
+     ["Tu vas acheter GTA 6 day one ?", "GTA 6 : hype ou déçu ?"]),
 ]
-GENERIC = ["T'aurais fait quoi à sa place ?", "Tu valides ou pas ?", "Team lui ou team l'autre ?",
-           "Ton avis en commentaire ?"]
+GENERIC = ["T'aurais fait pareil, oui ou non ?", "Tu valides ou pas ?", "Team lui ou team l'autre ?",
+           "Génie ou complètement fou ?"]  # un choix qu'on tranche en un mot : on répond bien plus qu'à « ton avis ? »
 
 
 def fallback_question(text: str, title: str = "") -> str:

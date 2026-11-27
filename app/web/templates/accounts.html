@@ -10,6 +10,7 @@
       l'application » (mode Production au lieu de Test).</p>
   {% elif accounts.youtube.connected %}
     <p class="ok">Connecté : {{ accounts.youtube.account }}</p>
+    {% if not accounts.youtube.comments %}<p class="err">Nouveau : la chaîne peut poser la question du clip en 1er commentaire (ça lance les réponses). Il faut une autorisation en plus : <a class="btn" href="/auth/youtube">Reconnecter ma chaîne YouTube</a> et accepte « Gérer vos vidéos, notes, commentaires… ».</p>{% endif %}
     <form method="post" action="/accounts/youtube/disconnect"><button class="sec">Déconnecter</button></form>
   {% elif accounts.youtube.configured %}
     <a class="btn" href="/auth/youtube">Connecter ma chaîne YouTube</a>
