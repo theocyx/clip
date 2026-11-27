@@ -36,7 +36,9 @@ Règles pour être vu au maximum sur TikTok et YouTube Shorts (style des clips G
 - Question : une question courte (8 mots max) sur CE moment, qui oblige à choisir son camp et à laquelle on
   répond en un mot dans les commentaires (deux options, oui ou non, pronostic : « Il aurait dû fuir ou se
   rendre ? », « Tu lui pardonnes ? »). Jamais un simple « ton avis ? ».
-Réponds UNIQUEMENT en JSON : {{"pub": <true|false>, "score": <entier 1-10>, "title": "<titre en français, 60 caractères max, sans hashtag>", "hook": "<accroche affichée sur la vidéo, 7 à 10 mots, terminée par 1 emoji en lien avec le contenu (ex. 😭 💀 😂 🤯 😱), sans hashtag>", "question": "<question courte pour les commentaires>"}}"""
+- Citation : la phrase la plus marquante (drôle, choquante, culte) dite dans l'extrait, recopiée MOT POUR MOT
+  depuis la transcription, 3 à 9 mots, sans guillemets. Rien d'inventé ni de vulgaire.
+Réponds UNIQUEMENT en JSON : {{"pub": <true|false>, "score": <entier 1-10>, "title": "<titre en français, 60 caractères max, sans hashtag>", "hook": "<accroche affichée sur la vidéo, 7 à 10 mots, terminée par 1 emoji en lien avec le contenu (ex. 😭 💀 😂 🤯 😱), sans hashtag>", "question": "<question courte pour les commentaires>", "quote": "<citation mot pour mot>"}}"""
 
 
 def _ollama_ok() -> bool:
@@ -64,15 +66,16 @@ def available() -> bool:
     return provider() != "none"
 
 
-def parse(content: str) -> tuple[float, str, str, str] | None:
-    """(score, titre, accroche, question). Score 0 si l'IA y voit une pub / un passage sponsorisé."""
+def parse(content: str) -> tuple[float, str, str, str, str] | None:
+    """(score, titre, accroche, question, citation). Score 0 si l'IA y voit une pub / un passage sponsorisé."""
     m = re.search(r"\{.*\}", content or "", re.S)
     if not m:
         return None
     data = json.loads(m.group(0))
     clean = lambda k, n: str(data.get(k, "")).strip().strip('"')[:n]  # noqa: E731
     pub = data.get("pub") in (True, "true", "oui", 1)
-    return 0.0 if pub else float(data.get("score", 0)), clean("title", 90), clean("hook", 60), clean("question", 90)
+    return (0.0 if pub else float(data.get("score", 0)), clean("title", 90), clean("hook", 60), clean("question", 90),
+            clean("quote", 80))
 
 
 def ensure_model(name: str) -> bool:
@@ -107,7 +110,7 @@ def _ask_ollama(prompt: str, timeout: float = 600, max_tokens: int | None = None
 
 
 def rate(text: str, video_title: str, which: str | None = None, guidance: str = "",
-         recent: list[str] | None = None, streamer: str = "") -> tuple[float, str, str, str] | None:
+         recent: list[str] | None = None, streamer: str = "") -> tuple[float, str, str, str, str] | None:
     """guidance : leçons tirées des clips déjà publiés (voir app/learning.py), ajoutées au prompt.
 
     recent : titres déjà utilisés, que l'IA ne doit pas reprendre. streamer : nom à citer dans le titre."""

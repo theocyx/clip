@@ -114,4 +114,4 @@ def test_process_uses_tuning_and_saves_info(monkeypatch, tmp_path):
         clip = s.exec(__import__("sqlmodel").select(Clip).where(Clip.video_id == v.id)).first()
         info = json.loads(s.get(ClipInfo, clip.id).data)
     assert info["llm"] == 8 and info["hook"] == "Accroche" and "spike" in info
-    assert 50 * 0.85 - 1 <= info["target"] <= 50 * 1.15 + 1
+    assert 50 * 0.7 - 1 <= info["target"] <= 50 * 1.3 + 1  # durée apprise ± DURATION_EXPLORE

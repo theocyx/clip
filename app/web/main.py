@@ -15,8 +15,8 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Red
 from fastapi.templating import Jinja2Templates
 from sqlmodel import col, func, select
 
-from .. import compile as compil, curate, db, discovery, experiments, growth, gta6, health, learning, notify, \
-    platforms, worker
+from .. import compile as compil, curate, db, discovery, experiments, growth, gta6, health, interact, learning, \
+    notify, platforms, worker
 from ..config import get_settings
 from ..models import Clip, DiscoverIgnore, Post, PostStat, Source, Video, now
 from ..news import generate as news
@@ -723,7 +723,7 @@ def stats_page(request: Request, refreshing: bool = False):
         "kinds": growth.by_kind(),
         "mix": growth.mix(), "mix_on": get_settings().growth_mix, "mix_days": get_settings().mix_days,
         "compil": compil.status(), "sub_url": growth.subscribe_url(), "can_comment": youtube.can_comment(),
-        "comments_on": get_settings().first_comment})
+        "comments_on": get_settings().first_comment, **interact.status()})
 
 
 @app.post("/compil")

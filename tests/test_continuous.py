@@ -224,3 +224,41 @@ def test_examples_guide_the_writer():
 def test_factors_have_default_in_variants(kind):
     for spec in experiments.factors(kind).values():
         assert spec["default"] in spec["variants"]
+
+
+def test_citation_titles_ab_tested(monkeypatch):
+    from app import curate
+    from app.pipeline import engage, process
+
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "experiment_rate", 0.25)
+    monkeypatch.setattr(cfg, "title_test_share", 1.0)
+    exp = experiments.choose("clip", rng=random.Random(1), perf={})
+    assert exp["title"] == "citation"  # pas encore mesuré : la moitié des clips (ici tous) essaient la citation
+    monkeypatch.setattr(cfg, "experiment_rate", 0.0)
+    assert experiments.choose("clip", rng=random.Random(1), perf={})["title"] == "action"  # par défaut
+
+    text = "Bon on y va. Il m'a écrasé avec le camion ! Ok d'accord."
+    assert engage.pick_quote("Il m'a écrasé avec le camion", text) == "Il m'a écrasé avec le camion"
+    assert engage.pick_quote("Phrase jamais dite par personne ici", text) == "Il m'a écrasé avec le camion !"
+
+    class M:
+        title, hook = "Domingo se fait écraser GTA 6", "Il se fait écraser par un camion 😭"
+        features = {"quote": "Il m'a écrasé avec le camion", "streamer": "Domingo", "text": text}
+
+    m = M()
+    video = type("V", (), {"title": "GTA RP live 12h", "source_id": None})()
+    assert process.citation_title(video, m, {"title": "action"}) == "action" and m.title.startswith("Domingo se")
+    assert process.citation_title(video, m, {"title": "citation"}) == "citation"
+    assert m.title == "Domingo : « Il m'a écrasé avec le camion » 😭"
+    assert m.features["title_action"] == "Domingo se fait écraser GTA 6"
+    m2 = M()
+    m2.features = {"quote": "", "text": "euh"}
+    assert process.citation_title(video, m2, {"title": "citation"}) == "action"  # rien de citable
+
+    # la relecture IA garde le titre citation (sinon l'essai ne mesurerait rien)
+    monkeypatch.setattr(curate.llm, "polish", lambda *a, **k: (8, "Domingo se fait rouler dessus GTA 6", "Q ?"))
+    clip = type("C", (), {"title": m.title})()
+    out = curate.polish(clip, {"text": text, "exp": {"title": "citation"}}, [], "")
+    assert "polished_title" not in out
+    assert curate.polish(clip, {"text": text, "exp": {"title": "action"}}, [], "")["polished_title"]

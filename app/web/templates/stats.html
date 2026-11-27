@@ -34,6 +34,7 @@
     {% else %}<tr><td colspan="9" class="mut">Pas encore de Short mesuré.</td></tr>{% endfor %}
   </table>
   <p>1er commentaire de la chaîne sous chaque vidéo (la question du clip) : {% if not comments_on %}<span class="mut">coupé (FIRST_COMMENT=false)</span>{% elif can_comment %}<b class="ok">actif</b>{% else %}<b class="err">à activer</b> : <a href="/accounts">reconnecte YouTube</a> et accepte la gestion des commentaires{% endif %}. Les essais « question à l'écran » et « appel à l'écran » sont jugés sur les likes, commentaires et partages.</p>
+  <p>Réponses de la chaîne aux commentaires : {% if not replies_on %}<span class="mut">coupées (COMMENT_REPLIES=false)</span>{% elif can_comment %}<b class="ok">actives</b>, {{ replies_today }} aujourd'hui (max {{ reply_max }}){% else %}<b class="err">à activer</b> (même autorisation){% endif %} · Playlists par streamer : {% if playlists %}{{ playlists|length }} ({{ playlists|join(', ') }}){% elif can_comment %}<span class="mut">créées au prochain envoi</span>{% else %}<span class="mut">à activer (même autorisation)</span>{% endif %}.</p>
   <p class="mut">Abonnés gagnés par vidéo : fournis par YouTube Analytics (1 à 2 jours de retard).</p>
 
   <h4>On double ce qui marche</h4>

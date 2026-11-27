@@ -102,6 +102,65 @@ def content_title(text: str, video_title: str = "", recent: list[str] | None = N
     return best.strip()
 
 
+# ---------- Titres « citation » (style @cyprienlefute : « Je suis le meilleur » 😂) ----------
+
+_QUOTE_WORD = re.compile(r"[\wàâäçéèêëîïôöùûüœ']+", re.I)
+
+
+def _norm_words(text: str) -> list[str]:
+    return [w.lower().replace("’", "'") for w in _QUOTE_WORD.findall((text or "").replace("’", "'"))]
+
+
+def said_in(quote: str, text: str) -> bool:
+    """Vrai si la citation a bien été dite dans l'extrait (au moins 80 % de ses mots, dans la transcription)."""
+    qw, tw = _norm_words(quote), set(_norm_words(text))
+    return bool(qw) and sum(w in tw for w in qw) / len(qw) >= 0.8
+
+
+def clean_quote(quote: str) -> str:
+    q = re.sub(r"[«»\"“”„`*_#~<>{}\[\]]", " ", quote or "")
+    q = re.sub(r"([!?])[!?]+", r"\1", re.sub(r"\s+", " ", q)).strip(" .,;:-–—'’")
+    return q[:1].upper() + q[1:]
+
+
+def pick_quote(llm_quote: str, text: str) -> str:
+    """Phrase marquante dite dans l'extrait (2 à 9 mots, 48 caractères max) : celle de l'IA si elle a vraiment été
+    dite, sinon la phrase courte la plus forte de la transcription (exclamations, mots forts). "" si aucune."""
+    from .subtitles import is_keyword
+
+    def ok(q: str) -> bool:
+        n = len(_norm_words(q))
+        return 2 <= n <= 9 and len(q) <= 48 and not bad_title(q) and not looks_english(q)
+
+    q = clean_quote(llm_quote)
+    if q and ok(q) and said_in(q, text):
+        return q
+    best, best_score = "", 0.5
+    for sent in re.split(r"(?<=[.!?…])\s+", re.sub(r"\s+", " ", text or "").strip()):
+        cand = clean_quote(sent)
+        if not ok(cand):
+            continue
+        score = sum(is_keyword(w) for w in cand.split()) + 1.5 * sent.count("!") + sent.count("?")
+        score -= abs(len(_norm_words(cand)) - 5) / 4
+        if score > best_score:
+            best, best_score = cand, score
+    return best
+
+
+def quote_title(quote: str, streamer: str = "", hook: str = "") -> str:
+    """« Streamer : « citation » 😭 » (les hashtags #gta6… sont ajoutés à l'envoi). "" sans citation."""
+    from .hook import DEFAULT_EMOJI, emojis_in
+
+    q = clean_quote(quote)
+    if not q:
+        return ""
+    emoji = (emojis_in(hook) or [DEFAULT_EMOJI])[0]
+    title = f"« {q} » {emoji}"
+    if streamer.strip():
+        title = f"{streamer.strip()} : {title}"
+    return title if len(title) <= 80 else ""
+
+
 _GTA_NAME = re.compile(r"\b(gta ?vi|gta6|gta ?six)\b", re.I)
 _JUNK = re.compile(r"[\"“”„`*_~\\<>{}\[\]^]")
 # Vulgarité : un Short au titre grossier est moins recommandé (et donne une mauvaise image de la chaîne)

@@ -140,6 +140,71 @@ def comment(video_id: str, text: str) -> str:
     return resp.get("id", "")
 
 
+def _call(req):
+    try:
+        return req.execute()
+    except RefreshError as e:
+        if is_auth_error(e):
+            raise _expired(e) from e
+        raise
+
+
+def _yt():
+    return build("youtube", "v3", credentials=_credentials(), cache_discovery=False)
+
+
+def recent_comments(channel_id: str, limit: int = 50) -> list[dict]:
+    """Derniers fils de commentaires sous les vidéos de la chaîne (1 unité de quota), avec leurs réponses :
+    [{id, video_id, author, author_id, text, likes, published, replies: [{id, author, author_id, text, published}]}]"""
+    resp = _call(_yt().commentThreads().list(part="snippet,replies", allThreadsRelatedToChannelId=channel_id,
+                                             order="time", maxResults=max(1, min(100, limit)),
+                                             textFormat="plainText"))
+
+    def row(c: dict) -> dict:
+        sn = c.get("snippet", {})
+        return {"id": c.get("id", ""), "author": sn.get("authorDisplayName", ""),
+                "author_id": (sn.get("authorChannelId") or {}).get("value", ""),
+                "text": sn.get("textDisplay") or sn.get("textOriginal") or "", "likes": int(sn.get("likeCount", 0)),
+                "published": sn.get("publishedAt", "")}
+
+    out = []
+    for th in resp.get("items", []):
+        top = row(th["snippet"]["topLevelComment"])
+        top["video_id"] = th["snippet"].get("videoId", "")
+        top["replies"] = [row(r) for r in (th.get("replies") or {}).get("comments", [])]
+        out.append(top)
+    return out
+
+
+def reply(parent_id: str, text: str) -> str:
+    """Répond (au nom de la chaîne) dans le fil du commentaire `parent_id` ; renvoie l'id de la réponse."""
+    body = {"snippet": {"parentId": parent_id, "textOriginal": text[:500]}}
+    return _call(_yt().comments().insert(part="snippet", body=body)).get("id", "")
+
+
+def playlists() -> dict[str, str]:
+    """{titre: id} des playlists de la chaîne."""
+    out, token, yt = {}, None, _yt()
+    for _ in range(5):
+        resp = _call(yt.playlists().list(part="snippet", mine=True, maxResults=50, pageToken=token))
+        out.update({p["snippet"]["title"]: p["id"] for p in resp.get("items", [])})
+        token = resp.get("nextPageToken")
+        if not token:
+            break
+    return out
+
+
+def create_playlist(title: str, description: str = "") -> str:
+    body = {"snippet": {"title": title[:150], "description": description[:5000], "defaultLanguage": "fr"},
+            "status": {"privacyStatus": "public"}}
+    return _call(_yt().playlists().insert(part="snippet,status", body=body)).get("id", "")
+
+
+def add_to_playlist(playlist_id: str, video_id: str) -> str:
+    body = {"snippet": {"playlistId": playlist_id, "resourceId": {"kind": "youtube#video", "videoId": video_id}}}
+    return _call(_yt().playlistItems().insert(part="snippet", body=body)).get("id", "")
+
+
 def stats(video_ids: list[str]) -> dict[str, dict]:
     """Vues, likes, commentaires (+ rétention si l'accès « statistiques » a été accordé)."""
     if not video_ids:

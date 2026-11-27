@@ -152,7 +152,8 @@ def polish(clip: Clip, info: dict, recent: list[str], guidance: str) -> dict | N
     note, title, question = res
     out = {**info, "polished": True, "polish_score": note, "title_before": base}
     title = engage.tidy_title(title)
-    if title and not engage.too_close(title, "", recent) and not engage.bad_title(title) \
+    citation = (info.get("exp") or {}).get("title") == "citation"  # essai du style de titre : on le garde tel quel
+    if title and not citation and not engage.too_close(title, "", recent) and not engage.bad_title(title) \
             and not engage.looks_english(title):
         out["polished_title"] = title
     q = engage.clean_question(question) if question else ""
