@@ -13,11 +13,12 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Sub,{font},74,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,70,70,540,1
+Style: Sub,{font},74,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,70,70,{sub_v},1
 Style: Part,{font},64,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,8,60,60,{part_v},1
 Style: Hook,{font},64,&H00000000,&H00000000,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,{hook_v},1
 Style: Ask,{font},70,&H00000000,&H00000000,&H0000D7FF,&H0000D7FF,-1,0,0,0,100,100,0,0,3,20,0,5,90,90,0,1
 Style: Cta,{font},56,&H00FFFFFF,&H00FFFFFF,&H002A2AE6,&H002A2AE6,-1,0,0,0,100,100,0,0,3,16,0,2,90,90,300,1
+Style: Src,{font},30,&H00FFFFFF,&H00FFFFFF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,2,1,8,50,50,30,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -156,7 +157,7 @@ def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: s
               hook: str = "", hook_seconds: float = 0, hook_in_ass: bool = True, top: int = 0,
               pieces: list[tuple[float, float]] | None = None, end_text: str = "",
               end_seconds: float = 3.5, keywords: bool = True, pop: bool = False, cta: str = "",
-              cta_seconds: float = 3.0) -> str:
+              cta_seconds: float = 3.0, sub_v: int = 540, source: str = "", source_from: float = 0) -> str:
     """hook_in_ass=False : l'accroche est rendue à part en image (emojis couleur), on garde juste la place.
 
     top : décalage vers le bas de l'accroche et de « Partie x/y » (format split : sous la facecam).
@@ -164,12 +165,17 @@ def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: s
     end_text : question / appel à commenter affiché au milieu de l'écran pendant les `end_seconds` dernières s.
     keywords : mots forts en vert (sinon seul le mot prononcé change de couleur).
     pop : chaque groupe de mots apparaît avec un petit rebond.
-    cta : appel à s'abonner (pastille rouge sous les sous-titres) pendant les `cta_seconds` dernières secondes."""
+    cta : appel à s'abonner (pastille rouge sous les sous-titres) pendant les `cta_seconds` dernières secondes.
+    sub_v : marge du bas des sous-titres (540 : vers 70 % de la hauteur ; style magazine : jonction jeu / facecam).
+    source : petite ligne en haut (« titre du live » (stream Untel)) à partir de `source_from` s."""
     pieces = pieces or [(a, b)]
     dur = sum(y - x for x, y in pieces)
     hl = hook_lines(hook) if hook else []
     part_v = (170 + 115 * len(hl) + 40 if hl else 180) + top
-    lines = [HEADER.format(w=W, h=H, font=font, part_v=part_v, hook_v=170 + top)]
+    lines = [HEADER.format(w=W, h=H, font=font, part_v=part_v, hook_v=170 + top, sub_v=int(sub_v))]
+    if source and dur > source_from + 1:
+        lines.append(f"Dialogue: 1,{ts(source_from)},{ts(dur)},Src,,0,0,0,,{{\\fad(200,0)}}"
+                     + source.replace("\\", "").replace("{", "(").replace("}", ")"))
     if hl and hook_in_ass:
         end = min(hook_seconds, dur) if hook_seconds > 0 else dur
         lines.append(f"Dialogue: 2,{ts(0)},{ts(end)},Hook,,0,0,0,,{NL.join(_escape(x) for x in hl)}")

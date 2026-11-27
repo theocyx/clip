@@ -85,6 +85,17 @@ class Settings(BaseSettings):
     # Mise en page : auto (split si une facecam est détectée, sinon classique), split, classic
     layout: str = "auto"
     split_cam_height: int = 614  # hauteur de la facecam en haut du clip (32 %, le jeu prend le reste)
+    # Habillage des Shorts (app/pipeline/style.py) : « magazine » = codes relevés le 27/11 sur une chaîne FR de
+    # Shorts GTA 6 à 20-400 k vues (jeu en haut, facecam en bas, titre d'ouverture 4 s, ligne de source,
+    # message du chat au moment fort, crédit du streamer en fin, miniature dessinée) ; « tiktok » = ancien style
+    clip_style: str = "magazine"
+    mag_cam_height: int = 730  # hauteur de la facecam EN BAS en style magazine (38 %, le jeu prend le haut)
+    title_seconds: float = 4.0  # durée du titre d'ouverture (style magazine)
+    source_line: bool = True  # petite ligne « titre du live » (stream Untel) en haut du clip
+    chat_card: bool = True  # vrai message du chat Twitch affiché au moment fort
+    credit_card: bool = True  # photo + /pseudo + « SUIS-LE SUR TWITCH » à la fin du clip
+    credit_seconds: float = 3.0
+    short_thumbnail: bool = True  # miniature dessinée envoyée à YouTube (chaîne validée par téléphone requise)
 
     # Publication
     auto_publish: bool = True
