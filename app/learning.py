@@ -88,7 +88,10 @@ def save_clip_info(clip_id: int, data: dict) -> None:
 
 # ---------- Relevé des statistiques ----------
 
-FETCHERS = {"youtube": (youtube.configured, youtube.stats), "tiktok": (tiktok.configured, tiktok.stats)}
+FETCHERS = {"youtube": (youtube.configured, youtube.stats), "tiktok": (tiktok.configured, tiktok.stats),
+            "youtube_long": (youtube.configured, youtube.stats)}  # compilations (vidéos longues)
+SHORTS = ("youtube", "tiktok")  # plateformes comparées entre elles (les vidéos longues sont à part)
+CREDS = {"youtube_long": "youtube"}
 
 
 def fetch_stats() -> int:
@@ -101,7 +104,7 @@ def fetch_stats() -> int:
     added = 0
     for platform, (configured, fetch) in FETCHERS.items():
         mine = {p.remote_id: p for p in posts if p.platform == platform}
-        if not mine or not configured() or creds.load(platform) is None:
+        if not mine or not configured() or creds.load(CREDS.get(platform, platform)) is None:
             continue
         try:
             found = fetch(list(mine))
@@ -169,14 +172,15 @@ def performances() -> dict[int, float]:
     """{clip_id: performance 0-1}, comparée aux autres clips de la même plateforme."""
     cfg = get_settings()
     with db.session() as s:
-        posts = s.exec(select(Post).where(Post.status == "published", Post.published_at != None)).all()  # noqa: E711
+        posts = s.exec(select(Post).where(Post.status == "published", Post.published_at != None,  # noqa: E711
+                                          col(Post.platform).in_(SHORTS))).all()
         stats = s.exec(select(PostStat).where(col(PostStat.post_id).in_([p.id for p in posts]))).all()
     by_post: dict[int, list[PostStat]] = {}
     for st in stats:
         by_post.setdefault(st.post_id, []).append(st)
     burst = {pid for pid, g in gaps(posts).items() if is_burst(g)}
     per_clip: dict[int, list[float]] = {}
-    for platform in FETCHERS:
+    for platform in SHORTS:
         rows = []
         for p in posts:
             if p.id in burst:  # noyé dans une rafale : ses vues ne disent rien du clip lui-même
@@ -194,6 +198,11 @@ def performances() -> dict[int, float]:
         if np.isfinite(ret).sum() >= 3:  # la rétention décide de la diffusion des Shorts : elle compte autant
             score = 0.45 * _z(np.log1p(views)) + 0.2 * _z(eng) + 0.35 * np.nan_to_num(
                 _z(np.where(np.isfinite(ret), ret, np.nanmean(ret))))
+        subs = np.array([st.subs if st.subs is not None else np.nan for _, st in rows], float)
+        if np.isfinite(subs).sum() >= 3 and np.nansum(subs) >= 3:
+            # abonnés gagnés pour 1000 vues : ce qui fait grandir la chaîne (le but), pas seulement les vues
+            rate = np.where(np.isfinite(subs), subs, 0) / np.maximum(views, 1)
+            score = 0.85 * score + 0.15 * _z(rate)
         for (cid, _), r in zip(rows, _rank01(score)):
             per_clip.setdefault(cid, []).append(float(r))
     return {cid: sum(v) / len(v) for cid, v in per_clip.items()}
@@ -215,7 +224,7 @@ def _clip_rows(perf: dict[int, float]) -> list[dict]:
         if not c:
             continue
         info = infos.get(cid, {})
-        if info.get("kind") == "news":  # les vidéos d'actu n'apprennent rien sur le montage des clips
+        if info.get("kind") in ("news", "compil"):  # actus / compilations : rien à apprendre sur le montage
             continue
         v = videos.get(c.video_id)
         rows.append({**info, "clip_id": cid, "perf": p, "title": info.get("title") or c.title,
@@ -374,7 +383,8 @@ def reviews() -> dict[int, dict]:
     cfg = get_settings()
     since = now() - timedelta(days=cfg.stats_days)
     with db.session() as s:
-        posts = s.exec(select(Post).where(Post.status == "published", Post.published_at >= since)).all()
+        posts = s.exec(select(Post).where(Post.status == "published", Post.published_at >= since,
+                                          col(Post.platform).in_(SHORTS))).all()
         stats = s.exec(select(PostStat).where(col(PostStat.post_id).in_([p.id for p in posts]))
                        .order_by(col(PostStat.fetched_at))).all()
         infos = {i.clip_id: i.data for i in s.exec(select(ClipInfo).where(
@@ -387,7 +397,7 @@ def reviews() -> dict[int, dict]:
     age = lambda p: (now() - p.published_at).total_seconds() / 3600  # noqa: E731
     mature = [p for p in posts if p.id in last and age(p) >= cfg.review_age_hours]
     med: dict[str, dict[str, float | None]] = {}
-    for platform in FETCHERS:
+    for platform in SHORTS:
         mine = [last[p.id] for p in mature if p.platform == platform and not is_burst(gap.get(p.id))] or \
                [last[p.id] for p in mature if p.platform == platform]
         med[platform] = {
@@ -519,6 +529,11 @@ def notify_reviews() -> int:
 
 def run(force: bool = False) -> dict:
     fetch_stats()
+    try:
+        from . import growth
+        growth.run()  # abonnés de la chaîne relevés, format qui marche le mieux mis en avant
+    except Exception:
+        log.exception("Suivi de la croissance échoué")
     res = learn(force)
     try:
         notify_reviews()

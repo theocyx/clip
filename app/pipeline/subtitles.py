@@ -17,6 +17,7 @@ Style: Sub,{font},74,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,10
 Style: Part,{font},64,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,2,8,60,60,{part_v},1
 Style: Hook,{font},64,&H00000000,&H00000000,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,18,0,8,90,90,{hook_v},1
 Style: Ask,{font},70,&H00000000,&H00000000,&H0000D7FF,&H0000D7FF,-1,0,0,0,100,100,0,0,3,20,0,5,90,90,0,1
+Style: Cta,{font},56,&H00FFFFFF,&H00FFFFFF,&H002A2AE6,&H002A2AE6,-1,0,0,0,100,100,0,0,3,16,0,2,90,90,300,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -154,14 +155,16 @@ def _word_text(word: str, active: bool, keywords: bool = True, pop: bool = False
 def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: str = "",
               hook: str = "", hook_seconds: float = 0, hook_in_ass: bool = True, top: int = 0,
               pieces: list[tuple[float, float]] | None = None, end_text: str = "",
-              end_seconds: float = 3.5, keywords: bool = True, pop: bool = False) -> str:
+              end_seconds: float = 3.5, keywords: bool = True, pop: bool = False, cta: str = "",
+              cta_seconds: float = 3.0) -> str:
     """hook_in_ass=False : l'accroche est rendue à part en image (emojis couleur), on garde juste la place.
 
     top : décalage vers le bas de l'accroche et de « Partie x/y » (format split : sous la facecam).
     pieces : morceaux de la source montés bout à bout (extrait d'ouverture + clip) ; par défaut [(a, b)].
     end_text : question / appel à commenter affiché au milieu de l'écran pendant les `end_seconds` dernières s.
     keywords : mots forts en vert (sinon seul le mot prononcé change de couleur).
-    pop : chaque groupe de mots apparaît avec un petit rebond."""
+    pop : chaque groupe de mots apparaît avec un petit rebond.
+    cta : appel à s'abonner (pastille rouge sous les sous-titres) pendant les `cta_seconds` dernières secondes."""
     pieces = pieces or [(a, b)]
     dur = sum(y - x for x, y in pieces)
     hl = hook_lines(hook) if hook else []
@@ -176,6 +179,9 @@ def build_ass(segments: list[dict], a: float, b: float, font: str, part_label: s
         ask = NL.join(_escape(x) for x in hook_lines(end_text, per_line=20, max_lines=3))
         lines.append(f"Dialogue: 3,{ts(dur - end_seconds)},{ts(dur)},Ask,,0,0,0,,"
                      rf"{{\fad(150,0)\t(0,180,\fscx108\fscy108)\t(180,320,\fscx100\fscy100)}}{ask}")
+    if cta and dur > cta_seconds + 5:
+        lines.append(f"Dialogue: 4,{ts(dur - cta_seconds)},{ts(dur)},Cta,,0,0,0,,"
+                     rf"{{\fad(120,0)\t(0,160,\fscx112\fscy112)\t(160,300,\fscx100\fscy100)}}{_escape(cta)}")
     groups = [g for ws in words_in_pieces(segments, pieces) for g in group_words(ws)]
     for gi, g in enumerate(groups):
         g_end = g[-1]["end"]

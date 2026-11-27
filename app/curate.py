@@ -22,7 +22,12 @@ from .pipeline import engage, llm
 log = logging.getLogger(__name__)
 
 FORCED = "Relancé à la main"  # erreur posée par le bouton « Publier » : le tri automatique ne le retire plus
+RESERVE = "Réserve : "  # clip juste sous le seuil appris : gardé, il part seulement quand la file serait vide
 _PART = re.compile(r"\s*\(partie \d+/\d+\)$", re.I)
+
+
+def is_reserve(post: Post) -> bool:
+    return post.status == "pending" and (post.error or "").startswith(RESERVE)
 
 
 def min_llm() -> float:
@@ -148,6 +153,7 @@ def run() -> dict:
         from . import learning
         guidance = learning.guidance(learning.current())
     done_titles: dict[int, str] = {}
+    reserve: list[tuple[float, int]] = []
     with db.session() as s:
         for post, clip, video in sorted(rows, key=lambda r: -r[1].score):
             try:
@@ -178,13 +184,25 @@ def run() -> dict:
                     out["polished"] += 1
             if not forced:
                 why = reason(clip, video, info, kw, bar, floor)
-                if why:
-                    p = s.get(Post, post.id)
+                p = s.get(Post, post.id)
+                if why and cfg.reserve and info.get("kind") != "news" \
+                        and reason(clip, video, info, kw, None, cfg.publish_min_llm) == "":
+                    # seulement sous le seuil appris (note relevée, top %) : bon clip quand même, gardé en réserve
+                    if p.error != RESERVE + why:
+                        p.error = RESERVE + why
+                        s.add(p)
+                        s.commit()
+                    reserve.append((clip.score, p.id))
+                elif why:
                     p.status, p.error = "cancelled", f"Retiré : {why}"
                     s.add(p)
                     s.commit()
                     out["cancelled"] += 1
                     continue
+                elif is_reserve(p):  # repasse au-dessus du seuil : part normalement
+                    p.error = ""
+                    s.add(p)
+                    s.commit()
             if clip.id in done_titles:
                 continue
             new = retitle(clip, video, info, recent)
@@ -198,6 +216,12 @@ def run() -> dict:
                 out["retitled"] += 1
             done_titles[clip.id] = c.title
             recent.insert(0, _PART.sub("", c.title))
+        for _, pid in sorted(reserve, reverse=True)[max(0, cfg.reserve_max):]:  # réserve pleine : les moins bons
+            p = s.get(Post, pid)
+            p.status, p.error = "cancelled", f"Retiré : réserve pleine ({p.error[len(RESERVE):]})"
+            s.add(p)
+            out["cancelled"] += 1
+        out["reserve"] = min(len(reserve), max(0, cfg.reserve_max))
         s.commit()
     if out["cancelled"] or out["retitled"]:
         log.info("File d'envoi triée : %d clip(s) retiré(s), %d titre(s) corrigé(s)", out["cancelled"],

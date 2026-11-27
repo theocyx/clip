@@ -151,19 +151,34 @@ def stats(video_ids: list[str]) -> dict[str, dict]:
     return out
 
 
+BASE_METRICS = "views,averageViewDuration,averageViewPercentage,shares"
+# abonnés gagnés par vidéo (ce qui fait grandir la chaîne) et minutes regardées (heures de visionnage)
+GROWTH_METRICS = BASE_METRICS + ",subscribersGained,estimatedMinutesWatched"
+
+
 def retention(c, video_ids: list[str], out: dict[str, dict]) -> None:
-    """Rétention (% regardé, durée moyenne) et partages via YouTube Analytics, ajoutés à `out`.
+    """Rétention (% regardé, durée moyenne), partages, abonnés gagnés et minutes regardées via YouTube Analytics,
+    ajoutés à `out`.
 
     Le rapport par vidéo exige un tri et maxResults ; les données arrivent avec 1 à 2 jours de retard."""
     ya = build("youtubeAnalytics", "v2", credentials=c, cache_discovery=False)
+    metrics = GROWTH_METRICS
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i:i + 50]
-        resp = ya.reports().query(
-            ids="channel==MINE", startDate="2020-01-01", endDate=date.today().isoformat(),
-            metrics="views,averageViewDuration,averageViewPercentage,shares", dimensions="video",
-            filters="video==" + ",".join(batch), sort="-views", maxResults=len(batch)).execute()
-        cols = [h.get("name") for h in resp.get("columnHeaders", [])] or [
-            "video", "views", "averageViewDuration", "averageViewPercentage", "shares"]
+
+        def query(m: str):
+            return ya.reports().query(
+                ids="channel==MINE", startDate="2020-01-01", endDate=date.today().isoformat(),
+                metrics=m, dimensions="video", filters="video==" + ",".join(batch), sort="-views",
+                maxResults=len(batch)).execute()
+        try:
+            resp = query(metrics)
+        except HttpError:
+            if metrics == BASE_METRICS:
+                raise
+            metrics = BASE_METRICS  # métriques en plus refusées : on garde au moins la rétention
+            resp = query(metrics)
+        cols = [h.get("name") for h in resp.get("columnHeaders", [])] or ["video"] + metrics.split(",")
         for row in resp.get("rows", []):
             r = dict(zip(cols, row))
             vid = r.get("video")
@@ -171,6 +186,39 @@ def retention(c, video_ids: list[str], out: dict[str, dict]) -> None:
                 out[vid].update(avg_view_s=float(r.get("averageViewDuration") or 0),
                                 avg_view_pct=float(r.get("averageViewPercentage") or 0),
                                 shares=int(r.get("shares") or 0))
+                if "subscribersGained" in r:
+                    out[vid]["subs"] = int(r.get("subscribersGained") or 0)
+                if "estimatedMinutesWatched" in r:
+                    out[vid]["minutes"] = float(r.get("estimatedMinutesWatched") or 0)
+
+
+def channel() -> dict:
+    """Chaîne connectée : id, nom, abonnés, vues et nombre de vidéos ({} si indisponible)."""
+    if auth_error() or not configured() or not creds.load("youtube"):
+        return {}
+    try:
+        yt = build("youtube", "v3", credentials=_credentials(), cache_discovery=False)
+        items = yt.channels().list(part="id,snippet,statistics", mine=True).execute().get("items", [])
+    except Exception as e:
+        logging.getLogger(__name__).warning("Infos de la chaîne YouTube indisponibles : %s", e)
+        return {}
+    if not items:
+        return {}
+    st = items[0].get("statistics", {})
+    return {"id": items[0]["id"], "title": items[0].get("snippet", {}).get("title", ""),
+            "subs": int(st.get("subscriberCount", 0) or 0), "views": int(st.get("viewCount", 0) or 0),
+            "videos": int(st.get("videoCount", 0) or 0), "hidden": bool(st.get("hiddenSubscriberCount"))}
+
+
+def set_thumbnail(video_id: str, path: str) -> bool:
+    """Miniature personnalisée (vidéos longues). Refusée tant que la chaîne n'est pas validée par téléphone."""
+    try:
+        yt = build("youtube", "v3", credentials=_credentials(), cache_discovery=False)
+        yt.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(path, mimetype="image/jpeg")).execute()
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).warning("Miniature refusée par YouTube (chaîne pas validée ?) : %s", e)
+        return False
 
 
 def _analytics_error(msg: str) -> None:
@@ -204,9 +252,11 @@ def is_quota_error(e: Exception) -> bool:
     return any(r in text for r in QUOTA_REASONS)
 
 
-def upload(path: str, title: str, description: str, tags: list[str]) -> str:
+def upload(path: str, title: str, description: str, tags: list[str], shorts: bool = True,
+           category: str = "") -> str:
+    """Envoie la vidéo. shorts=False : vidéo longue (compilation), sans #Shorts."""
     try:
-        return _upload(path, title, description, tags)
+        return _upload(path, title, description, tags, shorts, category)
     except HttpError as e:
         if is_quota_error(e):
             raise QuotaExceeded(str(e)[:500]) from e
@@ -217,14 +267,16 @@ def upload(path: str, title: str, description: str, tags: list[str]) -> str:
         raise
 
 
-def _upload(path: str, title: str, description: str, tags: list[str]) -> str:
+def _upload(path: str, title: str, description: str, tags: list[str], shorts: bool = True,
+            category: str = "") -> str:
     s = get_settings()
-    if "#shorts" not in (title + description).lower():
+    if shorts and "#shorts" not in (title + description).lower():
         description = description + "\n#Shorts"
     yt = build("youtube", "v3", credentials=_credentials(), cache_discovery=False)
     body = {
         "snippet": {"title": title[:100], "description": description[:5000], "tags": tags[:15],
-                    "categoryId": s.youtube_category, "defaultLanguage": "fr"},
+                    "categoryId": category or s.youtube_category, "defaultLanguage": "fr",
+                    "defaultAudioLanguage": "fr"},
         "status": {"privacyStatus": s.youtube_privacy, "selfDeclaredMadeForKids": False},
     }
     req = yt.videos().insert(part="snippet,status", body=body,

@@ -183,14 +183,21 @@ def rank(src) -> int:
     return _catalog().get(src.url.lower().rstrip("/"), 1000)
 
 
+def _tier(src) -> int:
+    from . import growth
+    return growth.source_tier(getattr(src, "id", None))
+
+
 def live_priority(video, src) -> tuple:
-    """Ordre d'enregistrement : GTA 6 d'abord, puis le plus de spectateurs, puis le plus gros streamer."""
-    return (not is_gta6(video.title), -viewers.get(getattr(src, "id", None), 0), rank(src), video.id or 0)
+    """Ordre d'enregistrement : GTA 6 d'abord, puis les streamers dont nos clips marchent le mieux, puis le plus de
+    spectateurs, puis le plus gros streamer."""
+    return (not is_gta6(video.title), -_tier(src), -viewers.get(getattr(src, "id", None), 0), rank(src),
+            video.id or 0)
 
 
 def process_priority(video, src) -> tuple:
-    """Ordre de traitement : GTA 6 d'abord, gros streamers d'abord, puis le plus récent (l'actualité d'abord)."""
-    return (not is_gta6(video.title), rank(src), -(video.id or 0))
+    """Ordre de traitement : GTA 6 d'abord, streamers qui marchent, gros streamers, puis le plus récent."""
+    return (not is_gta6(video.title), -_tier(src), rank(src), -(video.id or 0))
 
 
 def base_key(key: str) -> str:

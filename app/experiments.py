@@ -44,6 +44,8 @@ def factors(kind: str) -> dict[str, dict]:
             "keywords": {"label": "Mots forts en couleur (sous-titres)", "variants": ["off", "on"],
                          "default": onoff(s.sub_keywords)},
             "pop": {"label": "Sous-titres qui rebondissent", "variants": ["on", "off"], "default": onoff(s.sub_pop)},
+            "cta": {"label": "« Abonne-toi » à l'écran en fin de clip", "variants": ["off", "on"],
+                    "default": onoff(s.clip_cta)},
         }
     if (s.news_tts or "").lower() != "edge":  # voix Piper locale : une seule voix, seul le débit varie
         return {"pace": {"label": "Débit de la voix", "variants": list(PACE), "default": "normale"}}
@@ -63,6 +65,8 @@ def label(variant: str) -> str:
 
 
 def kind_of(info: dict) -> str:
+    if info.get("kind") == "compil":  # vidéo longue : jamais comparée aux Shorts
+        return "compil"
     if info.get("kind") == "news":
         return "story" if info.get("story") else "news"
     return "clip"

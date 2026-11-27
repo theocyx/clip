@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from sqlmodel import col, select
 
-from . import curate, db, discovery, gta6, health, learning, maintenance, notify, platforms
+from . import compile as compil, curate, db, discovery, growth, gta6, health, learning, maintenance, notify, platforms
 from .config import get_settings
 from .models import Clip, ClipInfo, Post, Source, Video, now
 from .news import generate as news
@@ -320,7 +320,12 @@ def next_video() -> Video | None:
     with db.session() as s:
         q = select(Video).where(Video.status == "downloaded").order_by(col(Video.created_at).desc())
         if not gta6.active():
-            return s.exec(q).first()
+            if not get_settings().source_priority:
+                return s.exec(q).first()
+            # les streamers dont les clips marchent le mieux d'abord, puis le plus récent
+            todo = s.exec(q).all()
+            return min(todo, key=lambda v: (-growth.source_tier(v.source_id), -v.created_at.timestamp()),
+                       default=None)
         # mode GTA 6 : les lives GTA 6 des plus gros streamers passent devant
         todo = s.exec(q).all()
         srcs = {x.id: x for x in s.exec(select(Source)).all()}
@@ -457,6 +462,9 @@ def description(clip: Clip, video: Video) -> tuple[str, list[str]]:
     ask = clip_question(clip)
     if ask:
         lines += [ask, ""]
+    sub = growth.subscribe_line("clip")
+    if sub:
+        lines += [sub, ""]
     if name:
         lines += [f"🎮 Streamer : {name}", f"👉 Sa chaîne : {channel}", ""]
     lines += [f"Extrait de : {video.title}", video.url, "", " ".join("#" + t for t in tags_)]
@@ -681,22 +689,39 @@ def slots_left(s, platform: str) -> int:
     return n
 
 
-def rank(clip: Clip, video: Video, at: datetime | None = None) -> float:
-    """Valeur d'un clip pour la file : son score, et en mode GTA 6 la fraîcheur compte (la hype ne dure pas)."""
+def rank(clip: Clip, video: Video, at: datetime | None = None, boosts: dict | None = None) -> float:
+    """Valeur d'un clip pour la file : son score × le poids de son format (celui qui fait le plus de vues passe
+    devant), et en mode GTA 6 la fraîcheur compte (la hype ne dure pas)."""
+    kind = growth.kind_of_key(video.key)
+    boost = (boosts.get(kind, 1.0) if boosts is not None else growth.boost(kind))
     if not gta6.active():
-        return clip.score
+        return clip.score * boost
     age_h = max(0.0, ((at or now()) - clip.created_at).total_seconds() / 3600)
     half = get_settings().gta6_fresh_hours
     fresh = 0.5 ** (age_h / half) if half > 0 else 1.0
-    return clip.score * fresh * (1.0 if gta6.is_gta6(video.title) else 0.5)
+    return clip.score * boost * fresh * (1.0 if gta6.is_gta6(video.title) else 0.5)
+
+
+WEAK_BOOST = growth.WEAK_BOOST
+
+
+def tier(post: Post, video: Video, boosts: dict) -> int:
+    """0 = part en priorité ; 1 = réserve (clip juste sous le seuil) ou format qui ne marche pas : seulement quand
+    il ne reste rien de mieux."""
+    if curate.is_reserve(post):
+        return 1
+    return 1 if boosts.get(growth.kind_of_key(video.key), 1.0) < WEAK_BOOST else 0
 
 
 def queue(s, platform: str) -> list[tuple[Post, Clip]]:
-    """Clips en attente dans l'ordre d'envoi : les suites d'un clip d'abord, puis les mieux classés."""
+    """Clips en attente dans l'ordre d'envoi : les suites d'un clip d'abord, puis les mieux classés
+    (la réserve et les formats qui ne marchent pas en dernier)."""
     rows = s.exec(select(Post, Clip, Video).join(Clip, Clip.id == Post.clip_id).join(Video, Video.id == Clip.video_id)
                   .where(Post.platform == platform, Post.status == "pending", Clip.status == "ready")).all()
     at = now()
-    rows = sorted(rows, key=lambda r: (r[1].part <= 1, -rank(r[1], r[2], at), -r[1].id))
+    boosts = growth.queue_boosts()
+    rows = sorted(rows, key=lambda r: (r[1].part <= 1, tier(r[0], r[2], boosts), -rank(r[1], r[2], at, boosts),
+                                       -r[1].id))
     return [(post, clip) for post, clip, _ in rows]
 
 
@@ -886,10 +911,15 @@ def reset_interrupted():
             s.add(p)
         s.commit()
     news.reset_interrupted()
+    compil.reset_interrupted()
 
 
 def news_loop():
     news.loop(stop)
+
+
+def compil_loop():
+    compil.loop(stop)
 
 
 def shutdown(*_):
@@ -940,7 +970,7 @@ def main():
     crashed = health.started("worker")
     threads = [threading.Thread(target=supervised(f), daemon=True, name=f.__name__)
                for f in (poll_loop, record_loop, download_loop, process_loop, publish_loop, stats_loop, maintenance_loop,
-                         discover_loop, news_loop)]
+                         discover_loop, news_loop, compil_loop)]
     for t in threads:
         t.start()
     threading.Thread(target=sponsor_purge, daemon=True, name="sponsor_purge").start()

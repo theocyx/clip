@@ -88,6 +88,16 @@ Tout reste local. La page **Stats** montre les chiffres, ce qui a été appris e
 - **Vues TikTok** : ajoute le scope `video.list` à l'app TikTok, mets `TIKTOK_STATS=true`, puis reconnecte TikTok.
 - Les clips privés (projet Google ou app TikTok pas encore audités) n'ont pas de vues : rien ne sera appris avant.
 
+## Faire grandir la chaîne (page **Stats**, carte « Croissance »)
+
+- **Abonnés et monétisation** : à chaque relevé, Clip note les abonnés de la chaîne (courbe, rythme par jour, date estimée des 1000), les vues de nos Shorts sur 90 jours (objectif 10 M) et les heures de visionnage des vidéos longues (objectif 4000 h). YouTube Analytics donne aussi les **abonnés gagnés par vidéo** : ils comptent dans la note de chaque Short (on cherche ce qui fait s'abonner, pas seulement ce qui fait des vues).
+- **On double ce qui marche** (`GROWTH_MIX=true`) : chaque format (clips GTA, actus, histoires) est comparé aux autres sur les `MIX_DAYS` derniers jours. Le format qui fait le plus de vues passe devant dans la file ; un format nettement en dessous n'est plus produit qu'une fois tous les `MIX_TEST_DAYS` jours (pour retester), un format au-dessus est produit plus souvent (jusqu'à `NEWS_MAX_PER_DAY` / `STORY_MAX_PER_DAY`).
+- **Réserve** (`RESERVE=true`) : un clip GTA juste sous le seuil appris (note IA relevée, top %) n'est plus jeté ; il reste en file derrière les autres et part quand il n'y a rien de mieux, au lieu de laisser un créneau vide. `RESERVE_MAX` clips au plus.
+- **Streamers qui marchent d'abord** (`SOURCE_PRIORITY=true`) : les lives et morceaux des streamers dont nos clips font le plus de vues sont enregistrés et traités en premier.
+- **Lien d'abonnement** (`SUBSCRIBE_LINK=true`) : « 🔔 Abonne-toi… » avec le lien `?sub_confirmation=1` dans chaque description YouTube.
+- **« Abonne-toi » à l'écran** : testé par l'amélioration continue sur une part des clips (`CLIP_CTA` = version par défaut) ; gardé seulement s'il fait mieux.
+- **Compilations longues** (`COMPIL=true`) : chaque dimanche à partir de 18 h (`COMPIL_DAY`, `COMPIL_HOUR`), les `COMPIL_MAX` Shorts les plus vus de la semaine sont remontés en une vidéo 16:9 de 5 à 15 min (Short au centre sur fond flouté, numéro et titre sur les côtés, du moins bon au meilleur), avec chapitres, crédits des streamers et miniature, et publiés comme une vidéo normale. Ce sont les seules vidéos qui comptent pour les 4000 heures. Bouton « Monter la compilation maintenant » sur **Stats**. La miniature personnalisée demande une chaîne validée par téléphone (youtube.com/verify).
+
 ## Notifications (Discord ou Telegram)
 
 - **Discord** : sur ton serveur, *Paramètres du salon → Intégrations → Webhooks → Nouveau webhook*, copie l'URL dans `DISCORD_WEBHOOK_URL`.
