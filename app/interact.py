@@ -276,9 +276,18 @@ def reply_comments() -> int:
 # ---------- Playlists par streamer ----------
 
 PLAYLIST_KEY = "playlists"  # {titre: id} des playlists créées ou trouvées sur la chaîne
-PLAYLIST_TRIES = 3
+PLAYLIST_NEW_KEY = "playlists_new"  # {"day", "n"} playlists créées aujourd'hui, {"until"} pause après un refus
+PLAYLIST_TRIES = 3  # échecs (hors limite de YouTube) avant d'abandonner une vidéo
+PLAYLIST_NEW_PER_DAY = 2  # YouTube refuse vite les créations en rafale (« 429 Resource has been exhausted »)
+PLAYLIST_MIN_VIDEOS = 3  # pas de playlist pour un streamer tant qu'il n'a pas 3 vidéos à y mettre
+PLAYLIST_PAUSE_H = 12
 PLAYLIST_TITLES = {"news": "Actus du jour en 1 minute", "story": "Histoires vraies incroyables",
                    "compil": "Compilations GTA 6 : les meilleurs moments de la semaine"}
+
+
+def _rate_limited(e: Exception) -> bool:
+    msg = str(e).lower()
+    return any(k in msg for k in ("429", "exhausted", "ratelimit", "rate limit", "quota", "toomanyrequests"))
 
 
 def playlist_title(kind: str, streamer: str = "") -> str:
@@ -309,38 +318,74 @@ def playlist_due() -> list[tuple[Post, Clip, dict, str]]:
             info = json.loads(infos.get(clip.id) or "{}")
         except ValueError:
             info = {}
-        if info.get("playlist_id") or info.get("playlist_tries", 0) >= PLAYLIST_TRIES:
+        if info.get("playlist_id") or info.get("playlist_fails", 0) >= PLAYLIST_TRIES:
             continue
         streamer = info.get("streamer") or names.get(video.source_id, "")
         out.append((post, clip, info, playlist_title(growth.kind_of(info), streamer)))
     return [x for x in out if x[3]]
 
 
+def _creation_allowed(state: dict, day: str) -> bool:
+    if state.get("until", "") > now().isoformat():
+        return False
+    return (state.get("n", 0) if state.get("day") == day else 0) < PLAYLIST_NEW_PER_DAY
+
+
 def add_to_playlists(limit: int = 5) -> int:
+    """Range les vidéos récentes dans leur playlist. Les nouvelles playlists sont créées au compte-gouttes
+    (PLAYLIST_NEW_PER_DAY, et seulement à partir de PLAYLIST_MIN_VIDEOS vidéos) ; un refus « trop de requêtes »
+    de YouTube met en pause sans pénaliser les vidéos, qui seront rangées plus tard."""
     from .publish import youtube
 
     cfg = get_settings()
     if not cfg.playlists or not youtube.configured() or youtube.auth_error() or not youtube.can_comment():
         return 0
-    due = playlist_due()[:limit]
+    due = playlist_due()
     if not due:
         return 0
     known = _load(PLAYLIST_KEY, {})
-    done = 0
+    state = _load(PLAYLIST_NEW_KEY, {})
+    if state.get("hold", "") > now().isoformat():
+        return 0  # YouTube a refusé un ajout : on laisse passer l'heure
+    day = datetime.now(timezone.utc).date().isoformat()
+    waiting: dict[str, int] = {}
+    for *_, title in due:
+        waiting[title] = waiting.get(title, 0) + 1
+    refreshed, done = False, 0
     for post, clip, info, title in due:
+        if done >= limit:
+            break
         try:
             pid = known.get(title)
+            if not pid and not refreshed:
+                known.update(youtube.playlists())  # playlist déjà créée à la main ou avant une remise à zéro
+                refreshed = True
+                _put(PLAYLIST_KEY, known)
+                pid = known.get(title)
             if not pid:
-                known.update(youtube.playlists())
-                pid = known.get(title) or youtube.create_playlist(title, playlist_description(title))
+                if waiting[title] < PLAYLIST_MIN_VIDEOS or not _creation_allowed(state, day):
+                    continue  # la vidéo attend : playlist créée plus tard
+                pid = youtube.create_playlist(title, playlist_description(title))
                 known[title] = pid
                 _put(PLAYLIST_KEY, known)
+                state = {"day": day, "n": (state.get("n", 0) if state.get("day") == day else 0) + 1}
+                _put(PLAYLIST_NEW_KEY, state)
+                log.info("Playlist créée : « %s »", title)
             youtube.add_to_playlist(pid, post.remote_id)
         except youtube.AuthExpired:
             break
         except Exception as e:
+            if _rate_limited(e):
+                adding = bool(known.get(title))  # refus sur l'ajout (sinon sur la création)
+                hours = 1 if adding else PLAYLIST_PAUSE_H
+                log.warning("Playlists : YouTube demande de ralentir (%s), pause de %d h", str(e)[:120], hours)
+                state = {**state, ("hold" if adding else "until"): (now() + timedelta(hours=hours)).isoformat()}
+                _put(PLAYLIST_NEW_KEY, state)
+                if adding:
+                    break  # tout attend
+                continue
             log.warning("Playlist « %s » : ajout impossible (%s)", title, e)
-            _save(clip.id, {**info, "playlist_tries": info.get("playlist_tries", 0) + 1})
+            _save(clip.id, {**info, "playlist_fails": info.get("playlist_fails", 0) + 1})
             continue
         _save(clip.id, {**info, "playlist_id": pid, "playlist": title})
         log.info("« %s » rangé dans la playlist « %s »", clip.title, title)

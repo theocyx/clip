@@ -236,11 +236,13 @@ def test_channel_replies_to_viewers(monkeypatch):
 
 def test_videos_go_into_streamer_playlists(monkeypatch):
     _cleanup()
-    platforms._put(interact.PLAYLIST_KEY, "null")
+    for k in (interact.PLAYLIST_KEY, interact.PLAYLIST_NEW_KEY):
+        platforms._put(k, "null")
     with db.session() as s:
-        _clip(s, "pl:1", {"streamer": "Domingo"}, title="A", published_min=30)
-        _clip(s, "pl:1", {"streamer": "Domingo"}, title="B", published_min=20)
+        for i in range(3):
+            _clip(s, "pl:1", {"streamer": "Domingo"}, title=f"D{i}", published_min=40 - i)
         _clip(s, "pl:2", {"kind": "news"}, title="Actu", published_min=10)
+        _clip(s, "pl:4", {"streamer": "Airka"}, title="Un seul clip", published_min=5)  # pas encore 3 vidéos
         _clip(s, "pl:3", {"streamer": "Squeezie"}, title="Pas encore parti")  # pas publié
     created, added = [], []
     monkeypatch.setattr(youtube, "configured", lambda: True)
@@ -249,9 +251,47 @@ def test_videos_go_into_streamer_playlists(monkeypatch):
     monkeypatch.setattr(youtube, "playlists", lambda: {"Actus du jour en 1 minute": "PLnews"})
     monkeypatch.setattr(youtube, "create_playlist", lambda title, desc="": created.append(title) or "PLdom")
     monkeypatch.setattr(youtube, "add_to_playlist", lambda pid, vid: added.append(pid) or "i")
-    assert interact.add_to_playlists() == 3
+    assert interact.add_to_playlists() == 4
     assert created == ["Domingo GTA 6 : les meilleurs moments"]  # créée une seule fois
-    assert added == ["PLdom", "PLdom", "PLnews"]  # playlist existante réutilisée
-    assert interact.add_to_playlists() == 0  # déjà rangées
+    assert added == ["PLdom", "PLdom", "PLdom", "PLnews"]  # playlist existante réutilisée
+    assert interact.add_to_playlists() == 0  # déjà rangées ; Airka attend sa 3e vidéo
     assert interact.status()["playlists"] == ["Actus du jour en 1 minute", "Domingo GTA 6 : les meilleurs moments"]
+    _cleanup()
+
+
+def test_playlist_creation_backs_off_when_youtube_says_slow_down(monkeypatch):
+    _cleanup()
+    for k in (interact.PLAYLIST_KEY, interact.PLAYLIST_NEW_KEY):
+        platforms._put(k, "null")
+    with db.session() as s:
+        for i in range(3):
+            _clip(s, "pl:5", {"streamer": "Airka"}, title=f"A{i}", published_min=30 - i)
+        _clip(s, "pl:6", {"kind": "news"}, title="Actu", published_min=10)
+    calls, added = [], []
+
+    def refuse(title, desc=""):
+        calls.append(title)
+        raise RuntimeError("<HttpError 429 \"Resource has been exhausted (e.g. check quota).\">")
+
+    monkeypatch.setattr(youtube, "configured", lambda: True)
+    monkeypatch.setattr(youtube, "auth_error", lambda: "")
+    monkeypatch.setattr(youtube, "can_comment", lambda: True)
+    monkeypatch.setattr(youtube, "playlists", lambda: {"Actus du jour en 1 minute": "PLnews"})
+    monkeypatch.setattr(youtube, "create_playlist", refuse)
+    monkeypatch.setattr(youtube, "add_to_playlist", lambda pid, vid: added.append(pid) or "i")
+    assert interact.add_to_playlists() == 1 and added == ["PLnews"]  # les autres playlists continuent
+    assert len(calls) == 1  # une seule tentative de création, puis pause
+    for _ in range(4):
+        interact.add_to_playlists()
+    assert len(calls) == 1  # pas de nouvelle tentative pendant la pause
+    with db.session() as s:
+        infos = [json.loads(i.data) for i in s.exec(select(ClipInfo)).all()]
+    assert all(not i.get("playlist_fails") for i in infos)  # les vidéos ne sont pas abandonnées
+    # la pause passée, la playlist est créée et les 3 vidéos y vont
+    platforms._put(interact.PLAYLIST_NEW_KEY, "null")
+    monkeypatch.setattr(youtube, "create_playlist", lambda title, desc="": "PLairka")
+    assert interact.add_to_playlists() == 3 and added.count("PLairka") == 3
+    # au plus PLAYLIST_NEW_PER_DAY créations par jour
+    assert not interact._creation_allowed({"day": "2026-11-28", "n": 2}, "2026-11-28")
+    assert interact._creation_allowed({"day": "2026-11-27", "n": 2}, "2026-11-28")
     _cleanup()
